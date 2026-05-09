@@ -54,18 +54,27 @@ export default function Home() {
     <main className="min-h-screen overflow-hidden bg-[#fff3cf] text-[#2d2313]">
       <section className="relative min-h-[100svh] overflow-hidden border-b-2 border-[#5aa06d]">
         <div className="hero-sky absolute inset-0" aria-hidden="true">
-          <div className="pixel-sky-grid" />
-          <div className="pixel-sun" />
-          <div className="pixel-cloud pixel-cloud-one" />
-          <div className="pixel-cloud pixel-cloud-two" />
-          <div className="pixel-cloud pixel-cloud-three" />
-          <div className="pixel-cloud pixel-cloud-four" />
-          <div className="pixel-spark pixel-spark-one" />
-          <div className="pixel-spark pixel-spark-two" />
-          <div className="pixel-spark pixel-spark-three" />
+          <video
+            className="hero-video"
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="metadata"
+          >
+            <source src="/sky-timelapse.webm" type="video/webm" />
+          </video>
         </div>
         <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(32,94,124,0.24),rgba(32,94,124,0.1)_46%,rgba(255,255,255,0)_72%),linear-gradient(0deg,rgba(255,243,207,0.24),rgba(255,243,207,0)_22%)]" />
         <div className="absolute inset-x-0 bottom-0 h-16 bg-[linear-gradient(0deg,#fff3cf,rgba(255,243,207,0))]" />
+        <a
+          href="https://commons.wikimedia.org/wiki/File:Free_Creative_Commons_Stock_video_-_Time_lapse_clouds.webm"
+          className="absolute bottom-3 right-4 z-10 text-[10px] font-semibold text-white/70 underline-offset-4 hover:text-white hover:underline"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Sky video: Wikimedia Commons
+        </a>
 
         <nav className="relative z-10 mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-5 sm:px-8">
           <a

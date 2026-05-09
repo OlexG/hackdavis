@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Sunpatch Farm Console",
+  title: "Sunpatch | Plan, Simulate, and Trade Your Farm",
   description:
-    "A solar-punk farm planning console for simulating crops, harvests, earnings, marketplace listings, and ecological impact.",
+    "A warm solar-punk farm planner where people learn to grow produce, simulate their gardens, track progress, and trade real harvests locally.",
 };
 
 export default function RootLayout({

@@ -33,6 +33,12 @@ html {
   pointer-events: none;
 }
 
+.hero-sky {
+  background:
+    radial-gradient(circle at 78% 18%, rgba(255, 247, 194, 0.62) 0 8%, rgba(255, 238, 170, 0.22) 9% 22%, transparent 34%),
+    linear-gradient(180deg, #57bfeb 0%, #86d8f1 42%, #bcecf3 72%, #e9f6df 100%);
+}
+
 .app-sky::after {
   position: absolute;
   inset: 0;
@@ -40,6 +46,92 @@ html {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 243, 207, 0.2));
 }
 
+.app-pixel-grid,
+.app-pixel-sun,
+.app-pixel-cloud,
+.app-pixel-spark {
+  position: absolute;
+}
+
+.app-pixel-grid {
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px);
+  background-size: 16px 16px;
+  opacity: 0.45;
+}
+
+.app-pixel-sun {
+  top: 28px;
+  right: 12%;
+  width: 88px;
+  height: 88px;
+  background: #ffd667;
+  box-shadow:
+    0 0 0 8px rgba(255, 246, 184, 0.35),
+    0 0 0 20px rgba(255, 214, 103, 0.16);
+}
+
+.app-pixel-cloud {
+  height: 24px;
+  background: #fff8dc;
+  box-shadow:
+    24px -12px 0 #fff8dc,
+    48px 0 0 #fff8dc,
+    72px -8px 0 #fff8dc;
+  opacity: 0.88;
+}
+
+.app-pixel-cloud-one {
+  top: 72px;
+  left: 10%;
+  width: 80px;
+}
+
+.app-pixel-cloud-two {
+  top: 118px;
+  left: 48%;
+  width: 64px;
+  opacity: 0.72;
+}
+
+.app-pixel-cloud-three {
+  top: 42px;
+  right: 28%;
+  width: 56px;
+  opacity: 0.64;
+}
+
+.app-pixel-cloud-four {
+  top: 156px;
+  right: 8%;
+  width: 72px;
+  opacity: 0.68;
+}
+
+.app-pixel-spark {
+  width: 8px;
+  height: 8px;
+  background: #fff8dc;
+}
+
+.app-pixel-spark-one {
+  top: 58px;
+  left: 34%;
+}
+
+.app-pixel-spark-two {
+  top: 132px;
+  left: 22%;
+}
+
+.app-pixel-spark-three {
+  top: 96px;
+  right: 42%;
+}
+
+.hero-video,
 .app-sky-video {
   position: absolute;
   inset: 0;
@@ -48,6 +140,10 @@ html {
   object-fit: cover;
   object-position: center;
   filter: saturate(1.12) brightness(1.04);
+}
+
+.hero-video {
+  opacity: 0.96;
 }
 
 .game-panel {
@@ -63,6 +159,7 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .hero-video,
   .app-sky-video {
     display: none;
   }

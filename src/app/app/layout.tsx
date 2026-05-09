@@ -1,7 +1,14 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { appNavItems } from "./_components/data";
 import { BigStat, MiniStat } from "./_components/ui";
+
+export const metadata: Metadata = {
+  title: "Sunpatch Farm Console",
+  description:
+    "A solar-punk farm planning console for simulating crops, harvests, earnings, marketplace listings, and ecological impact.",
+};
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
@@ -10,16 +17,15 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         className="app-sky fixed inset-x-0 top-0 h-72 overflow-hidden"
         aria-hidden="true"
       >
-        <video
-          className="app-sky-video"
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="metadata"
-        >
-          <source src="/sky-timelapse.webm" type="video/webm" />
-        </video>
+        <div className="app-pixel-grid" />
+        <div className="app-pixel-sun" />
+        <div className="app-pixel-cloud app-pixel-cloud-one" />
+        <div className="app-pixel-cloud app-pixel-cloud-two" />
+        <div className="app-pixel-cloud app-pixel-cloud-three" />
+        <div className="app-pixel-cloud app-pixel-cloud-four" />
+        <div className="app-pixel-spark app-pixel-spark-one" />
+        <div className="app-pixel-spark app-pixel-spark-two" />
+        <div className="app-pixel-spark app-pixel-spark-three" />
       </div>
       <div className="relative mx-auto flex min-h-screen w-full max-w-[1500px] flex-col gap-5 px-4 py-4 lg:flex-row lg:px-6">
         <aside className="game-panel z-10 flex shrink-0 flex-col gap-5 bg-[#fff8dc] p-4 lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)] lg:w-72">
