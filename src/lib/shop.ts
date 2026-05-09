@@ -1,12 +1,16 @@
 import "server-only";
 
-import { ObjectId } from "mongodb";
+import { GridFSBucket, ObjectId } from "mongodb";
+import { Readable } from "node:stream";
 import { getInventorySnapshot, type InventoryViewItem } from "@/lib/inventory";
 import { getMongoDb } from "@/lib/mongodb";
 import type { InventoryItem, ShopDisplay, ShopDisplaySlot } from "@/lib/models";
 
 const demoUserEmail = "test@gmail.com";
 const sellableCategories = ["harvest", "preserves"] as const;
+const shopImagesBucket = "shop_images";
+const maxImageBytes = 4 * 1024 * 1024;
+const allowedImageMimeTypes = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 export type ShopDisplaySlotView = {
   id: string;
@@ -17,6 +21,8 @@ export type ShopDisplaySlotView = {
   priceCents: number;
   signText: string;
   visible: boolean;
+  imageId?: string;
+  imageUrl?: string;
   item: InventoryViewItem;
 };
 
@@ -38,6 +44,7 @@ export type ShopDisplaySaveSlot = {
   priceCents?: number;
   signText?: string;
   visible?: boolean;
+  imageId?: string | null;
 };
 
 export async function getShopSnapshot(): Promise<ShopSnapshot> {
@@ -167,6 +174,8 @@ function buildShopSlots(items: InventoryViewItem[], savedSlots: ShopDisplaySlot[
 }
 
 function toShopSlotView(item: InventoryViewItem, savedSlot: ShopDisplaySlot | undefined, position: number) {
+  const imageId = savedSlot?.imageId?.toString();
+
   return {
     id: `slot-${item.id}`,
     inventoryItemId: item.id,
@@ -175,7 +184,9 @@ function toShopSlotView(item: InventoryViewItem, savedSlot: ShopDisplaySlot | un
     displayUnit: savedSlot?.displayUnit || item.quantity.unit,
     priceCents: normalizePrice(savedSlot?.priceCents ?? suggestedPriceCents(item)),
     signText: savedSlot?.signText?.trim() || suggestedSignText(item),
-    visible: savedSlot?.visible ?? true,
+    visible: savedSlot?.visible ?? false,
+    imageId,
+    imageUrl: imageId ? `/api/shop/image/${imageId}` : undefined,
     item,
   };
 }
@@ -191,6 +202,17 @@ function normalizeSaveSlot(
     return null;
   }
 
+  const imageId = typeof slot.imageId === "string" && ObjectId.isValid(slot.imageId)
+    ? new ObjectId(slot.imageId)
+    : undefined;
+  const visible = slot.visible ?? false;
+
+  if (visible && !imageId) {
+    throw new ShopValidationError(
+      `Add a photo for ${item.name} before placing it on the farm stand.`,
+    );
+  }
+
   return {
     inventoryItemId: new ObjectId(slot.inventoryItemId),
     position: Number.isFinite(slot.position) ? Number(slot.position) : index,
@@ -202,8 +224,16 @@ function normalizeSaveSlot(
     signText: typeof slot.signText === "string" && slot.signText.trim()
       ? slot.signText.trim().slice(0, 60)
       : suggestedSignText(toInventoryViewItem(item)),
-    visible: slot.visible ?? true,
+    visible,
+    ...(imageId ? { imageId } : {}),
   };
+}
+
+export class ShopValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ShopValidationError";
+  }
 }
 
 function toInventoryViewItem(item: InventoryItem): InventoryViewItem {
@@ -296,4 +326,103 @@ function newestTimestamp(items: InventoryViewItem[], displayUpdatedAt?: Date) {
 
 function isShopDisplaySlot(slot: ShopDisplaySlot | null): slot is ShopDisplaySlot {
   return slot !== null;
+}
+
+export type UploadedShopImage = {
+  imageId: string;
+  imageUrl: string;
+  contentType: string;
+  size: number;
+};
+
+export async function uploadShopImage({
+  inventoryItemId,
+  fileName,
+  mimeType,
+  bytes,
+}: {
+  inventoryItemId: string;
+  fileName: string;
+  mimeType: string;
+  bytes: Uint8Array;
+}): Promise<UploadedShopImage> {
+  if (!ObjectId.isValid(inventoryItemId)) {
+    throw new ShopValidationError("Unknown inventory item for shop image");
+  }
+  if (!allowedImageMimeTypes.has(mimeType)) {
+    throw new ShopValidationError("Image must be PNG, JPEG, WEBP, or GIF");
+  }
+  if (bytes.byteLength === 0) {
+    throw new ShopValidationError("Image file is empty");
+  }
+  if (bytes.byteLength > maxImageBytes) {
+    throw new ShopValidationError("Image must be 4 MB or smaller");
+  }
+
+  const db = await getMongoDb();
+  const user = await db.collection("users").findOne({ email: demoUserEmail });
+
+  if (!user) {
+    throw new Error("Seed the demo user before uploading shop images");
+  }
+
+  const item = await db
+    .collection<InventoryItem>("inventory_items")
+    .findOne({ _id: new ObjectId(inventoryItemId), userId: user._id });
+
+  if (!item) {
+    throw new ShopValidationError("Inventory item not found for current user");
+  }
+
+  const bucket = new GridFSBucket(db, { bucketName: shopImagesBucket });
+  const uploadStream = bucket.openUploadStream(fileName || "shop-image", {
+    metadata: {
+      userId: user._id,
+      inventoryItemId: item._id,
+      contentType: mimeType,
+      uploadedAt: new Date(),
+    },
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    uploadStream.on("error", reject);
+    uploadStream.on("finish", () => resolve());
+    Readable.from(Buffer.from(bytes)).pipe(uploadStream);
+  });
+
+  const imageId = uploadStream.id.toString();
+  return {
+    imageId,
+    imageUrl: `/api/shop/image/${imageId}`,
+    contentType: mimeType,
+    size: bytes.byteLength,
+  };
+}
+
+export type ShopImageStream = {
+  stream: NodeJS.ReadableStream;
+  contentType: string;
+  contentLength: number;
+};
+
+export async function openShopImageStream(imageId: string): Promise<ShopImageStream | null> {
+  if (!ObjectId.isValid(imageId)) {
+    return null;
+  }
+
+  const db = await getMongoDb();
+  const bucket = new GridFSBucket(db, { bucketName: shopImagesBucket });
+  const file = await db
+    .collection<{ _id: ObjectId; length: number; metadata?: { contentType?: string } }>(`${shopImagesBucket}.files`)
+    .findOne({ _id: new ObjectId(imageId) });
+
+  if (!file) {
+    return null;
+  }
+
+  return {
+    stream: bucket.openDownloadStream(new ObjectId(imageId)),
+    contentType: file.metadata?.contentType ?? "application/octet-stream",
+    contentLength: file.length,
+  };
 }

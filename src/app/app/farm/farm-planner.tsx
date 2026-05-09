@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import type { GeometryPoint, PlanPartition } from "@/lib/models";
+import type { GeometryPoint, PlanPartition, PlanTile, PlanTileType } from "@/lib/models";
 
 type SavedPlan = {
   _id: string;
@@ -12,8 +12,10 @@ type SavedPlan = {
     locationLabel: string;
     points: GeometryPoint[];
     areaSquareMeters: number;
+    areaSquareFeet?: number;
   };
   partitions?: PlanPartition[];
+  tiles?: PlanTile[];
   summary?: {
     description: string;
     highlights: string[];
@@ -36,6 +38,30 @@ const partitionColors: Record<PlanPartition["type"], string> = {
   greenhouse: "#8ad4dc",
   water: "#4ea9c7",
   habitat: "#a6bd63",
+};
+
+const tileTypeColors: Record<PlanTileType, string> = {
+  tomato: "#6e9f45",
+  lettuce: "#7ec65b",
+  corn: "#d5b84b",
+  potato: "#9b7a4b",
+  strawberry: "#5f9d58",
+  pea: "#66ad63",
+  mushroom: "#b99067",
+  herb: "#3f8b58",
+  pollinator: "#9bb75d",
+};
+
+const defaultTileIcons: Record<PlanTileType, string> = {
+  tomato: "/inventory-icons/tomato.png",
+  lettuce: "/inventory-icons/lettuce.png",
+  corn: "/inventory-icons/corn.png",
+  potato: "/inventory-icons/potato.png",
+  strawberry: "/inventory-icons/strawberry.png",
+  pea: "/inventory-icons/pea-pod.png",
+  mushroom: "/inventory-icons/mushroom.png",
+  herb: "/inventory-icons/lettuce.png",
+  pollinator: "/inventory-icons/strawberry.png",
 };
 
 export function FarmPlanner() {
@@ -545,7 +571,9 @@ function PlansView({
                 }`}
               >
                 <span className="block truncate font-medium text-[#2d2313]">{plan.name}</span>
-                <span className="block text-xs text-[#7a6b55]">{plan.partitions?.length ?? 0} partitions</span>
+                <span className="block text-xs text-[#7a6b55]">
+                  {plan.tiles?.length ? `${plan.tiles.length.toLocaleString("en-US")} tiles` : `${plan.partitions?.length ?? 0} legacy partitions`}
+                </span>
               </button>
             ))}
           </div>
@@ -565,11 +593,13 @@ function PlansView({
 function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [webglUnavailable, setWebglUnavailable] = useState(false);
+  const hasTiles = Boolean(plan?.tiles?.length);
+  const hasLegacyPartitions = Boolean(plan?.partitions?.length);
 
   useEffect(() => {
     const canvas = canvasRef.current;
 
-    if (!canvas || !plan?.partitions?.length) {
+    if (!canvas || (!plan?.tiles?.length && !plan?.partitions?.length)) {
       return;
     }
 
@@ -629,17 +659,23 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
     sun.castShadow = true;
     scene.add(sun);
 
+    const tileBounds = plan.tiles?.length ? getTileRenderBounds(plan.tiles) : null;
+    const groundRadius = tileBounds ? Math.max(tileBounds.width, tileBounds.depth) * 0.62 + 2 : 18;
     const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(18, 64),
+      new THREE.CircleGeometry(groundRadius, 64),
       new THREE.MeshLambertMaterial({ color: "#476943" }),
     );
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.05;
     root.add(ground);
 
-    plan.partitions.forEach((partition, index) => {
-      addPartition(root, partition, index);
-    });
+    if (plan.tiles?.length) {
+      addVoxelTiles(root, plan.tiles);
+    } else {
+      plan.partitions?.forEach((partition, index) => {
+        addPartition(root, partition, index);
+      });
+    }
 
     let width = 0;
     let height = 0;
@@ -695,7 +731,8 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
       animation = requestAnimationFrame(render);
       root.rotation.y += (targetRotation - root.rotation.y) * 0.08;
       currentPitch += (targetPitch - currentPitch) * 0.08;
-      camera.position.set(0, 7 + currentPitch * 18, 29 - currentPitch * 10);
+      const cameraDistance = tileBounds ? Math.max(24, Math.min(56, Math.max(tileBounds.width, tileBounds.depth) * 1.15)) : 29;
+      camera.position.set(0, 7 + currentPitch * 18, cameraDistance - currentPitch * 10);
       camera.lookAt(0, 0, 0);
       renderer.render(scene, camera);
     };
@@ -714,8 +751,14 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
         if (object instanceof THREE.Mesh) {
           object.geometry.dispose();
           if (Array.isArray(object.material)) {
-            object.material.forEach((material) => material.dispose());
+            object.material.forEach((material) => {
+              const mapped = material as THREE.Material & { map?: THREE.Texture };
+              mapped.map?.dispose();
+              material.dispose();
+            });
           } else {
+            const mapped = object.material as THREE.Material & { map?: THREE.Texture };
+            mapped.map?.dispose();
             object.material.dispose();
           }
         }
@@ -725,18 +768,18 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
 
   return (
     <div className="relative min-h-[360px]">
-      {plan?.partitions?.length && webglUnavailable ? (
+      {(hasTiles || hasLegacyPartitions) && webglUnavailable && plan ? (
         <IsometricPlanGrid plan={plan} />
-      ) : plan?.partitions?.length ? (
-        <canvas ref={canvasRef} className="block size-full min-h-[360px]" aria-label="3D solar punk farm plan" />
+      ) : hasTiles || hasLegacyPartitions ? (
+        <canvas ref={canvasRef} className="block size-full min-h-[360px]" aria-label="3D voxel farm plan" />
       ) : (
         <div className="grid min-h-[360px] place-items-center px-6 text-center text-[#5d5345]">
           No plan
         </div>
       )}
-      {plan?.partitions?.length ? (
+      {hasTiles || hasLegacyPartitions ? (
         <div className="absolute left-4 top-4 rounded-md border border-white/50 bg-white/80 px-3 py-2 text-xs font-semibold text-[#2d2313] shadow-sm backdrop-blur">
-          {webglUnavailable ? "Pan" : "Drag"}
+          {webglUnavailable ? "Pan" : "Drag voxel farm"}
         </div>
       ) : null}
     </div>
@@ -813,9 +856,13 @@ function IsometricPlanGrid({ plan }: { plan: SavedPlan }) {
       <svg className="absolute inset-0 size-full" viewBox="-180 -140 360 280" preserveAspectRatio="xMidYMid meet">
         <g transform={`translate(${pan.x * 0.22} ${pan.y * 0.22}) scale(${zoom})`}>
           <IsoGrid project={project} />
-          {(plan.partitions ?? []).map((partition) => (
-            <IsoPartition key={partition.partitionId} partition={partition} project={project} />
-          ))}
+          {plan.tiles?.length
+            ? plan.tiles.slice(0, 3000).map((tile) => (
+                <IsoTile key={tile.tileId} tile={tile} project={project} />
+              ))
+            : (plan.partitions ?? []).map((partition) => (
+                <IsoPartition key={partition.partitionId} partition={partition} project={project} />
+              ))}
         </g>
       </svg>
       <div className="absolute bottom-4 right-4 flex overflow-hidden rounded-md border border-white/40 bg-white/85 text-[#2d2313] shadow-sm">
@@ -851,6 +898,47 @@ function IsometricPlanGrid({ plan }: { plan: SavedPlan }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function IsoTile({
+  tile,
+  project,
+}: {
+  tile: PlanTile;
+  project: (point: { x: number; y: number }) => { x: number; y: number };
+}) {
+  const size = 1;
+  const height = 2.4;
+  const color = tile.color || tileTypeColors[tile.tileType];
+  const corners = [
+    { x: tile.position.x - size / 2, y: tile.position.z - size / 2 },
+    { x: tile.position.x + size / 2, y: tile.position.z - size / 2 },
+    { x: tile.position.x + size / 2, y: tile.position.z + size / 2 },
+    { x: tile.position.x - size / 2, y: tile.position.z + size / 2 },
+  ].map(project);
+  const top = corners.map((point) => ({ x: point.x, y: point.y - height }));
+  const center = project({ x: tile.position.x, y: tile.position.z });
+
+  return (
+    <g>
+      <polygon
+        points={`${corners[1].x},${corners[1].y} ${corners[2].x},${corners[2].y} ${top[2].x},${top[2].y} ${top[1].x},${top[1].y}`}
+        fill={shadeColor(color, -28)}
+      />
+      <polygon
+        points={`${corners[2].x},${corners[2].y} ${corners[3].x},${corners[3].y} ${top[3].x},${top[3].y} ${top[2].x},${top[2].y}`}
+        fill={shadeColor(color, -18)}
+      />
+      <polygon
+        points={top.map((point) => `${point.x},${point.y}`).join(" ")}
+        fill={color}
+        stroke="#fff6cf"
+        strokeOpacity="0.35"
+        strokeWidth="0.35"
+      />
+      <circle cx={center.x} cy={center.y - height - 0.2} r="0.75" fill="#fffdf5" opacity="0.88" />
+    </g>
   );
 }
 
@@ -1012,6 +1100,79 @@ function shadeColor(hex: string, amount: number) {
   return `#${((red << 16) | (green << 8) | blue).toString(16).padStart(6, "0")}`;
 }
 
+function getTileRenderBounds(tiles: PlanTile[]) {
+  const minX = Math.min(...tiles.map((tile) => tile.position.x));
+  const maxX = Math.max(...tiles.map((tile) => tile.position.x));
+  const minZ = Math.min(...tiles.map((tile) => tile.position.z));
+  const maxZ = Math.max(...tiles.map((tile) => tile.position.z));
+
+  return {
+    minX,
+    maxX,
+    minZ,
+    maxZ,
+    width: maxX - minX + 1,
+    depth: maxZ - minZ + 1,
+  };
+}
+
+function addVoxelTiles(root: THREE.Group, tiles: PlanTile[]) {
+  const blockGeometry = new THREE.BoxGeometry(0.92, 0.42, 0.92);
+  const spriteGeometry = new THREE.PlaneGeometry(0.68, 0.68);
+  const textureLoader = new THREE.TextureLoader();
+  const tilesByType = new Map<PlanTileType, PlanTile[]>();
+
+  tiles.forEach((tile) => {
+    tilesByType.set(tile.tileType, [...(tilesByType.get(tile.tileType) ?? []), tile]);
+  });
+
+  tilesByType.forEach((tileGroup, tileType) => {
+    const first = tileGroup[0];
+    const color = first.color || tileTypeColors[tileType];
+    const blockMaterial = new THREE.MeshLambertMaterial({ color });
+    const blocks = new THREE.InstancedMesh(blockGeometry, blockMaterial, tileGroup.length);
+    const blockMatrix = new THREE.Matrix4();
+
+    tileGroup.forEach((tile, index) => {
+      blockMatrix.makeTranslation(tile.position.x, 0.21, tile.position.z);
+      blocks.setMatrixAt(index, blockMatrix);
+    });
+
+    blocks.castShadow = true;
+    blocks.receiveShadow = true;
+    root.add(blocks);
+
+    const spriteMaterial = new THREE.MeshBasicMaterial({
+      transparent: true,
+      alphaTest: 0.1,
+      side: THREE.DoubleSide,
+    });
+    const texture = textureLoader.load(first.iconPath || defaultTileIcons[tileType], (loadedTexture) => {
+      loadedTexture.magFilter = THREE.NearestFilter;
+      loadedTexture.minFilter = THREE.NearestFilter;
+      loadedTexture.colorSpace = THREE.SRGBColorSpace;
+      spriteMaterial.map = loadedTexture;
+      spriteMaterial.needsUpdate = true;
+    });
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    spriteMaterial.map = texture;
+
+    const sprites = new THREE.InstancedMesh(spriteGeometry, spriteMaterial, tileGroup.length);
+    const spriteObject = new THREE.Object3D();
+
+    tileGroup.forEach((tile, index) => {
+      spriteObject.position.set(tile.position.x, 0.435, tile.position.z);
+      spriteObject.rotation.set(-Math.PI / 2, 0, 0);
+      spriteObject.updateMatrix();
+      sprites.setMatrixAt(index, spriteObject.matrix);
+    });
+
+    root.add(sprites);
+  });
+}
+
 function addPartition(root: THREE.Group, partition: PlanPartition, index: number) {
   const shape = new THREE.Shape();
   const corners = partition.geometry.corners.map(toWorld);
@@ -1145,6 +1306,8 @@ function addWater(root: THREE.Group, center: { x: number; z: number }) {
 }
 
 function PlanDetails({ plan }: { plan: SavedPlan | null }) {
+  const tileGroups = plan?.tiles?.length ? summarizeTiles(plan.tiles) : [];
+
   return (
     <div className="border-t border-[#eadfca] bg-[#fffdf5] p-4">
       {plan ? (
@@ -1156,19 +1319,49 @@ function PlanDetails({ plan }: { plan: SavedPlan | null }) {
                 {Math.round((plan.generation?.score ?? 0) * 100)} fit score
               </span>
               <span className="rounded bg-[#fff3cf] px-2 py-1 text-xs font-semibold text-[#6c5b20]">
-                {plan.baseGeometry?.areaSquareMeters ?? 0} sq m
+                {plan.baseGeometry?.areaSquareFeet?.toLocaleString("en-US") ??
+                  Math.round((plan.baseGeometry?.areaSquareMeters ?? 0) * 10.7639).toLocaleString("en-US")} sq ft
               </span>
             </div>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[#6b6254]">{plan.summary?.description}</p>
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-sm">
-            <Metric label="Partitions" value={String(plan.partitions?.length ?? 0)} />
+            <Metric label="Tiles" value={(plan.tiles?.length ?? plan.partitions?.length ?? 0).toLocaleString("en-US")} />
             <Metric label="Maintenance" value={plan.summary?.maintenanceLevel ?? "medium"} />
           </div>
 
-          <div className="grid gap-3 lg:col-span-2 md:grid-cols-2 xl:grid-cols-5">
-            {(plan.partitions ?? []).map((partition) => (
+          {tileGroups.length ? (
+            <div className="grid gap-3 lg:col-span-2 md:grid-cols-2 xl:grid-cols-5">
+              {tileGroups.map((group) => (
+                <article key={group.tileType} className="rounded-md border border-[#eadfca] bg-white p-3">
+                  <div className="mb-3 flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-semibold text-[#2d2313]">{group.assignmentName}</h3>
+                      <p className="text-xs text-[#7a6b55]">
+                        {group.count.toLocaleString("en-US")} one-foot tiles
+                      </p>
+                    </div>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={group.iconPath}
+                      alt=""
+                      className="size-7 shrink-0 [image-rendering:pixelated]"
+                      style={{ backgroundColor: group.color }}
+                    />
+                  </div>
+                  <dl className="grid grid-cols-2 gap-2 text-xs text-[#6b6254]">
+                    <Metric label="Area" value={`${group.count.toLocaleString("en-US")} sq ft`} compact />
+                    <Metric label="Sun" value={group.sunExposure} compact />
+                    <Metric label="Water" value={group.waterNeed} compact />
+                    <Metric label="Type" value={group.tileType} compact />
+                  </dl>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-3 lg:col-span-2 md:grid-cols-2 xl:grid-cols-5">
+              {(plan.partitions ?? []).map((partition) => (
               <article key={partition.partitionId} className="rounded-md border border-[#eadfca] bg-white p-3">
                 <div className="mb-3 flex items-start justify-between gap-2">
                   <div>
@@ -1187,8 +1380,9 @@ function PlanDetails({ plan }: { plan: SavedPlan | null }) {
                   <Metric label="Type" value={partition.type.replace("_", " ")} compact />
                 </dl>
               </article>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       ) : (
         <div className="h-5" />
@@ -1205,6 +1399,39 @@ function formatUiError(error: unknown) {
   }
 
   return message || "Request failed";
+}
+
+function summarizeTiles(tiles: PlanTile[]) {
+  const groups = new Map<PlanTileType, {
+    tileType: PlanTileType;
+    assignmentName: string;
+    count: number;
+    color: string;
+    iconPath: string;
+    sunExposure: PlanTile["sunExposure"];
+    waterNeed: PlanTile["waterNeed"];
+  }>();
+
+  tiles.forEach((tile) => {
+    const current = groups.get(tile.tileType);
+
+    if (current) {
+      current.count += 1;
+      return;
+    }
+
+    groups.set(tile.tileType, {
+      tileType: tile.tileType,
+      assignmentName: tile.assignmentName,
+      count: 1,
+      color: tile.color || tileTypeColors[tile.tileType],
+      iconPath: tile.iconPath || defaultTileIcons[tile.tileType],
+      sunExposure: tile.sunExposure,
+      waterNeed: tile.waterNeed,
+    });
+  });
+
+  return [...groups.values()].sort((left, right) => right.count - left.count);
 }
 
 function Metric({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {

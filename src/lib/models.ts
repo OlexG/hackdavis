@@ -16,6 +16,7 @@ export type RenderConfig = {
   model: string;
   color: string;
   label?: string;
+  iconPath?: string;
   fruitColor?: string;
   heightMultiplier?: number;
   scale?: number;
@@ -118,6 +119,8 @@ export type ShopDisplaySlot = {
   priceCents: number;
   signText: string;
   visible: boolean;
+  imageId?: ObjectId;
+  imageMimeType?: string;
 };
 
 export type ShopDisplay = {
@@ -181,6 +184,40 @@ export type PlanPartition = {
   notes: string;
 };
 
+export type PlanTileType =
+  | "tomato"
+  | "lettuce"
+  | "corn"
+  | "potato"
+  | "strawberry"
+  | "pea"
+  | "mushroom"
+  | "herb"
+  | "pollinator";
+
+export type PlanTile = {
+  tileId: string;
+  tileType: PlanTileType;
+  assignmentSlug: string;
+  assignmentName: string;
+  grid: {
+    x: number;
+    y: number;
+  };
+  position: {
+    x: number;
+    z: number;
+  };
+  sizeFeet: 1;
+  areaSquareFeet: 1;
+  color: string;
+  iconPath: string;
+  sunExposure: "full" | "partial" | "shade";
+  waterNeed: "low" | "medium" | "high";
+  soilStrategy: string;
+  notes: string;
+};
+
 export type Plan = {
   _id: ObjectId;
   farmId: ObjectId;
@@ -203,8 +240,10 @@ export type Plan = {
     points: GeometryPoint[];
     centroid: GeometryPoint;
     areaSquareMeters: number;
+    areaSquareFeet?: number;
   };
   partitions?: PlanPartition[];
+  tiles?: PlanTile[];
   objects: PlanObject[];
   summary: {
     description: string;

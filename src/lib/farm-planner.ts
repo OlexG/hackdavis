@@ -3,7 +3,8 @@ import type {
   GeometryPoint,
   ObjectSize,
   PlanObject,
-  PlanPartition,
+  PlanTile,
+  PlanTileType,
   RenderConfig,
 } from "./models";
 
@@ -32,8 +33,10 @@ export type GeneratedFarmPlan = {
     points: GeometryPoint[];
     centroid: GeometryPoint;
     areaSquareMeters: number;
+    areaSquareFeet: number;
   };
-  partitions: PlanPartition[];
+  tiles: PlanTile[];
+  partitions: [];
   objects: Omit<PlanObject, "sourceId">[];
   summary: {
     description: string;
@@ -48,23 +51,29 @@ export type GeneratedFarmPlan = {
   };
 };
 
-type PartitionTemplate = {
-  id: string;
-  label: string;
-  type: PlanPartition["type"];
+type TileTemplate = {
+  tileType: PlanTileType;
   slug: string;
   assignmentName: string;
   ratio: number;
-  sunExposure: PlanPartition["sunExposure"];
-  waterNeed: PlanPartition["waterNeed"];
+  color: string;
+  iconPath: string;
+  sunExposure: PlanTile["sunExposure"];
+  waterNeed: PlanTile["waterNeed"];
   soilStrategy: string;
-  render: RenderConfig;
   notes: string;
 };
 
-type PartitionRegion = {
-  template: PartitionTemplate;
-  corners: GeometryPoint[];
+type CandidateCell = {
+  gridX: number;
+  gridY: number;
+  normalized: GeometryPoint;
+  position: {
+    x: number;
+    z: number;
+  };
+  edgeDistance: number;
+  centroidDistance: number;
 };
 
 const fallbackQuad: GeometryPoint[] = [
@@ -74,13 +83,18 @@ const fallbackQuad: GeometryPoint[] = [
   { x: 12, y: 82 },
 ];
 
+const iconPath = "/inventory-icons/";
+
 const palette = {
-  annual: "#66a95a",
-  perennial: "#3f8a57",
-  livestock: "#d6b36b",
-  greenhouse: "#8fd3df",
-  water: "#4aa8c7",
-  habitat: "#9bb75d",
+  tomato: "#6e9f45",
+  lettuce: "#7ec65b",
+  corn: "#d5b84b",
+  potato: "#9b7a4b",
+  strawberry: "#5f9d58",
+  pea: "#66ad63",
+  mushroom: "#b99067",
+  herb: "#3f8b58",
+  pollinator: "#9bb75d",
 };
 
 export function generateHomesteadPlan(
@@ -89,87 +103,41 @@ export function generateHomesteadPlan(
 ): GeneratedFarmPlan {
   const points = normalizePoints(input.points);
   const centroid = getCentroid(points);
-  const areaSquareMeters = Math.max(80, Math.round(shoelaceArea(points) * 0.24));
-  const siteBounds = boundsFor(points);
-  const siteArea = Math.max(1, shoelaceArea(points));
-  const templates = getTemplates(input);
+  const rawSquareFeet = estimateAreaSquareFeet(points);
+  const areaSquareFeet = Math.max(16, Math.round(rawSquareFeet));
+  const areaSquareMeters = Math.max(1, Math.round(areaSquareFeet / 10.7639));
   const random = createSeededRandom(`${input.locationLabel}:${input.weatherProfile}:${input.strategy}:${Date.now()}`);
-  const regions = createPartitionRegions(points, arrangeTemplates(templates, input, random), random);
-  const widthMeters = Math.max(12, Math.round((siteBounds.maxX - siteBounds.minX) * 0.38));
-  const depthMeters = Math.max(12, Math.round((siteBounds.maxY - siteBounds.minY) * 0.34));
-
-  const partitions = regions.map(({ template, corners }, index) => {
-    const center = getCentroid(corners);
-    const catalogItem = catalog.find((item) => item.slug === template.slug);
-    const render = catalogItem?.render ?? template.render;
-    const partitionArea = Math.max(1, shoelaceArea(corners));
-
-    return {
-      partitionId: `${template.id}_${index + 1}`,
-      label: template.label,
-      type: template.type,
-      assignmentSlug: catalogItem?.slug ?? template.slug,
-      assignmentName: catalogItem?.name ?? template.assignmentName,
-      geometry: { corners, center },
-      areaSquareMeters: Math.max(8, Math.round(areaSquareMeters * (partitionArea / siteArea))),
-      sunExposure: template.sunExposure,
-      waterNeed: adjustWaterNeed(template.waterNeed, input.weatherProfile),
-      soilStrategy: template.soilStrategy,
-      render: {
-        ...render,
-        color: template.render.color,
-        label: template.assignmentName,
-      },
-      notes: template.notes,
-    } satisfies PlanPartition;
-  });
-
-  const objects = partitions.map((partition) => {
-    const item = catalog.find((candidate) => candidate.slug === partition.assignmentSlug);
-    const type = item?.type ?? (partition.type === "livestock" ? "livestock" : "crop");
-    const size = sizeForPartition(partition, item?.defaultSize);
-
-    return {
-      instanceId: partition.partitionId,
-      type,
-      slug: partition.assignmentSlug,
-      displayName: partition.assignmentName,
-      status: "planned" as const,
-      plantedAtDay: type === "crop" ? 0 : undefined,
-      addedAtDay: type === "livestock" ? 0 : undefined,
-      ageDaysAtStart: type === "livestock" ? 90 : undefined,
-      position: {
-        x: Number(((partition.geometry.center.x - 50) * 0.32).toFixed(2)),
-        y: 0,
-        z: Number(((partition.geometry.center.y - 50) * 0.26).toFixed(2)),
-      },
-      rotation: { x: 0, y: 0, z: 0 },
-      size,
-      renderOverrides: partition.render,
-      notes: partition.notes,
-    };
-  });
+  const templates = normalizeRatios(getTileTemplates(input));
+  const tiles = createPlanTiles(points, areaSquareFeet, templates, random);
+  const tileBounds = tileBoundsFor(tiles);
+  const objects = createPlanObjects(tiles, catalog);
 
   return {
-    name: `Homestead Plan - ${new Date().toLocaleDateString("en-US", {
+    name: `Voxel Plan - ${new Date().toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
     })}`,
-    bounds: { width: widthMeters, depth: depthMeters, height: 8 },
+    bounds: {
+      width: Math.max(8, tileBounds.width),
+      depth: Math.max(8, tileBounds.depth),
+      height: 4,
+    },
     baseGeometry: {
       source: "satellite-drawn",
       locationLabel: input.locationLabel.trim() || "Drawn homestead site",
       points,
       centroid,
       areaSquareMeters,
+      areaSquareFeet: tiles.length,
     },
-    partitions,
+    tiles,
+    partitions: [],
     objects,
     summary: {
-      description: `A ${input.strategy.replace("-", " ")} solar-punk homestead plan for ${input.locationLabel.trim() || "the selected site"}.`,
+      description: `A ${tiles.length.toLocaleString("en-US")} sq ft voxel farm plan for ${input.locationLabel.trim() || "the selected site"}.`,
       highlights: [
-        "Drawn satellite geometry is saved as the plan base.",
-        "Each generated partition stores four-corner geometry and a crop, livestock, or infrastructure assignment.",
+        "The drawn satellite shape is rasterized into one-foot plant tiles.",
+        "Every tile stores a plant type, icon, color, grid coordinate, and 1 sq ft area.",
         weatherHighlight(input.weatherProfile),
       ],
       maintenanceLevel:
@@ -181,14 +149,16 @@ export function generateHomesteadPlan(
     },
     generation: {
       strategy: input.strategy,
-      prompt: `Partition drawn homestead geometry for ${input.locationLabel} with ${input.weatherProfile} weather and ${input.strategy} goals.`,
+      prompt: `Rasterize drawn homestead geometry for ${input.locationLabel} into one-foot plant tiles using ${input.weatherProfile} weather and ${input.strategy} goals.`,
       constraints: {
         weatherProfile: input.weatherProfile,
         locationLabel: input.locationLabel,
         basePointCount: points.length,
-        partitionGeometry: "four-corner-polygons",
+        tileSizeFeet: 1,
+        tileGeometry: "voxel-grid",
+        tileCount: tiles.length,
       },
-      score: scorePlan(input, partitions),
+      score: scorePlan(input, tiles),
     },
   };
 }
@@ -205,213 +175,488 @@ function normalizePoints(points: GeometryPoint[]) {
   return clean.length >= 4 ? clean : fallbackQuad;
 }
 
-function getTemplates(input: FarmPlannerInput): PartitionTemplate[] {
-  const foodBias = input.strategy === "food" ? 0.08 : 0;
-  const livestockBias = input.strategy === "livestock" ? 0.1 : 0;
+function getTileTemplates(input: FarmPlannerInput): TileTemplate[] {
+  const foodBias = input.strategy === "food" ? 0.1 : 0;
   const lowCareBias = input.strategy === "low-maintenance" ? 0.08 : 0;
-  const dryWaterBias = input.weatherProfile === "dry" ? 0.06 : 0;
+  const dryBias = input.weatherProfile === "dry" ? 0.08 : 0;
 
-  return normalizeRatios([
+  return [
     {
-      id: "annual_beds",
-      label: "Kitchen Beds",
-      type: "annual_beds",
+      tileType: "tomato",
       slug: "tomatoes",
-      assignmentName: "Tomatoes and companion herbs",
-      ratio: 0.27 + foodBias,
+      assignmentName: "Tomatoes",
+      ratio: 0.18 + foodBias,
+      color: palette.tomato,
+      iconPath: `${iconPath}tomato.png`,
       sunExposure: "full",
       waterNeed: "high",
-      soilStrategy: input.weatherProfile === "wet" ? "Raised beds with wood-chip paths" : "Deep compost mulch over broadforked soil",
-      render: { model: "plant", color: palette.annual, label: "Kitchen Beds" },
-      notes: "High-yield annual beds near the access edge for frequent harvests.",
+      soilStrategy: input.weatherProfile === "wet" ? "Raised compost mounds with airy spacing" : "Compost-rich soil with straw mulch",
+      notes: "Warm-season fruiting tile for trellised annual beds.",
     },
     {
-      id: "perennial_guild",
-      label: "Perennial Guild",
-      type: "perennial_guild",
+      tileType: "lettuce",
       slug: "lettuce",
-      assignmentName: "Fruit guild understory",
-      ratio: 0.17 + lowCareBias,
-      sunExposure: "partial",
-      waterNeed: "medium",
-      soilStrategy: "Fungal compost, leaf mulch, and perennial nitrogen fixers",
-      render: { model: "tree_guild", color: palette.perennial, label: "Perennial Guild" },
-      notes: "Long-lived fruit and herb layer to reduce annual replanting.",
+      assignmentName: "Lettuce",
+      ratio: 0.14,
+      color: palette.lettuce,
+      iconPath: `${iconPath}lettuce.png`,
+      sunExposure: input.weatherProfile === "dry" ? "partial" : "full",
+      waterNeed: adjustWaterNeed("medium", input.weatherProfile),
+      soilStrategy: "Even moisture, fine compost, and light afternoon shade",
+      notes: "Leafy green tile for quick harvest rotations.",
     },
     {
-      id: "greenhouse",
-      label: "Greenhouse + Solar Shed",
-      type: "greenhouse",
-      slug: "tomatoes",
-      assignmentName: "Greenhouse starts",
-      ratio: 0.14,
+      tileType: "corn",
+      slug: "corn",
+      assignmentName: "Corn",
+      ratio: 0.13 + foodBias,
+      color: palette.corn,
+      iconPath: `${iconPath}corn.png`,
+      sunExposure: "full",
+      waterNeed: adjustWaterNeed("medium", input.weatherProfile),
+      soilStrategy: "Block-planted rich soil with wind-aware spacing",
+      notes: "Tall grain tile clustered for pollination.",
+    },
+    {
+      tileType: "potato",
+      slug: "potatoes",
+      assignmentName: "Potatoes",
+      ratio: 0.12 + foodBias,
+      color: palette.potato,
+      iconPath: `${iconPath}potato.png`,
       sunExposure: "full",
       waterNeed: "medium",
-      soilStrategy: "Thermal mass, seed-start benching, and rain barrel feed",
-      render: { model: "greenhouse", color: palette.greenhouse, label: "Greenhouse" },
-      notes: "Protected starts, tool storage, and small solar charging zone.",
+      soilStrategy: "Loose soil, deep mulch, and steady hilling",
+      notes: "Root crop tile for calorie-dense production.",
     },
     {
-      id: "livestock",
-      label: "Livestock Loop",
-      type: "livestock",
-      slug: input.strategy === "livestock" ? "goats" : "chickens",
-      assignmentName: input.strategy === "livestock" ? "Goat paddock" : "Chicken compost run",
-      ratio: 0.2 + livestockBias,
-      sunExposure: "partial",
+      tileType: "strawberry",
+      slug: "strawberries",
+      assignmentName: "Strawberries",
+      ratio: 0.11 + lowCareBias,
+      color: palette.strawberry,
+      iconPath: `${iconPath}strawberry.png`,
+      sunExposure: "full",
       waterNeed: "medium",
-      soilStrategy: "Deep litter carbon bedding with rotational rest",
-      render: { model: "coop", color: palette.livestock, label: "Livestock" },
-      notes: "Animal zone is separated from tender crops and tied to compost cycling.",
+      soilStrategy: "Perennial mulch with drip irrigation",
+      notes: "Low-growing perennial fruit tile.",
     },
     {
-      id: "water_habitat",
-      label: "Water + Habitat",
-      type: input.weatherProfile === "dry" ? "water" : "habitat",
-      slug: "lettuce",
-      assignmentName: input.weatherProfile === "dry" ? "Swale and cistern edge" : "Pollinator habitat",
-      ratio: 0.22 + dryWaterBias,
+      tileType: "pea",
+      slug: "peas",
+      assignmentName: "Peas",
+      ratio: 0.1,
+      color: palette.pea,
+      iconPath: `${iconPath}pea-pod.png`,
+      sunExposure: input.weatherProfile === "dry" ? "partial" : "full",
+      waterNeed: "medium",
+      soilStrategy: "Cool-season trellis with inoculated soil",
+      notes: "Nitrogen-fixing vine tile.",
+    },
+    {
+      tileType: "mushroom",
+      slug: "mushrooms",
+      assignmentName: "Mushrooms",
+      ratio: input.weatherProfile === "dry" ? 0.05 : 0.09,
+      color: palette.mushroom,
+      iconPath: `${iconPath}mushroom.png`,
+      sunExposure: "shade",
+      waterNeed: input.weatherProfile === "dry" ? "high" : "medium",
+      soilStrategy: "Shaded wood-chip bed with stable moisture",
+      notes: "Shade crop tile for damp edges.",
+    },
+    {
+      tileType: "herb",
+      slug: "herbs",
+      assignmentName: "Herbs",
+      ratio: 0.11 + dryBias,
+      color: palette.herb,
+      iconPath: `${iconPath}lettuce.png`,
+      sunExposure: "full",
+      waterNeed: input.weatherProfile === "dry" ? "low" : "medium",
+      soilStrategy: "Lean soil, gravelly mulch, and frequent clipping",
+      notes: "Culinary and pollinator herb tile.",
+    },
+    {
+      tileType: "pollinator",
+      slug: "pollinator-flowers",
+      assignmentName: "Pollinator Flowers",
+      ratio: 0.1 + lowCareBias,
+      color: palette.pollinator,
+      iconPath: `${iconPath}strawberry.png`,
       sunExposure: "partial",
       waterNeed: "low",
-      soilStrategy: "Contour swale, native plants, and overflow-safe infiltration",
-      render: {
-        model: input.weatherProfile === "dry" ? "water" : "habitat",
-        color: input.weatherProfile === "dry" ? palette.water : palette.habitat,
-        label: "Habitat",
-      },
-      notes: "Ecological buffer for water capture, pollinators, and microclimate stability.",
+      soilStrategy: "Native flowers, leaf mulch, and no-till edges",
+      notes: "Habitat tile for beneficial insects and seasonal resilience.",
     },
-  ]);
+  ];
 }
 
-function normalizeRatios(templates: PartitionTemplate[]) {
+function normalizeRatios(templates: TileTemplate[]) {
   const total = templates.reduce((sum, template) => sum + template.ratio, 0);
   return templates.map((template) => ({ ...template, ratio: template.ratio / total }));
 }
 
-function arrangeTemplates(
-  templates: PartitionTemplate[],
-  input: FarmPlannerInput,
-  random: () => number,
-) {
-  const byId = new Map(templates.map((template) => [template.id, template]));
-  const preferred =
-    input.strategy === "livestock"
-      ? ["livestock", "water_habitat", "perennial_guild", "greenhouse", "annual_beds"]
-      : input.weatherProfile === "dry"
-        ? ["water_habitat", "greenhouse", "annual_beds", "perennial_guild", "livestock"]
-        : input.strategy === "low-maintenance"
-          ? ["perennial_guild", "water_habitat", "greenhouse", "livestock", "annual_beds"]
-          : random() > 0.5
-            ? ["greenhouse", "annual_beds", "water_habitat", "perennial_guild", "livestock"]
-            : ["annual_beds", "greenhouse", "perennial_guild", "water_habitat", "livestock"];
-  const arranged = preferred.flatMap((id) => {
-    const template = byId.get(id);
-    return template ? [template] : [];
-  });
-
-  return arranged.length === templates.length ? arranged : templates;
-}
-
-function createPartitionRegions(
-  sitePolygon: GeometryPoint[],
-  templates: PartitionTemplate[],
-  random: () => number,
-) {
-  const regions = splitRegions(sitePolygon, templates, random, 0);
-
-  return regions.length === templates.length ? regions : createStripFallback(sitePolygon, templates);
-}
-
-function splitRegions(
+function createPlanTiles(
   polygon: GeometryPoint[],
-  templates: PartitionTemplate[],
+  tileCount: number,
+  templates: TileTemplate[],
   random: () => number,
-  depth: number,
-): PartitionRegion[] {
-  if (templates.length === 1) {
-    return [{ template: templates[0], corners: polygon }];
-  }
+) {
+  const candidates = createCandidateCells(polygon, tileCount, random);
+  const centers = createTemplateCenters(candidates, templates, random);
+  const targets = createTemplateTargets(tileCount, templates);
 
+  const assignedCounts = new Map<PlanTileType, number>();
+  const sortedCandidates = [...candidates].sort((left, right) => left.centroidDistance - right.centroidDistance);
+
+  return sortedCandidates
+    .map((candidate, index) => {
+      const template = chooseTemplate(candidate, centers, targets, assignedCounts);
+      const tileIndex = (assignedCounts.get(template.tileType) ?? 0) + 1;
+      assignedCounts.set(template.tileType, tileIndex);
+
+      return {
+        tileId: `tile_${index + 1}_${template.tileType}`,
+        tileType: template.tileType,
+        assignmentSlug: template.slug,
+        assignmentName: template.assignmentName,
+        grid: {
+          x: candidate.gridX,
+          y: candidate.gridY,
+        },
+        position: candidate.position,
+        sizeFeet: 1,
+        areaSquareFeet: 1,
+        color: template.color,
+        iconPath: template.iconPath,
+        sunExposure: template.sunExposure,
+        waterNeed: template.waterNeed,
+        soilStrategy: template.soilStrategy,
+        notes: template.notes,
+      } satisfies PlanTile;
+    })
+    .sort((left, right) => left.grid.y - right.grid.y || left.grid.x - right.grid.x);
+}
+
+function createCandidateCells(
+  polygon: GeometryPoint[],
+  tileCount: number,
+  random: () => number,
+): CandidateCell[] {
   const bounds = boundsFor(polygon);
-  const width = bounds.maxX - bounds.minX;
-  const height = bounds.maxY - bounds.minY;
-  const primaryAxis: "x" | "y" = width >= height ? "x" : "y";
-  const axis: "x" | "y" = depth % 2 === 0 ? primaryAxis : primaryAxis === "x" ? "y" : "x";
-  const totalRatio = templates.reduce((sum, template) => sum + template.ratio, 0);
-  const splitIndex = chooseSplitIndex(templates, totalRatio, random);
-  const firstTemplates = templates.slice(0, splitIndex);
-  const secondTemplates = templates.slice(splitIndex);
-  const firstRatio = firstTemplates.reduce((sum, template) => sum + template.ratio, 0) / totalRatio;
-  const axisMin = axis === "x" ? bounds.minX : bounds.minY;
-  const axisMax = axis === "x" ? bounds.maxX : bounds.maxY;
-  const splitAt = axisMin + (axisMax - axisMin) * clamp(firstRatio + (random() - 0.5) * 0.14, 0.24, 0.76);
-  const firstPolygon = clipPolygonToSlab(polygon, axis, axisMin, splitAt);
-  const secondPolygon = clipPolygonToSlab(polygon, axis, splitAt, axisMax);
+  const width = Math.max(1, bounds.maxX - bounds.minX);
+  const height = Math.max(1, bounds.maxY - bounds.minY);
+  const normalizedArea = Math.max(1, shoelaceArea(polygon));
+  let scale = Math.sqrt(tileCount / normalizedArea);
+  let candidates: CandidateCell[] = [];
 
-  if (firstPolygon.length < 3 || secondPolygon.length < 3) {
-    const alternateAxis = axis === "x" ? "y" : "x";
-    const alternateMin = alternateAxis === "x" ? bounds.minX : bounds.minY;
-    const alternateMax = alternateAxis === "x" ? bounds.maxX : bounds.maxY;
-    const alternateSplit =
-      alternateMin + (alternateMax - alternateMin) * clamp(firstRatio + (random() - 0.5) * 0.12, 0.24, 0.76);
-    const alternateFirst = clipPolygonToSlab(polygon, alternateAxis, alternateMin, alternateSplit);
-    const alternateSecond = clipPolygonToSlab(polygon, alternateAxis, alternateSplit, alternateMax);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const columns = Math.max(1, Math.ceil(width * scale));
+    const rows = Math.max(1, Math.ceil(height * scale));
+    candidates = rasterizePolygon(polygon, bounds, columns, rows);
 
-    if (alternateFirst.length < 3 || alternateSecond.length < 3) {
-      return createStripFallback(polygon, templates);
+    if (candidates.length >= tileCount) {
+      break;
     }
 
-    return [
-      ...splitRegions(alternateFirst, firstTemplates, random, depth + 1),
-      ...splitRegions(alternateSecond, secondTemplates, random, depth + 1),
-    ];
+    scale *= 1.08;
   }
 
-  return [
-    ...splitRegions(firstPolygon, firstTemplates, random, depth + 1),
-    ...splitRegions(secondPolygon, secondTemplates, random, depth + 1),
-  ];
+  if (candidates.length > tileCount) {
+    return candidates
+      .map((cell) => ({ cell, score: cell.edgeDistance + random() * 0.12 }))
+      .sort((left, right) => {
+        return right.score - left.score;
+      })
+      .map(({ cell }) => cell)
+      .slice(0, tileCount);
+  }
+
+  if (candidates.length < tileCount) {
+    const needed = tileCount - candidates.length;
+    const expanded = createNearBoundaryCells(polygon, bounds, candidates, needed);
+    return [...candidates, ...expanded].slice(0, tileCount);
+  }
+
+  return candidates;
 }
 
-function chooseSplitIndex(templates: PartitionTemplate[], totalRatio: number, random: () => number) {
-  const target = totalRatio * (0.43 + random() * 0.14);
-  let bestIndex = 1;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  let cumulative = 0;
+function rasterizePolygon(
+  polygon: GeometryPoint[],
+  bounds: ReturnType<typeof boundsFor>,
+  columns: number,
+  rows: number,
+) {
+  const cells: CandidateCell[] = [];
+  const stepX = Math.max(0.000001, (bounds.maxX - bounds.minX) / columns);
+  const stepY = Math.max(0.000001, (bounds.maxY - bounds.minY) / rows);
+  const centroid = getCentroid(polygon);
 
-  for (let index = 1; index < templates.length; index += 1) {
-    cumulative += templates[index - 1].ratio;
-    const distance = Math.abs(cumulative - target);
+  for (let y = 0; y < rows; y += 1) {
+    for (let x = 0; x < columns; x += 1) {
+      const normalized = {
+        x: Number((bounds.minX + (x + 0.5) * stepX).toFixed(4)),
+        y: Number((bounds.minY + (y + 0.5) * stepY).toFixed(4)),
+      };
 
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestIndex = index;
+      if (!pointInPolygon(normalized, polygon)) {
+        continue;
+      }
+
+      cells.push({
+        gridX: x,
+        gridY: y,
+        normalized,
+        position: {
+          x: Number((x - (columns - 1) / 2).toFixed(2)),
+          z: Number((y - (rows - 1) / 2).toFixed(2)),
+        },
+        edgeDistance: distanceToPolygonEdge(normalized, polygon),
+        centroidDistance: Math.hypot(normalized.x - centroid.x, normalized.y - centroid.y),
+      });
     }
   }
 
-  return bestIndex;
+  return cells;
 }
 
-function createStripFallback(sitePolygon: GeometryPoint[], templates: PartitionTemplate[]) {
-  const bounds = boundsFor(sitePolygon);
-  const axis: "x" | "y" = bounds.maxX - bounds.minX >= bounds.maxY - bounds.minY ? "x" : "y";
-  const axisMin = axis === "x" ? bounds.minX : bounds.minY;
-  const axisMax = axis === "x" ? bounds.maxX : bounds.maxY;
-  const axisSpan = Math.max(1, axisMax - axisMin);
-  let cursor = axisMin;
+function createNearBoundaryCells(
+  polygon: GeometryPoint[],
+  bounds: ReturnType<typeof boundsFor>,
+  existing: CandidateCell[],
+  needed: number,
+) {
+  const existingKeys = new Set(existing.map((cell) => `${cell.gridX}:${cell.gridY}`));
+  const maxX = Math.max(...existing.map((cell) => cell.gridX), 1);
+  const maxY = Math.max(...existing.map((cell) => cell.gridY), 1);
+  const columns = maxX + 1;
+  const rows = maxY + 1;
+  const stepX = Math.max(0.000001, (bounds.maxX - bounds.minX) / columns);
+  const stepY = Math.max(0.000001, (bounds.maxY - bounds.minY) / rows);
+  const centroid = getCentroid(polygon);
+  const extras: CandidateCell[] = [];
+
+  for (let y = -1; y <= rows; y += 1) {
+    for (let x = -1; x <= columns; x += 1) {
+      const key = `${x}:${y}`;
+
+      if (existingKeys.has(key)) {
+        continue;
+      }
+
+      const normalized = {
+        x: Number((bounds.minX + (x + 0.5) * stepX).toFixed(4)),
+        y: Number((bounds.minY + (y + 0.5) * stepY).toFixed(4)),
+      };
+
+      extras.push({
+        gridX: x,
+        gridY: y,
+        normalized,
+        position: {
+          x: Number((x - (columns - 1) / 2).toFixed(2)),
+          z: Number((y - (rows - 1) / 2).toFixed(2)),
+        },
+        edgeDistance: -distanceToPolygonEdge(normalized, polygon),
+        centroidDistance: Math.hypot(normalized.x - centroid.x, normalized.y - centroid.y),
+      });
+    }
+  }
+
+  return extras
+    .sort((left, right) => right.edgeDistance - left.edgeDistance || left.centroidDistance - right.centroidDistance)
+    .slice(0, needed);
+}
+
+function createTemplateCenters(
+  candidates: CandidateCell[],
+  templates: TileTemplate[],
+  random: () => number,
+) {
+  const sorted = [...candidates].sort((left, right) => left.position.x - right.position.x);
+  const stride = Math.max(1, Math.floor(sorted.length / templates.length));
 
   return templates.map((template, index) => {
-    const start = cursor;
-    const end = index === templates.length - 1 ? axisMax : Math.min(axisMax, cursor + axisSpan * template.ratio);
-    cursor = end;
-    const clipped = clipPolygonToSlab(sitePolygon, axis, start, end);
+    const cell = sorted[Math.min(sorted.length - 1, index * stride + Math.floor(random() * stride))] ?? sorted[0];
 
     return {
       template,
-      corners: clipped.length >= 3 ? clipped : sitePolygon,
+      x: cell?.position.x ?? 0,
+      z: cell?.position.z ?? 0,
     };
   });
+}
+
+function createTemplateTargets(tileCount: number, templates: TileTemplate[]) {
+  const targets = new Map<PlanTileType, number>();
+  const rawTargets = templates.map((template) => {
+    const raw = tileCount * template.ratio;
+
+    return {
+      template,
+      count: Math.floor(raw),
+      remainder: raw % 1,
+    };
+  });
+  let assigned = rawTargets.reduce((sum, target) => sum + target.count, 0);
+
+  [...rawTargets]
+    .sort((left, right) => right.remainder - left.remainder)
+    .forEach((target) => {
+      if (assigned < tileCount) {
+        target.count += 1;
+        assigned += 1;
+      }
+    });
+
+  rawTargets.forEach(({ template, count }) => {
+    targets.set(template.tileType, count);
+  });
+
+  return targets;
+}
+
+function chooseTemplate(
+  candidate: CandidateCell,
+  centers: ReturnType<typeof createTemplateCenters>,
+  targets: Map<PlanTileType, number>,
+  assignedCounts: Map<PlanTileType, number>,
+) {
+  const available = centers.filter(({ template }) => (assignedCounts.get(template.tileType) ?? 0) < (targets.get(template.tileType) ?? 0));
+  const pool = available.length ? available : centers;
+  const closest = pool.reduce((best, center) => {
+    const distance = Math.hypot(candidate.position.x - center.x, candidate.position.z - center.z);
+    return distance < best.distance ? { center, distance } : best;
+  }, { center: pool[0], distance: Number.POSITIVE_INFINITY });
+
+  return closest.center.template;
+}
+
+function createPlanObjects(tiles: PlanTile[], catalog: FarmPlannerCatalogItem[]) {
+  const grouped = new Map<PlanTileType, PlanTile[]>();
+
+  tiles.forEach((tile) => {
+    grouped.set(tile.tileType, [...(grouped.get(tile.tileType) ?? []), tile]);
+  });
+
+  return [...grouped.entries()].map(([tileType, tileGroup]) => {
+    const first = tileGroup[0];
+    const catalogItem = catalog.find((item) => item.slug === first.assignmentSlug);
+    const center = tileGroup.reduce(
+      (sum, tile) => ({ x: sum.x + tile.position.x, z: sum.z + tile.position.z }),
+      { x: 0, z: 0 },
+    );
+    const width = Math.max(1, Math.sqrt(tileGroup.length));
+
+    return {
+      instanceId: `${tileType}_${tileGroup.length}_tiles`,
+      type: "crop" as const,
+      slug: first.assignmentSlug,
+      displayName: `${first.assignmentName} Tiles`,
+      status: "planned" as const,
+      plantedAtDay: 0,
+      position: {
+        x: Number((center.x / tileGroup.length).toFixed(2)),
+        y: 0,
+        z: Number((center.z / tileGroup.length).toFixed(2)),
+      },
+      rotation: { x: 0, y: 0, z: 0 },
+      size: {
+        width: Number(width.toFixed(1)),
+        depth: Number(Math.max(1, tileGroup.length / width).toFixed(1)),
+        height: catalogItem?.defaultSize.height ?? 1,
+      },
+      renderOverrides: {
+        ...(catalogItem?.render ?? {}),
+        color: first.color,
+        label: first.assignmentName,
+        iconPath: first.iconPath,
+      },
+      notes: `${tileGroup.length.toLocaleString("en-US")} one-foot ${first.assignmentName.toLowerCase()} tiles.`,
+    } satisfies Omit<PlanObject, "sourceId">;
+  });
+}
+
+function estimateAreaSquareFeet(points: GeometryPoint[]) {
+  const latLngPoints = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+
+  if (latLngPoints.length === points.length) {
+    const originLat = latLngPoints.reduce((sum, point) => sum + (point.lat ?? 0), 0) / latLngPoints.length;
+    const originLng = latLngPoints.reduce((sum, point) => sum + (point.lng ?? 0), 0) / latLngPoints.length;
+    const projected = latLngPoints.map((point) => latLngToFeet(point.lat ?? originLat, point.lng ?? originLng, originLat, originLng));
+
+    return shoelaceArea(projected);
+  }
+
+  return shoelaceArea(points) * 2.6;
+}
+
+function latLngToFeet(lat: number, lng: number, originLat: number, originLng: number) {
+  const metersPerDegreeLat = 111_132.92 - 559.82 * Math.cos(2 * toRadians(originLat)) + 1.175 * Math.cos(4 * toRadians(originLat));
+  const metersPerDegreeLng = 111_412.84 * Math.cos(toRadians(originLat)) - 93.5 * Math.cos(3 * toRadians(originLat));
+
+  return {
+    x: (lng - originLng) * metersPerDegreeLng * 3.28084,
+    y: (lat - originLat) * metersPerDegreeLat * 3.28084,
+  };
+}
+
+function pointInPolygon(point: GeometryPoint, polygon: GeometryPoint[]) {
+  let inside = false;
+
+  for (let index = 0, previousIndex = polygon.length - 1; index < polygon.length; previousIndex = index, index += 1) {
+    const current = polygon[index];
+    const previous = polygon[previousIndex];
+    const intersects =
+      current.y > point.y !== previous.y > point.y &&
+      point.x < ((previous.x - current.x) * (point.y - current.y)) / (previous.y - current.y || 0.000001) + current.x;
+
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+}
+
+function distanceToPolygonEdge(point: GeometryPoint, polygon: GeometryPoint[]) {
+  return polygon.reduce((best, current, index) => {
+    const next = polygon[(index + 1) % polygon.length];
+    return Math.min(best, distanceToSegment(point, current, next));
+  }, Number.POSITIVE_INFINITY);
+}
+
+function distanceToSegment(point: GeometryPoint, a: GeometryPoint, b: GeometryPoint) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSquared = dx * dx + dy * dy;
+
+  if (!lengthSquared) {
+    return Math.hypot(point.x - a.x, point.y - a.y);
+  }
+
+  const ratio = clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared, 0, 1);
+  const x = a.x + ratio * dx;
+  const y = a.y + ratio * dy;
+
+  return Math.hypot(point.x - x, point.y - y);
+}
+
+function tileBoundsFor(tiles: PlanTile[]) {
+  if (!tiles.length) {
+    return { width: 8, depth: 8 };
+  }
+
+  const minX = Math.min(...tiles.map((tile) => tile.position.x));
+  const maxX = Math.max(...tiles.map((tile) => tile.position.x));
+  const minZ = Math.min(...tiles.map((tile) => tile.position.z));
+  const maxZ = Math.max(...tiles.map((tile) => tile.position.z));
+
+  return {
+    width: Math.ceil(maxX - minX + 1),
+    depth: Math.ceil(maxZ - minZ + 1),
+  };
 }
 
 function boundsFor(points: GeometryPoint[]) {
@@ -431,82 +676,6 @@ function boundsFor(points: GeometryPoint[]) {
   );
 }
 
-function clipPolygonToSlab(
-  points: GeometryPoint[],
-  axis: "x" | "y",
-  minValue: number,
-  maxValue: number,
-) {
-  const lowerClipped = clipHalfPlane(points, axis, minValue, true);
-  return clipHalfPlane(lowerClipped, axis, maxValue, false);
-}
-
-function clipHalfPlane(
-  points: GeometryPoint[],
-  axis: "x" | "y",
-  boundary: number,
-  keepGreater: boolean,
-) {
-  if (!points.length) {
-    return [];
-  }
-
-  const result: GeometryPoint[] = [];
-
-  for (let index = 0; index < points.length; index += 1) {
-    const current = points[index];
-    const previous = points[(index + points.length - 1) % points.length];
-    const currentInside = keepGreater ? current[axis] >= boundary : current[axis] <= boundary;
-    const previousInside = keepGreater ? previous[axis] >= boundary : previous[axis] <= boundary;
-
-    if (currentInside !== previousInside) {
-      result.push(intersection(previous, current, axis, boundary));
-    }
-
-    if (currentInside) {
-      result.push(current);
-    }
-  }
-
-  return dedupePoints(result);
-}
-
-function intersection(a: GeometryPoint, b: GeometryPoint, axis: "x" | "y", boundary: number) {
-  const denominator = b[axis] - a[axis];
-
-  if (Math.abs(denominator) < 0.000001) {
-    return { ...a };
-  }
-
-  const ratio = (boundary - a[axis]) / denominator;
-
-  return interpolate(a, b, ratio);
-}
-
-function dedupePoints(points: GeometryPoint[]) {
-  return points.filter((point, index) => {
-    const previous = points[(index + points.length - 1) % points.length];
-    return !previous || Math.hypot(point.x - previous.x, point.y - previous.y) > 0.001;
-  });
-}
-
-function interpolate(a: GeometryPoint, b: GeometryPoint, value: number): GeometryPoint {
-  const point: GeometryPoint = {
-    x: Number((a.x + (b.x - a.x) * value).toFixed(2)),
-    y: Number((a.y + (b.y - a.y) * value).toFixed(2)),
-  };
-
-  if (Number.isFinite(a.lat) && Number.isFinite(b.lat)) {
-    point.lat = Number(((a.lat ?? 0) + ((b.lat ?? 0) - (a.lat ?? 0)) * value).toFixed(7));
-  }
-
-  if (Number.isFinite(a.lng) && Number.isFinite(b.lng)) {
-    point.lng = Number(((a.lng ?? 0) + ((b.lng ?? 0) - (a.lng ?? 0)) * value).toFixed(7));
-  }
-
-  return point;
-}
-
 function getCentroid(points: GeometryPoint[]): GeometryPoint {
   const total = points.reduce(
     (sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }),
@@ -519,7 +688,7 @@ function getCentroid(points: GeometryPoint[]): GeometryPoint {
   };
 }
 
-function shoelaceArea(points: GeometryPoint[]) {
+function shoelaceArea(points: { x: number; y: number }[]) {
   return Math.abs(
     points.reduce((sum, point, index) => {
       const next = points[(index + 1) % points.length];
@@ -528,19 +697,8 @@ function shoelaceArea(points: GeometryPoint[]) {
   );
 }
 
-function sizeForPartition(partition: PlanPartition, fallback?: ObjectSize): ObjectSize {
-  const width = Math.max(2, Math.sqrt(partition.areaSquareMeters) * 0.55);
-  const depth = Math.max(2, partition.areaSquareMeters / Math.max(width, 1));
-
-  return {
-    width: Number((fallback?.width ? Math.max(fallback.width, width) : width).toFixed(1)),
-    depth: Number((fallback?.depth ? Math.max(fallback.depth, depth) : depth).toFixed(1)),
-    height: fallback?.height ?? (partition.type === "greenhouse" ? 2.8 : 1),
-  };
-}
-
 function adjustWaterNeed(
-  waterNeed: PlanPartition["waterNeed"],
+  waterNeed: PlanTile["waterNeed"],
   weatherProfile: FarmPlannerInput["weatherProfile"],
 ) {
   if (weatherProfile !== "dry" || waterNeed === "high") {
@@ -553,22 +711,22 @@ function adjustWaterNeed(
 function weatherHighlight(weatherProfile: FarmPlannerInput["weatherProfile"]) {
   switch (weatherProfile) {
     case "dry":
-      return "Dry-weather logic increases water capture and assigns deeper mulch.";
+      return "Dry-weather logic favors mulch, herbs, and lower-water pollinator blocks.";
     case "wet":
-      return "Wet-weather logic favors raised beds and overflow-safe habitat edges.";
+      return "Wet-weather logic favors raised plant blocks and overflow-tolerant edges.";
     case "cold":
-      return "Cold-weather logic gives protected starts and thermal mass extra value.";
+      return "Cold-weather logic keeps cool-season tiles prominent and clusters warm crops tightly.";
     default:
-      return "Temperate-weather logic balances food, habitat, water, and animal cycling.";
+      return "Temperate-weather logic balances fruiting crops, greens, roots, herbs, and habitat.";
   }
 }
 
-function scorePlan(input: FarmPlannerInput, partitions: PlanPartition[]) {
-  const diversity = new Set(partitions.map((partition) => partition.type)).size / 6;
-  const climateFit = input.weatherProfile === "temperate" ? 0.84 : 0.88;
-  const goalFit = input.strategy === "balanced" ? 0.86 : 0.82;
+function scorePlan(input: FarmPlannerInput, tiles: PlanTile[]) {
+  const diversity = new Set(tiles.map((tile) => tile.tileType)).size / 9;
+  const climateFit = input.weatherProfile === "temperate" ? 0.85 : 0.88;
+  const goalFit = input.strategy === "balanced" ? 0.88 : 0.84;
 
-  return Number(Math.min(0.97, climateFit * 0.45 + goalFit * 0.35 + diversity * 0.2).toFixed(2));
+  return Number(Math.min(0.98, climateFit * 0.42 + goalFit * 0.34 + diversity * 0.24).toFixed(2));
 }
 
 function createSeededRandom(seed: string) {
@@ -587,6 +745,10 @@ function createSeededRandom(seed: string) {
 
     return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+function toRadians(value: number) {
+  return (value * Math.PI) / 180;
 }
 
 function clamp(value: number, min: number, max: number) {

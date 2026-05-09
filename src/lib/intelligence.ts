@@ -361,6 +361,13 @@ function summarizePlan(plan: Plan) {
       soilStrategy: partition.soilStrategy,
       notes: partition.notes,
     })),
+    tiles: plan.tiles?.length
+      ? {
+          count: plan.tiles.length,
+          areaSquareFeet: plan.tiles.reduce((sum, tile) => sum + tile.areaSquareFeet, 0),
+          types: summarizePlanTiles(plan.tiles),
+        }
+      : undefined,
     objects: plan.objects.map((object) => ({
       instanceId: object.instanceId,
       type: object.type,
@@ -379,6 +386,35 @@ function summarizePlan(plan: Plan) {
       score: plan.generation.score,
     },
   };
+}
+
+function summarizePlanTiles(tiles: NonNullable<Plan["tiles"]>) {
+  const groups = new Map<string, {
+    tileType: string;
+    assignmentName: string;
+    count: number;
+    sunExposure: string;
+    waterNeed: string;
+  }>();
+
+  tiles.forEach((tile) => {
+    const current = groups.get(tile.tileType);
+
+    if (current) {
+      current.count += 1;
+      return;
+    }
+
+    groups.set(tile.tileType, {
+      tileType: tile.tileType,
+      assignmentName: tile.assignmentName,
+      count: 1,
+      sunExposure: tile.sunExposure,
+      waterNeed: tile.waterNeed,
+    });
+  });
+
+  return [...groups.values()].sort((left, right) => right.count - left.count);
 }
 
 function summarizeInventory(items: InventoryItem[]) {

@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { getShopSnapshot, saveShopDisplaySlots, type ShopDisplaySaveSlot } from "@/lib/shop";
+import {
+  getShopSnapshot,
+  saveShopDisplaySlots,
+  ShopValidationError,
+  type ShopDisplaySaveSlot,
+} from "@/lib/shop";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +29,7 @@ export async function PATCH(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to save shop display") },
-      { status: isRequestError(error) ? 400 : 500 },
+      { status: isRequestError(error) || error instanceof ShopValidationError ? 400 : 500 },
     );
   }
 }
@@ -55,6 +60,12 @@ function normalizeRequest(raw: unknown): ShopDisplaySaveSlot[] {
       priceCents: typeof value.priceCents === "number" ? value.priceCents : undefined,
       signText: typeof value.signText === "string" ? value.signText : undefined,
       visible: typeof value.visible === "boolean" ? value.visible : undefined,
+      imageId:
+        typeof value.imageId === "string"
+          ? value.imageId
+          : value.imageId === null
+            ? null
+            : undefined,
     };
   });
 }
