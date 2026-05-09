@@ -110,6 +110,26 @@ export type InventoryItem = {
   updatedAt: Date;
 };
 
+export type ShopDisplaySlot = {
+  inventoryItemId: ObjectId;
+  position: number;
+  displayAmount: number;
+  displayUnit: string;
+  priceCents: number;
+  signText: string;
+  visible: boolean;
+};
+
+export type ShopDisplay = {
+  _id: ObjectId;
+  userId: ObjectId;
+  theme: "farm-stand";
+  layoutMode: "shelves";
+  slots: ShopDisplaySlot[];
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type Farm = {
   _id: ObjectId;
   userId: ObjectId;

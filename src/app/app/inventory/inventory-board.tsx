@@ -8,6 +8,15 @@ import type { InventoryViewItem } from "@/lib/inventory";
 
 type InventoryColumn = "sell" | "need";
 
+type InputPlan = {
+  id: string;
+  name: string;
+  season: string;
+  currentDate: string;
+  objectsCount: number;
+  summary: string;
+};
+
 const categoryLabels: Record<InventoryViewItem["category"], string> = {
   harvest: "Harvest",
   seeds: "Seeds",
@@ -40,6 +49,18 @@ const statuses = Object.keys(statusStyles) as InventoryViewItem["status"][];
 export function InventoryBoard({ initialItems }: { initialItems: InventoryViewItem[] }) {
   const [items, setItems] = useState(initialItems);
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [inputOpen, setInputOpen] = useState(false);
+  const [inputPlans, setInputPlans] = useState<InputPlan[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState("");
+  const [inputPrompt, setInputPrompt] = useState("");
+  const [isLoadingPlans, setIsLoadingPlans] = useState(false);
+  const [isGeneratingInputs, setIsGeneratingInputs] = useState(false);
+  const [isCommittingInputs, setIsCommittingInputs] = useState(false);
+  const [inputError, setInputError] = useState<string | null>(null);
+  const [previewItems, setPreviewItems] = useState<InventoryViewItem[]>([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const sellableItems = useMemo(
     () => items.filter((item) => ["harvest", "preserves"].includes(item.category)),
@@ -71,6 +92,40 @@ export function InventoryBoard({ initialItems }: { initialItems: InventoryViewIt
           : item,
       ),
     );
+  }
+
+  async function deleteItem(id: string) {
+    if (deletingIds.has(id)) {
+      return;
+    }
+
+    setDeleteError(null);
+
+    if (!isPersistedInventoryId(id)) {
+      setItems((current) => current.filter((item) => item.id !== id));
+      return;
+    }
+
+    setDeletingIds((current) => new Set(current).add(id));
+
+    try {
+      const response = await fetch(`/api/inventory/items/${id}`, { method: "DELETE" });
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to delete inventory item");
+      }
+
+      setItems((current) => current.filter((item) => item.id !== id));
+    } catch (error) {
+      setDeleteError(formatClientError(error));
+    } finally {
+      setDeletingIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
   }
 
   function moveItem(id: string, column: InventoryColumn) {
@@ -130,6 +185,107 @@ export function InventoryBoard({ initialItems }: { initialItems: InventoryViewIt
     setDraggedId(null);
   }
 
+  async function openInputPanel() {
+    setInputOpen((current) => !current);
+    setInputError(null);
+
+    if (inputPlans.length) {
+      return;
+    }
+
+    setIsLoadingPlans(true);
+
+    try {
+      const response = await fetch("/api/inventory/input", { cache: "no-store" });
+      const data = (await response.json()) as { plans?: InputPlan[]; error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to load plans");
+      }
+
+      const plans = data.plans ?? [];
+      setInputPlans(plans);
+      setSelectedPlanId(plans[0]?.id ?? "");
+    } catch (error) {
+      setInputError(formatClientError(error));
+    } finally {
+      setIsLoadingPlans(false);
+    }
+  }
+
+  async function generateInputs() {
+    setInputError(null);
+    setIsGeneratingInputs(true);
+    setPreviewItems([]);
+    setPreviewOpen(false);
+
+    try {
+      const response = await fetch("/api/inventory/input", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "preview",
+          planId: selectedPlanId,
+          prompt: inputPrompt,
+        }),
+      });
+      const data = (await response.json()) as { items?: InventoryViewItem[]; error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to generate inputs");
+      }
+
+      const nextItems = data.items ?? [];
+      setPreviewItems(nextItems);
+      setPreviewOpen(true);
+    } catch (error) {
+      setInputError(formatClientError(error));
+    } finally {
+      setIsGeneratingInputs(false);
+    }
+  }
+
+  async function commitPreviewItems() {
+    setInputError(null);
+    setIsCommittingInputs(true);
+
+    try {
+      const response = await fetch("/api/inventory/input", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "commit",
+          planId: selectedPlanId,
+          prompt: inputPrompt,
+          items: previewItems.map(toCommitItem),
+        }),
+      });
+      const data = (await response.json()) as { items?: InventoryViewItem[]; error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to add inputs");
+      }
+
+      const nextItems = data.items ?? [];
+      setItems((current) => mergeInventoryItems(current, nextItems));
+      setPreviewItems([]);
+      setPreviewOpen(false);
+      setInputPrompt("");
+    } catch (error) {
+      setInputError(formatClientError(error));
+    } finally {
+      setIsCommittingInputs(false);
+    }
+  }
+
+  function closePreviewModal() {
+    if (isCommittingInputs) {
+      return;
+    }
+
+    setPreviewOpen(false);
+  }
+
   return (
     <>
       <div className="grid gap-3 lg:grid-cols-2">
@@ -143,6 +299,8 @@ export function InventoryBoard({ initialItems }: { initialItems: InventoryViewIt
           onDropItem={handleDropOnItem}
           onUpdateItem={updateItem}
           onUpdateQuantity={updateQuantity}
+          onDeleteItem={deleteItem}
+          deletingIds={deletingIds}
         />
         <InventoryColumn
           title="Need"
@@ -154,8 +312,35 @@ export function InventoryBoard({ initialItems }: { initialItems: InventoryViewIt
           onDropItem={handleDropOnItem}
           onUpdateItem={updateItem}
           onUpdateQuantity={updateQuantity}
+          onDeleteItem={deleteItem}
+          deletingIds={deletingIds}
+          inputOpen={inputOpen}
+          inputPlans={inputPlans}
+          selectedPlanId={selectedPlanId}
+          inputPrompt={inputPrompt}
+          isLoadingPlans={isLoadingPlans}
+          isGeneratingInputs={isGeneratingInputs}
+          inputError={inputError}
+          setSelectedPlanId={setSelectedPlanId}
+          setInputPrompt={setInputPrompt}
+          onToggleInput={openInputPanel}
+          onGenerateInputs={generateInputs}
         />
       </div>
+
+      {deleteError ? (
+        <div className="mt-3 rounded-md border-2 border-[#efb16b] bg-[#fff1dc] px-3 py-2 text-sm font-semibold text-[#7a461f]">
+          {deleteError}
+        </div>
+      ) : null}
+
+      <InventoryInputPreviewModal
+        open={previewOpen}
+        items={previewItems}
+        isCommitting={isCommittingInputs}
+        onClose={closePreviewModal}
+        onConfirm={commitPreviewItems}
+      />
 
       <InventoryTable
         items={items}
@@ -164,6 +349,8 @@ export function InventoryBoard({ initialItems }: { initialItems: InventoryViewIt
         onDropRow={handleTableDrop}
         onUpdateItem={updateItem}
         onUpdateQuantity={updateQuantity}
+        onDeleteItem={deleteItem}
+        deletingIds={deletingIds}
       />
     </>
   );
@@ -179,6 +366,19 @@ function InventoryColumn({
   onDropItem,
   onUpdateItem,
   onUpdateQuantity,
+  onDeleteItem,
+  deletingIds,
+  inputOpen = false,
+  inputPlans = [],
+  selectedPlanId = "",
+  inputPrompt = "",
+  isLoadingPlans = false,
+  isGeneratingInputs = false,
+  inputError = null,
+  setSelectedPlanId,
+  setInputPrompt,
+  onToggleInput,
+  onGenerateInputs,
 }: {
   title: string;
   column: InventoryColumn;
@@ -189,6 +389,19 @@ function InventoryColumn({
   onDropItem: (column: InventoryColumn, targetId: string) => void;
   onUpdateItem: (id: string, patch: Partial<InventoryViewItem>) => void;
   onUpdateQuantity: (id: string, patch: Partial<InventoryViewItem["quantity"]>) => void;
+  onDeleteItem: (id: string) => void;
+  deletingIds: Set<string>;
+  inputOpen?: boolean;
+  inputPlans?: InputPlan[];
+  selectedPlanId?: string;
+  inputPrompt?: string;
+  isLoadingPlans?: boolean;
+  isGeneratingInputs?: boolean;
+  inputError?: string | null;
+  setSelectedPlanId?: (planId: string) => void;
+  setInputPrompt?: (prompt: string) => void;
+  onToggleInput?: () => void;
+  onGenerateInputs?: () => void;
 }) {
   const isSell = column === "sell";
   const headingClass = isSell
@@ -220,6 +433,21 @@ function InventoryColumn({
         </span>
       </div>
       <div className="grid gap-1.5 bg-[#fcf6e4] p-2">
+        {!isSell ? (
+          <InputPlanner
+            open={inputOpen}
+            plans={inputPlans}
+            selectedPlanId={selectedPlanId}
+            prompt={inputPrompt}
+            isLoadingPlans={isLoadingPlans}
+            isGenerating={isGeneratingInputs}
+            error={inputError}
+            setSelectedPlanId={setSelectedPlanId}
+            setPrompt={setInputPrompt}
+            onToggle={onToggleInput}
+            onGenerate={onGenerateInputs}
+          />
+        ) : null}
         {items.length === 0 ? (
           <div className="grid place-items-center rounded-md border-2 border-dashed border-[#d4c39a] bg-[#fffdf5] py-6 text-center text-xs text-[#9a8a66]">
             <PixelGlyph name="wheat" className="mb-1 size-6 text-[#c9a64a]" />
@@ -237,10 +465,195 @@ function InventoryColumn({
             onDropItem={() => onDropItem(column, item.id)}
             onUpdateItem={onUpdateItem}
             onUpdateQuantity={onUpdateQuantity}
+            onDeleteItem={onDeleteItem}
+            isDeleting={deletingIds.has(item.id)}
           />
         ))}
       </div>
     </section>
+  );
+}
+
+function InputPlanner({
+  open,
+  plans,
+  selectedPlanId,
+  prompt,
+  isLoadingPlans,
+  isGenerating,
+  error,
+  setSelectedPlanId,
+  setPrompt,
+  onToggle,
+  onGenerate,
+}: {
+  open: boolean;
+  plans: InputPlan[];
+  selectedPlanId: string;
+  prompt: string;
+  isLoadingPlans: boolean;
+  isGenerating: boolean;
+  error: string | null;
+  setSelectedPlanId?: (planId: string) => void;
+  setPrompt?: (prompt: string) => void;
+  onToggle?: () => void;
+  onGenerate?: () => void;
+}) {
+  return (
+    <div className="rounded-md border-2 border-[#c9b88a] bg-[#fffdf5] p-2 shadow-[0_2px_0_#b29c66]">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-2 rounded-md border-2 border-[#8b6f3e] bg-[#fff1dc] px-2 py-1.5 text-left font-mono text-xs font-black uppercase tracking-[0.12em] text-[#6f3f1c] shadow-[0_2px_0_#5e4a26] active:translate-y-0.5 active:shadow-[0_1px_0_#5e4a26]"
+      >
+        <PixelGlyph name="seed" className="size-4" />
+        <span>Input</span>
+        <span className="ml-auto">{open ? "Close" : "Open"}</span>
+      </button>
+
+      {open ? (
+        <div className="mt-2 grid gap-2">
+          <select
+            aria-label="Select plan for generated inputs"
+            value={selectedPlanId}
+            onChange={(event) => setSelectedPlanId?.(event.target.value)}
+            disabled={isLoadingPlans || isGenerating}
+            className="h-9 rounded-md border-2 border-[#c9b88a] bg-[#fffaf0] px-2 text-sm font-semibold text-[#5f563f]"
+          >
+            {isLoadingPlans ? <option>Loading plans...</option> : null}
+            {!isLoadingPlans && !plans.length ? <option>No plans found</option> : null}
+            {plans.map((plan) => (
+              <option key={plan.id} value={plan.id}>
+                {plan.name} · {plan.season} · {plan.objectsCount} objects
+              </option>
+            ))}
+          </select>
+          <textarea
+            aria-label="Describe plan input needs"
+            value={prompt}
+            onChange={(event) => setPrompt?.(event.target.value)}
+            disabled={isGenerating}
+            placeholder="Example: I want to expand the chicken area and start more tomatoes next week."
+            className="min-h-20 resize-y rounded-md border-2 border-[#c9b88a] bg-white px-2 py-2 text-sm text-[#3b2a14] outline-none focus:border-[#9bb979]"
+          />
+          {error ? (
+            <div className="rounded-md border-2 border-[#efb16b] bg-[#fff1dc] px-2 py-1 text-xs font-semibold text-[#7a461f]">
+              {error}
+            </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={!selectedPlanId || prompt.trim().length < 8 || isGenerating || isLoadingPlans}
+            className="rounded-md border-2 border-[#8b6f3e] bg-[#e4f7f8] px-3 py-2 font-mono text-xs font-black uppercase tracking-[0.12em] text-[#245c65] shadow-[0_2px_0_#5e4a26] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isGenerating ? "Generating..." : "Preview required items"}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function InventoryInputPreviewModal({
+  open,
+  items,
+  isCommitting,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  items: InventoryViewItem[];
+  isCommitting: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="inventory-input-preview-title"
+      className="inventory-modal-backdrop fixed inset-0 z-50 grid place-items-center bg-[#1d291bcc]/70 p-4 backdrop-blur-sm"
+      onMouseDown={onClose}
+    >
+      <div
+        style={{ ["--pixel-frame-bg" as string]: "#fffdf5" }}
+        className="inventory-modal-panel pixel-frame-2 w-full max-w-2xl overflow-hidden rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] shadow-[0_6px_0_#3b2a14]"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="pixel-gradient-meadow flex items-center gap-2 border-b-2 border-[#a8916a] px-3 py-2">
+          <span className="grid size-8 place-items-center rounded-md border-2 border-[#8b6f3e] bg-[#fffdf5] text-[#5e4a26] shadow-[0_1px_0_#5e4a26]">
+            <PixelGlyph name="seed" className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <h2
+              id="inventory-input-preview-title"
+              className="font-mono text-sm font-black uppercase tracking-[0.14em] text-[#2d311f]"
+            >
+              Confirm input list
+            </h2>
+            <div className="text-xs font-semibold text-[#5f563f]">{items.length} items ready to add</div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isCommitting}
+            className="ml-auto grid size-8 place-items-center rounded-md border-2 border-[#8b6f3e] bg-[#fffdf5] font-mono text-sm font-black text-[#5e4a26] shadow-[0_2px_0_#5e4a26] disabled:opacity-50"
+            aria-label="Close input preview"
+          >
+            X
+          </button>
+        </div>
+
+        <div className="grid max-h-[60vh] gap-2 overflow-y-auto bg-[#fcf6e4] p-3">
+          {items.map((item, index) => (
+            <div
+              key={item.id}
+              style={{ ["--preview-item-index" as string]: index }}
+              className="inventory-preview-item grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-md border-2 border-[#c9b88a] bg-[#fffdf5] px-2 py-2 shadow-[0_2px_0_#b29c66]"
+            >
+              <InventoryToken item={item} compact />
+              <div className="min-w-0">
+                <div className="truncate text-sm font-black text-[#2d311f]">{item.name}</div>
+                <div className="flex flex-wrap items-center gap-1 pt-1">
+                  <span className={`rounded-md border-2 px-1.5 py-0.5 text-[10px] font-bold uppercase ${statusStyles[item.status]}`}>
+                    {categoryLabels[item.category]}
+                  </span>
+                  <span className="rounded-md border border-[#d8c8a2] bg-[#fff8dc] px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#5e4a26]">
+                    {item.quantity.amount} {item.quantity.unit}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs font-medium text-[#68583a]">{item.notes}</p>
+              </div>
+              <PixelGlyph name="sparkle" className="size-5 text-[#c9a64a]" />
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t-2 border-[#a8916a] bg-[#fffaf0] px-3 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isCommitting}
+            className="rounded-md border-2 border-[#8b6f3e] bg-[#fffdf5] px-3 py-2 font-mono text-xs font-black uppercase tracking-[0.12em] text-[#5e4a26] shadow-[0_2px_0_#5e4a26] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!items.length || isCommitting}
+            className="rounded-md border-2 border-[#4d7c48] bg-[#d8f0c2] px-3 py-2 font-mono text-xs font-black uppercase tracking-[0.12em] text-[#2f5a2b] shadow-[0_2px_0_#365833] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isCommitting ? "Adding..." : "Add to inventory"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -251,6 +664,8 @@ function InventoryCard({
   onDropItem,
   onUpdateItem,
   onUpdateQuantity,
+  onDeleteItem,
+  isDeleting,
 }: {
   item: InventoryViewItem;
   sellMode: boolean;
@@ -258,6 +673,8 @@ function InventoryCard({
   onDropItem: () => void;
   onUpdateItem: (id: string, patch: Partial<InventoryViewItem>) => void;
   onUpdateQuantity: (id: string, patch: Partial<InventoryViewItem["quantity"]>) => void;
+  onDeleteItem: (id: string) => void;
+  isDeleting: boolean;
 }) {
   function handleDragStart(event: DragEvent<HTMLElement>) {
     event.dataTransfer.effectAllowed = "move";
@@ -328,11 +745,25 @@ function InventoryCard({
         </div>
       </div>
       <div className="grid w-[100px] gap-1 text-right">
-        {sellMode ? (
-          <span className="ml-auto grid size-6 place-items-center rounded-md border-2 border-[#7eb3bd] bg-[#e4f7f8] text-[#245c65] shadow-[0_1px_0_#5e8a91]">
-            <PixelGlyph name="wagon" className="size-3.5" />
-          </span>
-        ) : null}
+        <div className="flex items-center justify-end gap-1">
+          {sellMode ? (
+            <span className="grid size-6 place-items-center rounded-md border-2 border-[#7eb3bd] bg-[#e4f7f8] text-[#245c65] shadow-[0_1px_0_#5e8a91]">
+              <PixelGlyph name="wagon" className="size-3.5" />
+            </span>
+          ) : null}
+          <button
+            type="button"
+            aria-label={`Delete ${item.name}`}
+            disabled={isDeleting}
+            onClick={(event) => {
+              event.stopPropagation();
+              onDeleteItem(item.id);
+            }}
+            className="grid size-6 place-items-center rounded-md border-2 border-[#c98989] bg-[#fff0f0] text-[#8a3434] shadow-[0_1px_0_#8b6f3e] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <PixelGlyph name="trash" className="size-3.5" />
+          </button>
+        </div>
         <div className="grid grid-cols-[1fr_44px] gap-1 rounded-md border-2 border-[#c9b88a] bg-[#fff8dc] p-0.5 shadow-[inset_0_-2px_0_rgba(95,80,43,0.12)]">
           <input
             aria-label={`${item.name} amount`}
@@ -360,6 +791,8 @@ function InventoryTable({
   onDropRow,
   onUpdateItem,
   onUpdateQuantity,
+  onDeleteItem,
+  deletingIds,
 }: {
   items: InventoryViewItem[];
   draggedId: string | null;
@@ -367,6 +800,8 @@ function InventoryTable({
   onDropRow: (targetId: string) => void;
   onUpdateItem: (id: string, patch: Partial<InventoryViewItem>) => void;
   onUpdateQuantity: (id: string, patch: Partial<InventoryViewItem["quantity"]>) => void;
+  onDeleteItem: (id: string) => void;
+  deletingIds: Set<string>;
 }) {
   function handleDragStart(event: DragEvent<HTMLElement>, id: string) {
     event.dataTransfer.effectAllowed = "move";
@@ -391,7 +826,7 @@ function InventoryTable({
         </span>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[980px] border-collapse text-left">
+        <table className="w-full min-w-[1040px] border-collapse text-left">
           <thead>
             <tr className="border-b-2 border-[#c9b88a] bg-[#edf5df] text-xs font-bold uppercase tracking-[0.08em] text-[#526b3c]">
               <th className="w-[260px] px-3 py-2">Item</th>
@@ -402,6 +837,7 @@ function InventoryTable({
               <th className="w-[155px] px-3 py-2">Location</th>
               <th className="w-[135px] px-3 py-2">Source</th>
               <th className="px-3 py-2">Note</th>
+              <th className="w-[72px] px-3 py-2">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#eadfca] [&>tr:nth-child(even)]:bg-[#fdf8e4]">
@@ -490,6 +926,20 @@ function InventoryTable({
                 <EditableTextCell item={item} field="location" onUpdateItem={onUpdateItem} />
                 <EditableTextCell item={item} field="source" onUpdateItem={onUpdateItem} />
                 <EditableTextCell item={item} field="notes" onUpdateItem={onUpdateItem} wide />
+                <td className="px-3 py-2">
+                  <button
+                    type="button"
+                    aria-label={`Delete ${item.name} row`}
+                    disabled={deletingIds.has(item.id)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onDeleteItem(item.id);
+                    }}
+                    className="grid size-8 place-items-center rounded-md border-2 border-[#c98989] bg-[#fff0f0] text-[#8a3434] shadow-[0_1px_0_#8b6f3e] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <PixelGlyph name="trash" className="size-4" />
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -583,4 +1033,32 @@ function iconForItem(item: InventoryViewItem) {
   }
 
   return "/inventory-icons/potato.png";
+}
+
+function mergeInventoryItems(current: InventoryViewItem[], next: InventoryViewItem[]) {
+  const byId = new Map(current.map((item) => [item.id, item]));
+
+  for (const item of next) {
+    byId.set(item.id, item);
+  }
+
+  return Array.from(byId.values());
+}
+
+function formatClientError(error: unknown) {
+  return error instanceof Error ? error.message : "Something went wrong";
+}
+
+function isPersistedInventoryId(id: string) {
+  return /^[0-9a-f]{24}$/i.test(id);
+}
+
+function toCommitItem(item: InventoryViewItem) {
+  return {
+    name: item.name,
+    category: item.category,
+    quantity: item.quantity,
+    reason: item.notes,
+    location: item.location,
+  };
 }

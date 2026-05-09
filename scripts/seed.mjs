@@ -324,6 +324,7 @@ async function ensureIndexes(db) {
     db.collection("plans").createIndex({ userId: 1, farmId: 1 }),
     db.collection("inventory_items").createIndex({ userId: 1, category: 1, status: 1 }),
     db.collection("inventory_items").createIndex({ userId: 1, name: 1 }, { unique: true }),
+    db.collection("shop_displays").createIndex({ userId: 1 }, { unique: true }),
   ]);
 }
 

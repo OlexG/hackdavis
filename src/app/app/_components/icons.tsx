@@ -11,7 +11,8 @@ export type PixelGlyphName =
   | "sun"
   | "wagon"
   | "basket"
-  | "seed";
+  | "seed"
+  | "trash";
 
 export function PixelGlyph({
   name,
@@ -142,6 +143,15 @@ export function PixelGlyph({
           <rect {...c} x="5" y="5" width="6" height="4" />
           <rect {...c} x="7" y="10" width="2" height="3" />
           <rect fill="#fffdf5" shapeRendering="crispEdges" x="7" y="6" width="1" height="2" opacity="0.7" />
+        </>
+      ) : null}
+      {name === "trash" ? (
+        <>
+          <rect {...c} x="5" y="3" width="6" height="1" />
+          <rect {...c} x="4" y="4" width="8" height="1" />
+          <rect {...c} x="5" y="6" width="6" height="8" />
+          <rect fill="#fffdf5" shapeRendering="crispEdges" x="7" y="7" width="1" height="5" opacity="0.55" />
+          <rect fill="#fffdf5" shapeRendering="crispEdges" x="9" y="7" width="1" height="5" opacity="0.55" />
         </>
       ) : null}
     </svg>
