@@ -23,6 +23,13 @@ export type RenderConfig = {
 
 export type FarmObjectType = "crop" | "livestock";
 
+export type GeometryPoint = {
+  x: number;
+  y: number;
+  lat?: number;
+  lng?: number;
+};
+
 export type LifecycleStage = {
   name: string;
   minAgeDays: number;
@@ -97,6 +104,30 @@ export type PlanObject = {
   notes?: string;
 };
 
+export type PlanPartition = {
+  partitionId: string;
+  label: string;
+  type:
+    | "annual_beds"
+    | "perennial_guild"
+    | "livestock"
+    | "greenhouse"
+    | "water"
+    | "habitat";
+  assignmentSlug: string;
+  assignmentName: string;
+  geometry: {
+    corners: GeometryPoint[];
+    center: GeometryPoint;
+  };
+  areaSquareMeters: number;
+  sunExposure: "full" | "partial" | "shade";
+  waterNeed: "low" | "medium" | "high";
+  soilStrategy: string;
+  render: RenderConfig;
+  notes: string;
+};
+
 export type Plan = {
   _id: ObjectId;
   farmId: ObjectId;
@@ -113,6 +144,14 @@ export type Plan = {
     speed: number;
     paused: boolean;
   };
+  baseGeometry?: {
+    source: "satellite-drawn";
+    locationLabel: string;
+    points: GeometryPoint[];
+    centroid: GeometryPoint;
+    areaSquareMeters: number;
+  };
+  partitions?: PlanPartition[];
   objects: PlanObject[];
   summary: {
     description: string;

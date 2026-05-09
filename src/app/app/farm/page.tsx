@@ -1,5 +1,5 @@
-import { AppPage } from "../_components/ui";
+import { FarmPlanner } from "./farm-planner";
 
 export default function FarmPage() {
-  return <AppPage />;
+  return <FarmPlanner />;
 }
