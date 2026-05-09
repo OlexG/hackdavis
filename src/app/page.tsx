@@ -97,32 +97,22 @@ export default function Home() {
 
         <div
           id="top"
-          className="relative z-10 mx-auto flex min-h-[calc(100svh-88px)] w-full max-w-7xl items-center px-5 pb-20 pt-12 sm:px-8"
+          className="relative z-10 mx-auto flex min-h-[calc(100svh-88px)] w-full max-w-5xl items-center justify-center px-5 pb-24 pt-8 text-center sm:px-8"
         >
-          <div className="max-w-3xl text-[#fff8dc]">
-            <p className="mb-5 inline-flex border-2 border-[#fff8dc] bg-[rgba(47,111,78,0.86)] px-3 py-2 text-xs font-black uppercase shadow-[0_4px_16px_rgba(45,35,19,0.14)]">
-              Grow a farm before you grow the food
-            </p>
-            <h1 className="max-w-3xl text-5xl font-black leading-[1.02] text-[#fff8dc] drop-shadow-[0_2px_14px_rgba(39,27,16,0.28)] sm:text-6xl lg:text-7xl">
-              Plan, learn, simulate, and trade from your own living farm.
+          <div className="mx-auto max-w-xl text-[#fff8dc]">
+            <h1 className="text-4xl font-black leading-[1.04] text-[#fff8dc] drop-shadow-[0_2px_12px_rgba(39,27,16,0.24)] sm:text-5xl lg:text-6xl">
+              Plan your farm. Grow for real.
             </h1>
-            <p className="mt-6 max-w-2xl text-lg font-medium leading-8 text-[#fff3cf] sm:text-xl">
-              Sunpatch turns backyard dreams into a warm indie farming game:
-              design your beds, practice the season, track progress, then swap
-              real fruits and vegetables with your local community.
+            <p className="mx-auto mt-5 max-w-lg text-base font-semibold leading-7 text-[#fff3cf] sm:text-lg">
+              A cozy farm planner for simulating seasons, tracking progress,
+              and trading local harvests.
             </p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-7 flex justify-center">
               <a
                 href="/app/farm"
-                className="inline-flex min-h-12 items-center justify-center border-2 border-[#2d2313] bg-[#f2bd4b] px-6 text-sm font-black uppercase text-[#2d2313] shadow-[0_5px_18px_rgba(45,35,19,0.18)] transition hover:-translate-y-1"
+                className="inline-flex min-h-11 items-center justify-center border-2 border-[#2d2313] bg-[#f2bd4b] px-5 text-xs font-black uppercase text-[#2d2313] shadow-[0_5px_18px_rgba(45,35,19,0.16)] transition hover:-translate-y-1"
               >
-                Open farm console
-              </a>
-              <a
-                href="#outline"
-                className="inline-flex min-h-12 items-center justify-center border-2 border-[#fff8dc] bg-[#fff8dc] px-6 text-sm font-black uppercase text-[#2d2313] shadow-[0_5px_18px_rgba(45,35,19,0.14)] transition hover:-translate-y-1"
-              >
-                View design outline
+                Open farm
               </a>
             </div>
           </div>
