@@ -1,204 +1,344 @@
-const warnings = [
-  {
-    label: "Weather",
-    title: "Heavy rain Thursday may flood Bed 4",
-    detail: "Move loose mulch, open the lower drain, and keep fertilizer sealed until the storm clears.",
-    time: "2 days",
-    tone: "storm",
-  },
-  {
-    label: "Feed",
-    title: "Chicken feed is projected to run out",
-    detail: "Current bin weight covers roughly 4 days at the last logged ration rate.",
-    time: "4 days",
-    tone: "supply",
-  },
-  {
-    label: "Disease",
-    title: "Squash mildew pressure is high",
-    detail: "Three humid nights in a row raise risk around the north trellis and low-airflow leaves.",
-    time: "today",
-    tone: "crop",
-  },
-];
+import Image from "next/image";
+import { connection } from "next/server";
+import { getInventorySnapshot, type InventoryPlanOutput } from "@/lib/inventory";
 
-const nextActions = [
-  {
-    action: "Clear Bed 4 drainage channel",
-    why: "Prevents standing water around seedlings before rain.",
-    when: "Before Thursday",
-    effort: "25 min",
-  },
-  {
-    action: "Inspect squash leaf undersides",
-    why: "Catches mildew while pruning is still enough.",
-    when: "This evening",
-    effort: "15 min",
-  },
-  {
-    action: "Order or mill chicken feed",
-    why: "Avoids an emergency feed run later in the week.",
-    when: "By Sunday",
-    effort: "$32 est.",
-  },
-  {
-    action: "Mulch tomatoes after morning watering",
-    why: "Cuts evaporation during the next dry spell.",
-    when: "Tomorrow",
-    effort: "40 min",
-  },
-];
-
-const sectionGroups = [
-  {
-    title: "Cost Signals",
-    kicker: "Where money is leaking or about to be spent",
-    accent: "#e9823a",
-    items: [
-      "Feed spending is up 18% versus last month.",
-      "Tomatoes have high amendment cost with low first harvest.",
-      "Compost purchase likely before fall bed prep.",
-    ],
-  },
-  {
-    title: "Crop Decisions",
-    kicker: "What to plant, replace, rotate, or stop growing",
-    accent: "#4e9f5d",
-    items: [
-      "Replace bolting lettuce with chard, basil, or amaranth.",
-      "Rotate tomatoes out of Bed 2 next season.",
-      "Plant beans after garlic harvest to rebuild nitrogen.",
-    ],
-  },
-  {
-    title: "Animal Needs",
-    kicker: "Feed, water, comfort, health, and housing checks",
-    accent: "#7067c7",
-    items: [
-      "Add afternoon shade to the chicken run before the heat bump.",
-      "Egg count is down 20% from last week.",
-      "Coop bedding is overdue by 3 days.",
-    ],
-  },
-  {
-    title: "Inventory & Supplies",
-    kicker: "What is low, needed soon, or blocking work",
-    accent: "#c9823e",
-    items: [
-      "Chicken feed is below reorder level.",
-      "Mulch is needed for tomato and pepper beds.",
-      "Canning jars should be staged before cucumber harvest.",
-    ],
-  },
-  {
-    title: "Upcoming Risks",
-    kicker: "Problems likely in the next 7 to 14 days",
-    accent: "#48b9df",
-    items: [
-      "Heat wave may raise water demand next week.",
-      "Aphid pressure is likely on brassicas.",
-      "Zucchini surplus is likely in 5 to 7 days.",
-    ],
-  },
-  {
-    title: "Efficiency Suggestions",
-    kicker: "Ways to reduce cost, labor, or waste",
-    accent: "#f2bd4b",
-    items: [
-      "Move high-water crops closer to irrigation lines next planting.",
-      "Buy feed in bulk if dry storage stays below 60% humidity.",
-      "Preserve excess herbs before they flower.",
-    ],
-  },
-];
-
-const toneStyles: Record<string, string> = {
-  storm: "border-[#66aec2] bg-[#e8f8f9] text-[#245c65]",
-  supply: "border-[#efb16b] bg-[#fff1dc] text-[#7a461f]",
-  crop: "border-[#8dbd70] bg-[#edf8de] text-[#335a2d]",
+type CalendarDay = {
+  date: Date;
+  key: string;
+  day: number;
+  isCurrentMonth: boolean;
+  outputs: InventoryPlanOutput[];
 };
 
-export default function IntelligencePage() {
+const incomeSeries = [
+  { label: "Jan", value: 86 },
+  { label: "Feb", value: 112 },
+  { label: "Mar", value: 184 },
+  { label: "Apr", value: 226 },
+  { label: "May", value: 318 },
+  { label: "Jun", value: 372 },
+];
+
+const spendingSeries = [
+  { label: "Jan", value: 142 },
+  { label: "Feb", value: 128 },
+  { label: "Mar", value: 196 },
+  { label: "Apr", value: 244 },
+  { label: "May", value: 211 },
+  { label: "Jun", value: 236 },
+];
+
+const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+export default async function IntelligencePage() {
+  await connection();
+  const snapshot = await getInventorySnapshot();
+  const plan = snapshot.plan;
+  const calendarAnchor = plan?.outputs[0]?.startsAt ?? plan?.currentDate ?? new Date().toISOString();
+  const calendarDays = buildCalendarDays(calendarAnchor, plan?.outputs ?? []);
+
   return (
     <section className="min-h-[calc(100vh-7rem)] overflow-hidden rounded-lg border border-[#d9d2b8] bg-[#fffdf5] text-[#2d2313] shadow-[0_14px_0_rgba(69,89,49,0.08)]">
-      <div className="grid gap-4 p-4 xl:grid-cols-[1.05fr_0.95fr]">
-        <section className="rounded-md border border-[#d9d2b8] bg-[#fff8dc]">
-          <SectionHeader eyebrow="Immediate Warnings" title="Prevent loss, illness, damage, or urgent extra cost" />
-          <div className="grid gap-3 p-3">
-            {warnings.map((warning) => (
-              <article key={warning.title} className="rounded border border-[#dfd2ae] bg-[#fffdf5] p-3">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <span className={`rounded border px-2 py-1 text-xs font-bold ${toneStyles[warning.tone]}`}>
-                      {warning.label}
-                    </span>
-                    <h3 className="mt-3 text-base font-black text-[#27351f]">{warning.title}</h3>
-                  </div>
-                  <span className="rounded border border-[#d9d2b8] bg-[#fbf4df] px-2 py-1 font-mono text-xs font-bold text-[#6b5f47]">
-                    {warning.time}
-                  </span>
-                </div>
-                <p className="mt-2 text-sm leading-6 text-[#6c614d]">{warning.detail}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="rounded-md border border-[#d9d2b8] bg-[#edf5df]">
-          <SectionHeader eyebrow="What To Do Next" title="Ranked actions with the reason and effort visible" />
-          <div className="divide-y divide-[#d9d2b8]">
-            {nextActions.map((item, index) => (
-              <article key={item.action} className="grid grid-cols-[44px_1fr] gap-3 bg-[#fffdf5] p-3 first:bg-[#fffaf0]">
-                <span className="grid size-9 place-items-center rounded border border-[#7fa36a] bg-[#eaf6d8] font-mono text-sm font-black text-[#2f6f4e]">
-                  {index + 1}
-                </span>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <h3 className="text-base font-black text-[#27351f]">{item.action}</h3>
-                    <span className="rounded border border-[#d9d2b8] bg-[#fbf4df] px-2 py-1 font-mono text-xs font-bold text-[#6b5f47]">
-                      {item.effort}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm leading-6 text-[#6c614d]">{item.why}</p>
-                  <p className="mt-2 text-xs font-bold uppercase tracking-[0.08em] text-[#607145]">{item.when}</p>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-
+      <div className="p-4">
+        <CalendarPanel plan={plan} days={calendarDays} />
       </div>
 
-      <div className="grid gap-4 px-4 pb-4 md:grid-cols-2 xl:grid-cols-3">
-        {sectionGroups.map((section) => (
-          <section key={section.title} className="overflow-hidden rounded-md border border-[#d9d2b8] bg-[#fffdf5]">
-            <div className="border-b border-[#d9d2b8] bg-[#fbf4df] p-3">
-              <div className="mb-2 flex items-center gap-2">
-                <span className="size-3 rounded-sm border border-[#8f8267]" style={{ backgroundColor: section.accent }} />
-                <span className="text-xs font-bold uppercase tracking-[0.1em] text-[#607145]">{section.title}</span>
-              </div>
-              <h2 className="text-lg font-black leading-tight text-[#27351f]">{section.kicker}</h2>
-            </div>
-            <div className="grid gap-2 p-3">
-              {section.items.map((item) => (
-                <div key={item} className="grid grid-cols-[12px_1fr] gap-2 rounded border border-[#eadfca] bg-[#fffaf0] p-2">
-                  <span className="mt-2 size-2 rounded-sm" style={{ backgroundColor: section.accent }} />
-                  <p className="text-sm leading-6 text-[#655b47]">{item}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-        ))}
+      <div className="grid gap-4 px-4 pb-4 xl:grid-cols-2">
+        <MoneyChart
+          title="Money Made"
+          subtitle="Produce swaps, farmstand, and preserved goods"
+          total={incomeSeries.reduce((sum, point) => sum + point.value, 0)}
+          series={incomeSeries}
+          accent="#4e9f5d"
+        />
+        <MoneyChart
+          title="Money Spent"
+          subtitle="Feed, seed, soil, water, repairs, and supplies"
+          total={spendingSeries.reduce((sum, point) => sum + point.value, 0)}
+          series={spendingSeries}
+          accent="#e9823a"
+        />
       </div>
     </section>
   );
 }
 
-function SectionHeader({ eyebrow, title }: { eyebrow: string; title: string }) {
+function CalendarPanel({
+  plan,
+  days,
+}: {
+  plan: Awaited<ReturnType<typeof getInventorySnapshot>>["plan"];
+  days: CalendarDay[];
+}) {
+  const monthLabel = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(days.find((day) => day.isCurrentMonth)?.date ?? new Date());
+  const outputs = plan?.outputs ?? [];
+
   return (
-    <div className="border-b border-[#d9d2b8] p-3">
-      <p className="text-xs font-bold uppercase tracking-[0.1em] text-[#607145]">{eyebrow}</p>
-      <h2 className="mt-1 text-xl font-black leading-tight text-[#27351f]">{title}</h2>
+    <section className="overflow-hidden rounded-md border border-[#d9d2b8] bg-[#fff8dc]">
+      <div className="border-b border-[#d9d2b8] bg-[#fbf4df] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.1em] text-[#607145]">Farm Calendar</p>
+            <h2 className="mt-1 text-xl font-black leading-tight text-[#27351f]">{monthLabel} harvest board</h2>
+            <p className="mt-1 text-sm leading-6 text-[#6c614d]">
+              {plan
+                ? `${plan.name} projections from the latest plan output.`
+                : "Demo projections shown until a farm plan exists."}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <CalendarStat label="Plan" value={plan?.season ?? "demo"} />
+            <CalendarStat label="Drops" value={outputs.length.toString()} />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 p-3 lg:grid-cols-[1fr_220px]">
+        <div className="rounded border border-[#d9d2b8] bg-[#fffdf5] p-2">
+          <div className="grid grid-cols-7 gap-1 pb-2">
+            {weekdays.map((weekday) => (
+              <div key={weekday} className="text-center text-xs font-black uppercase tracking-[0.08em] text-[#607145]">
+                {weekday}
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {days.map((day) => (
+              <CalendarCell key={day.key} day={day} />
+            ))}
+          </div>
+        </div>
+
+        <aside className="grid content-start gap-2">
+          <h3 className="text-xs font-black uppercase tracking-[0.1em] text-[#607145]">Next Drops</h3>
+          {outputs.slice(0, 4).map((output) => (
+            <article key={output.id} className="grid grid-cols-[auto_1fr] gap-2 rounded border border-[#eadfca] bg-[#fffdf5] p-2">
+              <PixelIconSlot src={iconForOutput(output)} label={output.name} color={output.color} compact />
+              <div className="min-w-0">
+                <h4 className="truncate text-sm font-black text-[#27351f]">{output.name}</h4>
+                <p className="font-mono text-xs font-bold text-[#2f6f4e]">{formatShortDate(output.startsAt)}</p>
+                <p className="truncate text-xs text-[#746850]">{output.cadence}</p>
+              </div>
+            </article>
+          ))}
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function CalendarCell({ day }: { day: CalendarDay }) {
+  return (
+    <div
+      className={`min-h-20 rounded border p-1.5 ${
+        day.isCurrentMonth
+          ? "border-[#ded5b8] bg-[#fffaf0]"
+          : "border-[#eee5ce] bg-[#fbf4df] text-[#a3987e]"
+      }`}
+    >
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-mono text-xs font-black">{day.day}</span>
+        {day.outputs.length ? (
+          <span className="rounded border border-[#8fc3ca] bg-[#e9fbfb] px-1 font-mono text-[10px] font-black text-[#245c65]">
+            +{day.outputs.length}
+          </span>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {day.outputs.slice(0, 3).map((output) => (
+          <PixelIconSlot key={output.id} src={iconForOutput(output)} label={output.name} color={output.color} tiny />
+        ))}
+      </div>
     </div>
   );
+}
+
+
+function MoneyChart({
+  title,
+  subtitle,
+  total,
+  series,
+  accent,
+}: {
+  title: string;
+  subtitle: string;
+  total: number;
+  series: { label: string; value: number }[];
+  accent: string;
+}) {
+  const max = Math.max(...series.map((point) => point.value), 1);
+  const points = series
+    .map((point, index) => {
+      const x = 24 + index * (252 / Math.max(series.length - 1, 1));
+      const y = 128 - (point.value / max) * 92;
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  return (
+    <section className="overflow-hidden rounded-md border border-[#d9d2b8] bg-[#fffaf0]">
+      <div className="border-b border-[#d9d2b8] bg-[#fbf4df] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.1em] text-[#607145]">{title}</p>
+            <h2 className="mt-1 text-lg font-black leading-tight text-[#27351f]">{subtitle}</h2>
+          </div>
+          <span className="font-mono text-2xl font-black text-[#27351f]">${total.toLocaleString("en-US")}</span>
+        </div>
+      </div>
+      <div className="p-3">
+        <svg className="h-44 w-full" viewBox="0 0 300 160" role="img" aria-label={`${title} chart`}>
+          <path d="M24 132H286" stroke="#d9d2b8" strokeWidth="2" />
+          <path d="M24 84H286" stroke="#eadfca" strokeWidth="1" strokeDasharray="4 5" />
+          <path d="M24 36H286" stroke="#eadfca" strokeWidth="1" strokeDasharray="4 5" />
+          <polyline fill="none" points={points} stroke={accent} strokeLinecap="round" strokeLinejoin="round" strokeWidth="5" />
+          {series.map((point, index) => {
+            const x = 24 + index * (252 / Math.max(series.length - 1, 1));
+            const y = 128 - (point.value / max) * 92;
+
+            return (
+              <g key={point.label}>
+                <circle cx={x} cy={y} fill="#fffdf5" r="5" stroke={accent} strokeWidth="3" />
+                <text fill="#6b5f47" fontSize="10" fontWeight="700" textAnchor="middle" x={x} y="150">
+                  {point.label}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </section>
+  );
+}
+
+function PixelIconSlot({
+  src,
+  label,
+  color = "#fff8dc",
+  compact = false,
+  tiny = false,
+}: {
+  src: string;
+  label: string;
+  color?: string;
+  compact?: boolean;
+  tiny?: boolean;
+}) {
+  const sizeClass = tiny ? "size-7" : compact ? "size-8" : "size-10";
+  const iconClass = tiny ? "size-4" : compact ? "size-5" : "size-7";
+
+  return (
+    <span
+      className={`grid shrink-0 place-items-center rounded border border-[#cfbea1] shadow-[inset_0_-4px_0_rgba(95,80,43,0.12)] ${sizeClass}`}
+      style={{ backgroundColor: color }}
+    >
+      <Image
+        src={src}
+        alt={`${label} icon`}
+        width={16}
+        height={16}
+        className={iconClass}
+        style={{ imageRendering: "pixelated" }}
+        unoptimized
+      />
+    </span>
+  );
+}
+
+function CalendarStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-[#d9d2b8] bg-[#fffdf5] px-3 py-2 text-right">
+      <div className="font-mono text-lg font-black text-[#2f6f4e]">{value}</div>
+      <div className="text-[10px] font-black uppercase tracking-[0.1em] text-[#746850]">{label}</div>
+    </div>
+  );
+}
+
+function buildCalendarDays(anchorValue: string, outputs: InventoryPlanOutput[]) {
+  const anchor = new Date(anchorValue);
+  const monthStart = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
+  const gridStart = new Date(monthStart);
+  gridStart.setUTCDate(monthStart.getUTCDate() - monthStart.getUTCDay());
+
+  return Array.from({ length: 35 }, (_, index) => {
+    const date = new Date(gridStart);
+    date.setUTCDate(gridStart.getUTCDate() + index);
+    const key = toDateKey(date);
+
+    return {
+      date,
+      key,
+      day: date.getUTCDate(),
+      isCurrentMonth: date.getUTCMonth() === monthStart.getUTCMonth(),
+      outputs: outputs.filter((output) => outputOccursOnDate(output, date)),
+    };
+  });
+}
+
+function outputOccursOnDate(output: InventoryPlanOutput, date: Date) {
+  const startDate = startOfUtcDay(new Date(output.startsAt));
+  const currentDate = startOfUtcDay(date);
+
+  if (currentDate < startDate) {
+    return false;
+  }
+
+  const endDate = output.endsAt ? startOfUtcDay(new Date(output.endsAt)) : undefined;
+
+  if (endDate && currentDate > endDate) {
+    return false;
+  }
+
+  if (output.cadence === "daily") {
+    return true;
+  }
+
+  if (output.cadence === "weekly flush") {
+    return daysBetween(startDate, currentDate) % 7 === 0;
+  }
+
+  return toDateKey(startDate) === toDateKey(currentDate);
+}
+
+function iconForOutput(output: InventoryPlanOutput) {
+  const name = `${output.name} ${output.source}`.toLowerCase();
+
+  if (name.includes("tomato")) {
+    return "/inventory-icons/tomato.png";
+  }
+
+  if (name.includes("lettuce")) {
+    return "/inventory-icons/lettuce.png";
+  }
+
+  if (name.includes("egg") || output.category === "livestock") {
+    return "/inventory-icons/egg.png";
+  }
+
+  return output.category === "produce" ? "/inventory-icons/pea-pod.png" : "/inventory-icons/corn.png";
+}
+
+function formatShortDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(value));
+}
+
+function toDateKey(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function startOfUtcDay(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function daysBetween(startDate: Date, endDate: Date) {
+  return Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000);
 }
