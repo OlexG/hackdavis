@@ -77,6 +77,39 @@ export type Profile = {
   updatedAt: Date;
 };
 
+export type InventoryCategory =
+  | "harvest"
+  | "seeds"
+  | "starts"
+  | "feed"
+  | "amendments"
+  | "tools"
+  | "preserves"
+  | "livestock";
+
+export type InventoryStatus = "stocked" | "low" | "ready" | "curing";
+
+export type InventoryItem = {
+  _id: ObjectId;
+  userId: ObjectId;
+  name: string;
+  category: InventoryCategory;
+  status: InventoryStatus;
+  quantity: {
+    amount: number;
+    unit: string;
+  };
+  reorderAt?: number;
+  location: string;
+  source: string;
+  notes: string;
+  color: string;
+  useBy?: Date;
+  acquiredAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type Farm = {
   _id: ObjectId;
   userId: ObjectId;

@@ -13,14 +13,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <main className="min-h-screen bg-[#fbf6e8] text-[#2d2313]">
-      <div className="flex min-h-screen">
+      <div className="flex min-h-screen max-md:flex-col">
         <aside
-          className={`border-r border-[#eadfca] bg-[#fffdf5] transition-[width] duration-200 ${
+          className={`border-r border-[#eadfca] bg-[#fffdf5] transition-[width] duration-200 max-md:w-full max-md:border-b max-md:border-r-0 ${
             collapsed ? "w-[72px]" : "w-64"
           }`}
         >
           <div
-            className={`flex h-16 items-center border-b border-[#eadfca] ${
+            className={`flex h-16 items-center border-b border-[#eadfca] max-md:px-4 ${
               collapsed ? "justify-center px-2" : "justify-between px-4"
             }`}
           >
@@ -42,7 +42,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
           </div>
 
-          <nav className="space-y-1 p-3">
+          <nav className="space-y-1 p-3 max-md:flex max-md:gap-2 max-md:overflow-x-auto max-md:space-y-0">
             {appNavItems.map(({ label, href, shortLabel, icon, accent }) => {
               const active = pathname === href;
 
@@ -55,7 +55,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     active
                       ? "bg-[#fff3cf] font-medium text-[#2d2313]"
                       : "font-normal text-[#837766] hover:bg-[#fff8dc] hover:text-[#2d2313]"
-                  } ${collapsed ? "justify-center" : ""}`}
+                  } ${collapsed ? "justify-center" : ""} max-md:shrink-0`}
                 >
                   <span
                     className="grid size-7 shrink-0 place-items-center rounded border text-xs font-medium"

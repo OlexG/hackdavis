@@ -7,11 +7,11 @@ export const appNavItems = [
     accent: "#2f6f4e",
   },
   {
-    label: "Seasonal",
-    href: "/app/seasonal",
-    shortLabel: "S",
-    icon: "season",
-    accent: "#f2bd4b",
+    label: "Inventory",
+    href: "/app/inventory",
+    shortLabel: "I",
+    icon: "inventory",
+    accent: "#8a6f3f",
   },
   {
     label: "Shop",
@@ -21,11 +21,18 @@ export const appNavItems = [
     accent: "#e9823a",
   },
   {
-    label: "Impact",
-    href: "/app/impact",
-    shortLabel: "I",
-    icon: "impact",
+    label: "Intelligence",
+    href: "/app/intelligence",
+    shortLabel: "AI",
+    icon: "intelligence",
     accent: "#48b9df",
+  },
+  {
+    label: "Social",
+    href: "/app/social",
+    shortLabel: "S",
+    icon: "social",
+    accent: "#c95b76",
   },
 ] as const;
 
