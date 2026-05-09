@@ -64,6 +64,45 @@ html {
   background-clip: border-box;
 }
 
+/* Pixel skeleton: stepped shimmer that slides across in 8-px chunks
+   so the highlight reads as a moving block of pixels rather than a soft sheen. */
+.pixel-skeleton {
+  background-color: #f1e6c8;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 253, 245, 0) 0 24px,
+      rgba(255, 253, 245, 0.55) 24px 32px,
+      rgba(255, 253, 245, 0) 32px 56px
+    );
+  background-size: 96px 100%;
+  background-repeat: repeat-x;
+  animation: pixel-skeleton-slide 1.4s steps(12, end) infinite;
+}
+
+.pixel-skeleton-soft {
+  background-color: #f6efd6;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 253, 245, 0) 0 24px,
+      rgba(255, 253, 245, 0.45) 24px 32px,
+      rgba(255, 253, 245, 0) 32px 56px
+    );
+  background-size: 96px 100%;
+  background-repeat: repeat-x;
+  animation: pixel-skeleton-slide 1.6s steps(12, end) infinite;
+}
+
+@keyframes pixel-skeleton-slide {
+  from {
+    background-position: -96px 0;
+  }
+  to {
+    background-position: 96px 0;
+  }
+}
+
 /* Subtle pixel-dot tile for panel interiors. */
 .pixel-dots {
   background-image:

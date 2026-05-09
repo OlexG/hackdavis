@@ -20,14 +20,14 @@ const catalogSeed: FarmPlannerCatalogItem[] = [
     type: "crop",
     name: "Tomatoes",
     defaultSize: { width: 1, depth: 1, height: 1 },
-    render: { model: "plant", color: "#4f9f52", label: "Tomatoes" },
+    render: { model: "plant", color: "#4f9f52", label: "Tomatoes", iconPath: "/inventory-icons/tomato.png" },
   },
   {
     slug: "lettuce",
     type: "crop",
     name: "Lettuce",
     defaultSize: { width: 0.75, depth: 0.75, height: 0.4 },
-    render: { model: "leafy_plant", color: "#72b85b", label: "Lettuce" },
+    render: { model: "leafy_plant", color: "#72b85b", label: "Lettuce", iconPath: "/inventory-icons/lettuce.png" },
   },
   {
     slug: "corn",
@@ -143,7 +143,7 @@ export async function POST(request: Request) {
       userId: context.userId,
       name: generated.name,
       status: "draft",
-      version: 3,
+      version: 4,
       simulation: {
         startDate: now,
         currentDate: now,
@@ -154,7 +154,6 @@ export async function POST(request: Request) {
         paused: true,
       },
       baseGeometry: generated.baseGeometry,
-      partitions: generated.partitions,
       tiles: generated.tiles,
       objects,
       summary: generated.summary,
@@ -260,6 +259,16 @@ async function ensureFarmContext() {
   if (!farm) {
     throw new Error("Unable to create demo farm");
   }
+
+  await db.collection("plans").deleteMany({
+    userId: user._id,
+    farmId: farm._id,
+    $or: [
+      { version: { $lt: 4 } },
+      { tiles: { $exists: false } },
+      { tiles: { $size: 0 } },
+    ],
+  });
 
   return {
     userId: user._id as ObjectId,

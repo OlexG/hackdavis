@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import type { GeometryPoint, PlanPartition, PlanTile, PlanTileType } from "@/lib/models";
+import type { GeometryPoint, PlanTile, PlanTileType } from "@/lib/models";
 
 type SavedPlan = {
   _id: string;
@@ -14,7 +14,6 @@ type SavedPlan = {
     areaSquareMeters: number;
     areaSquareFeet?: number;
   };
-  partitions?: PlanPartition[];
   tiles?: PlanTile[];
   summary?: {
     description: string;
@@ -30,15 +29,6 @@ type SavedPlan = {
 const davisCenter = { lat: 38.5449, lng: -121.7405 };
 const tileSize = 256;
 const imageryUrl = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile";
-
-const partitionColors: Record<PlanPartition["type"], string> = {
-  annual_beds: "#67a85b",
-  perennial_guild: "#3f8b58",
-  livestock: "#8fa866",
-  greenhouse: "#8ad4dc",
-  water: "#4ea9c7",
-  habitat: "#a6bd63",
-};
 
 const tileTypeColors: Record<PlanTileType, string> = {
   tomato: "#6e9f45",
@@ -62,6 +52,20 @@ const defaultTileIcons: Record<PlanTileType, string> = {
   mushroom: "/inventory-icons/mushroom.png",
   herb: "/inventory-icons/lettuce.png",
   pollinator: "/inventory-icons/strawberry.png",
+};
+
+type TileSummary = {
+  tileType: PlanTileType;
+  assignmentName: string;
+  count: number;
+  color: string;
+  iconPath: string;
+  sunExposure: PlanTile["sunExposure"];
+  waterNeed: PlanTile["waterNeed"];
+  center: {
+    x: number;
+    z: number;
+  };
 };
 
 export function FarmPlanner() {
@@ -572,7 +576,7 @@ function PlansView({
               >
                 <span className="block truncate font-medium text-[#2d2313]">{plan.name}</span>
                 <span className="block text-xs text-[#7a6b55]">
-                  {plan.tiles?.length ? `${plan.tiles.length.toLocaleString("en-US")} tiles` : `${plan.partitions?.length ?? 0} legacy partitions`}
+                  {(plan.tiles?.length ?? 0).toLocaleString("en-US")} blocks
                 </span>
               </button>
             ))}
@@ -594,12 +598,11 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [webglUnavailable, setWebglUnavailable] = useState(false);
   const hasTiles = Boolean(plan?.tiles?.length);
-  const hasLegacyPartitions = Boolean(plan?.partitions?.length);
 
   useEffect(() => {
     const canvas = canvasRef.current;
 
-    if (!canvas || (!plan?.tiles?.length && !plan?.partitions?.length)) {
+    if (!canvas || !plan?.tiles?.length) {
       return;
     }
 
@@ -612,10 +615,11 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
       });
     };
 
-    setFallback(false);
+    setWebglUnavailable(false);
+    const contextOptions = { antialias: true, preserveDrawingBuffer: true };
     const gl =
-      canvas.getContext("webgl2", { antialias: true, preserveDrawingBuffer: true }) ??
-      canvas.getContext("webgl", { antialias: true, preserveDrawingBuffer: true });
+      canvas.getContext("webgl2", contextOptions) ??
+      canvas.getContext("webgl", contextOptions);
 
     if (!gl) {
       setFallback(true);
@@ -640,10 +644,12 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
     renderer.shadowMap.enabled = true;
 
     const scene = new THREE.Scene();
+    const tileBounds = getTileRenderBounds(plan.tiles);
+    const maxDimension = Math.max(tileBounds.width, tileBounds.depth);
     scene.background = new THREE.Color("#bfe5ed");
-    scene.fog = new THREE.Fog("#bfe5ed", 22, 44);
+    scene.fog = new THREE.Fog("#bfe5ed", maxDimension * 1.1, maxDimension * 3.6);
 
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, Math.max(120, maxDimension * 5));
     camera.position.set(0, 18, 24);
     camera.lookAt(0, 0, 0);
 
@@ -659,8 +665,7 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
     sun.castShadow = true;
     scene.add(sun);
 
-    const tileBounds = plan.tiles?.length ? getTileRenderBounds(plan.tiles) : null;
-    const groundRadius = tileBounds ? Math.max(tileBounds.width, tileBounds.depth) * 0.62 + 2 : 18;
+    const groundRadius = maxDimension * 0.72 + 4;
     const ground = new THREE.Mesh(
       new THREE.CircleGeometry(groundRadius, 64),
       new THREE.MeshLambertMaterial({ color: "#476943" }),
@@ -669,13 +674,8 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
     ground.position.y = -0.05;
     root.add(ground);
 
-    if (plan.tiles?.length) {
-      addVoxelTiles(root, plan.tiles);
-    } else {
-      plan.partitions?.forEach((partition, index) => {
-        addPartition(root, partition, index);
-      });
-    }
+    addVoxelTiles(root, plan.tiles);
+    addClusterLabels(root, summarizeTiles(plan.tiles), maxDimension);
 
     let width = 0;
     let height = 0;
@@ -731,8 +731,8 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
       animation = requestAnimationFrame(render);
       root.rotation.y += (targetRotation - root.rotation.y) * 0.08;
       currentPitch += (targetPitch - currentPitch) * 0.08;
-      const cameraDistance = tileBounds ? Math.max(24, Math.min(56, Math.max(tileBounds.width, tileBounds.depth) * 1.15)) : 29;
-      camera.position.set(0, 7 + currentPitch * 18, cameraDistance - currentPitch * 10);
+      const cameraDistance = Math.max(24, maxDimension * 1.45);
+      camera.position.set(0, 8 + currentPitch * Math.max(18, maxDimension * 0.55), cameraDistance - currentPitch * 8);
       camera.lookAt(0, 0, 0);
       renderer.render(scene, camera);
     };
@@ -761,6 +761,10 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
             mapped.map?.dispose();
             object.material.dispose();
           }
+        } else if (object instanceof THREE.Sprite) {
+          const mapped = object.material as THREE.SpriteMaterial & { map?: THREE.Texture };
+          mapped.map?.dispose();
+          object.material.dispose();
         }
       });
     };
@@ -768,25 +772,29 @@ function SolarPunkScene({ plan }: { plan: SavedPlan | null }) {
 
   return (
     <div className="relative min-h-[360px]">
-      {(hasTiles || hasLegacyPartitions) && webglUnavailable && plan ? (
-        <IsometricPlanGrid plan={plan} />
-      ) : hasTiles || hasLegacyPartitions ? (
-        <canvas ref={canvasRef} className="block size-full min-h-[360px]" aria-label="3D voxel farm plan" />
+      {hasTiles ? (
+        <>
+          {webglUnavailable ? (
+            plan ? <IsometricPlanGrid plan={plan} /> : null
+          ) : (
+            <canvas ref={canvasRef} className="block size-full min-h-[360px]" aria-label="3D voxel farm plan" />
+          )}
+        </>
       ) : (
         <div className="grid min-h-[360px] place-items-center px-6 text-center text-[#5d5345]">
-          No plan
+          Generate a voxel farm plan from the satellite selector.
         </div>
       )}
-      {hasTiles || hasLegacyPartitions ? (
+      {hasTiles && !webglUnavailable ? (
         <div className="absolute left-4 top-4 rounded-md border border-white/50 bg-white/80 px-3 py-2 text-xs font-semibold text-[#2d2313] shadow-sm backdrop-blur">
-          {webglUnavailable ? "Pan" : "Drag voxel farm"}
+          Drag voxel farm
         </div>
       ) : null}
     </div>
   );
 }
 
-function IsometricPlanGrid({ plan }: { plan: SavedPlan }) {
+export function IsometricPlanGrid({ plan }: { plan: SavedPlan }) {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [viewAngle, setViewAngle] = useState({ yaw: -42, pitch: 0.58 });
@@ -844,6 +852,8 @@ function IsometricPlanGrid({ plan }: { plan: SavedPlan }) {
     setZoom((current) => clamp(current + (event.deltaY > 0 ? -0.18 : 0.18), 0.18, 6));
   }
 
+  const tileGroups = plan.tiles?.length ? summarizeTiles(plan.tiles) : [];
+
   return (
     <div
       className="relative min-h-[360px] touch-none overflow-hidden"
@@ -857,12 +867,13 @@ function IsometricPlanGrid({ plan }: { plan: SavedPlan }) {
         <g transform={`translate(${pan.x * 0.22} ${pan.y * 0.22}) scale(${zoom})`}>
           <IsoGrid project={project} />
           {plan.tiles?.length
-            ? plan.tiles.slice(0, 3000).map((tile) => (
+            ? plan.tiles.map((tile) => (
                 <IsoTile key={tile.tileId} tile={tile} project={project} />
               ))
-            : (plan.partitions ?? []).map((partition) => (
-                <IsoPartition key={partition.partitionId} partition={partition} project={project} />
-              ))}
+            : null}
+          {tileGroups.map((group) => (
+            <IsoLabel key={group.tileType} group={group} project={project} />
+          ))}
         </g>
       </svg>
       <div className="absolute bottom-4 right-4 flex overflow-hidden rounded-md border border-white/40 bg-white/85 text-[#2d2313] shadow-sm">
@@ -942,6 +953,26 @@ function IsoTile({
   );
 }
 
+function IsoLabel({
+  group,
+  project,
+}: {
+  group: TileSummary;
+  project: (point: { x: number; y: number }) => { x: number; y: number };
+}) {
+  const center = project({ x: group.center.x, y: group.center.z });
+
+  return (
+    <g transform={`translate(${center.x} ${center.y - 8})`}>
+      <rect x="-36" y="-15" width="72" height="18" fill="#fffaf0" stroke="#2d2313" strokeWidth="1.2" />
+      <rect x="-32" y="-11" width="7" height="7" fill={group.color} stroke="#2d2313" strokeWidth="0.7" />
+      <text x="-20" y="-4" fill="#2d2313" fontSize="7" fontWeight="700">
+        {group.assignmentName} ({group.count.toLocaleString("en-US")})
+      </text>
+    </g>
+  );
+}
+
 function IsoGrid({ project }: { project: (point: { x: number; y: number }) => { x: number; y: number } }) {
   const lines = [];
 
@@ -989,69 +1020,6 @@ function IsoGrid({ project }: { project: (point: { x: number; y: number }) => { 
   );
 }
 
-function IsoPartition({
-  partition,
-  project,
-}: {
-  partition: PlanPartition;
-  project: (point: { x: number; y: number }) => { x: number; y: number };
-}) {
-  const height = partitionHeight(partition.type);
-  const base = partition.geometry.corners.map((point) => project(toIsoWorld(point)));
-  const top = base.map((point) => ({ x: point.x, y: point.y - height }));
-  const color = partitionColors[partition.type];
-  const baseCenter = project(toIsoWorld(partition.geometry.center));
-  const center = { x: baseCenter.x, y: baseCenter.y - height };
-
-  return (
-    <g>
-      {base.map((point, index) => {
-        const next = base[(index + 1) % base.length];
-        const topPoint = top[index];
-        const nextTop = top[(index + 1) % top.length];
-
-        return (
-          <polygon
-            key={`${partition.partitionId}-side-${index}`}
-            points={`${point.x},${point.y} ${next.x},${next.y} ${nextTop.x},${nextTop.y} ${topPoint.x},${topPoint.y}`}
-            fill={shadeColor(color, -22)}
-            opacity="0.48"
-          />
-        );
-      })}
-      <polygon
-        points={top.map((point) => `${point.x},${point.y}`).join(" ")}
-        fill={color}
-        opacity={partition.type === "greenhouse" ? "0.72" : "0.92"}
-        stroke="#fff6cf"
-        strokeWidth="1.1"
-      />
-      {partition.type === "perennial_guild" ? (
-        <circle cx={center.x} cy={center.y - 4} r="5" fill="#2f7d58" />
-      ) : partition.type === "livestock" ? (
-        <rect x={center.x - 6} y={center.y - 5} width="12" height="8" rx="1.5" fill="#6f7d4a" />
-      ) : partition.type === "greenhouse" ? (
-        <polygon
-          points={`${center.x - 9},${center.y + 4} ${center.x},${center.y - 9} ${center.x + 9},${center.y + 4}`}
-          fill="#d7f4ec"
-          opacity="0.75"
-        />
-      ) : partition.type === "water" ? (
-        <ellipse cx={center.x} cy={center.y} rx="7" ry="3.5" fill="#e6fbff" opacity="0.85" />
-      ) : (
-        <circle cx={center.x} cy={center.y} r="3.5" fill="#f4fff0" opacity="0.92" />
-      )}
-    </g>
-  );
-}
-
-function toIsoWorld(point: GeometryPoint) {
-  return {
-    x: point.x - 50,
-    y: point.y - 50,
-  };
-}
-
 function projectPoint(
   project: (point: { x: number; y: number }) => { x: number; y: number },
   point: { x: number; y: number },
@@ -1071,23 +1039,6 @@ function projectGridPoint(point: { x: number; y: number }, viewAngle: { yaw: num
     x: rotatedX * 1.42,
     y: rotatedY * viewAngle.pitch,
   };
-}
-
-function partitionHeight(type: PlanPartition["type"]) {
-  switch (type) {
-    case "greenhouse":
-      return 9;
-    case "perennial_guild":
-      return 7;
-    case "livestock":
-      return 5;
-    case "water":
-      return 1;
-    case "habitat":
-      return 4;
-    default:
-      return 3;
-  }
 }
 
 function shadeColor(hex: string, amount: number) {
@@ -1117,8 +1068,6 @@ function getTileRenderBounds(tiles: PlanTile[]) {
 }
 
 function addVoxelTiles(root: THREE.Group, tiles: PlanTile[]) {
-  const blockGeometry = new THREE.BoxGeometry(0.92, 0.42, 0.92);
-  const spriteGeometry = new THREE.PlaneGeometry(0.68, 0.68);
   const textureLoader = new THREE.TextureLoader();
   const tilesByType = new Map<PlanTileType, PlanTile[]>();
 
@@ -1129,12 +1078,14 @@ function addVoxelTiles(root: THREE.Group, tiles: PlanTile[]) {
   tilesByType.forEach((tileGroup, tileType) => {
     const first = tileGroup[0];
     const color = first.color || tileTypeColors[tileType];
+    const blockGeometry = new THREE.BoxGeometry(0.94, 0.58, 0.94);
+    const spriteGeometry = new THREE.PlaneGeometry(0.66, 0.66);
     const blockMaterial = new THREE.MeshLambertMaterial({ color });
     const blocks = new THREE.InstancedMesh(blockGeometry, blockMaterial, tileGroup.length);
     const blockMatrix = new THREE.Matrix4();
 
     tileGroup.forEach((tile, index) => {
-      blockMatrix.makeTranslation(tile.position.x, 0.21, tile.position.z);
+      blockMatrix.makeTranslation(tile.position.x, 0.29, tile.position.z);
       blocks.setMatrixAt(index, blockMatrix);
     });
 
@@ -1163,7 +1114,7 @@ function addVoxelTiles(root: THREE.Group, tiles: PlanTile[]) {
     const spriteObject = new THREE.Object3D();
 
     tileGroup.forEach((tile, index) => {
-      spriteObject.position.set(tile.position.x, 0.435, tile.position.z);
+      spriteObject.position.set(tile.position.x, 0.592, tile.position.z);
       spriteObject.rotation.set(-Math.PI / 2, 0, 0);
       spriteObject.updateMatrix();
       sprites.setMatrixAt(index, spriteObject.matrix);
@@ -1173,7 +1124,69 @@ function addVoxelTiles(root: THREE.Group, tiles: PlanTile[]) {
   });
 }
 
-function addPartition(root: THREE.Group, partition: PlanPartition, index: number) {
+function addClusterLabels(root: THREE.Group, groups: TileSummary[], maxDimension: number) {
+  const labelHeight = Math.max(2.2, Math.min(7, maxDimension * 0.08));
+
+  groups.forEach((group) => {
+    if (group.count < 1) {
+      return;
+    }
+
+    const texture = createLabelTexture(`${group.assignmentName} (${group.count.toLocaleString("en-US")})`, group.color);
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+    });
+    const sprite = new THREE.Sprite(material);
+    const scale = Math.max(4.8, Math.min(10, maxDimension * 0.18));
+
+    sprite.position.set(group.center.x, labelHeight, group.center.z);
+    sprite.scale.set(scale * 1.9, scale * 0.48, 1);
+    sprite.renderOrder = 10;
+    root.add(sprite);
+  });
+}
+
+function createLabelTexture(text: string, color: string) {
+  const canvas = document.createElement("canvas");
+  const width = 512;
+  const height = 128;
+  const context = canvas.getContext("2d");
+
+  canvas.width = width;
+  canvas.height = height;
+
+  if (!context) {
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  context.imageSmoothingEnabled = false;
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "rgba(255, 250, 240, 0.94)";
+  context.fillRect(12, 20, width - 24, height - 40);
+  context.strokeStyle = "#2d2313";
+  context.lineWidth = 8;
+  context.strokeRect(12, 20, width - 24, height - 40);
+  context.fillStyle = color;
+  context.fillRect(28, 36, 36, 36);
+  context.strokeStyle = "#2d2313";
+  context.lineWidth = 4;
+  context.strokeRect(28, 36, 36, 36);
+  context.font = "700 38px sans-serif";
+  context.textBaseline = "middle";
+  context.fillStyle = "#2d2313";
+  context.fillText(text.slice(0, 24), 78, 56);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.colorSpace = THREE.SRGBColorSpace;
+
+  return texture;
+}
+
+export function addPartition(root: THREE.Group, partition: PlanPartition, index: number) {
   const shape = new THREE.Shape();
   const corners = partition.geometry.corners.map(toWorld);
   shape.moveTo(corners[0].x, corners[0].z);
@@ -1327,7 +1340,7 @@ function PlanDetails({ plan }: { plan: SavedPlan | null }) {
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-sm">
-            <Metric label="Tiles" value={(plan.tiles?.length ?? plan.partitions?.length ?? 0).toLocaleString("en-US")} />
+            <Metric label="Blocks" value={(plan.tiles?.length ?? 0).toLocaleString("en-US")} />
             <Metric label="Maintenance" value={plan.summary?.maintenanceLevel ?? "medium"} />
           </div>
 
@@ -1360,27 +1373,8 @@ function PlanDetails({ plan }: { plan: SavedPlan | null }) {
               ))}
             </div>
           ) : (
-            <div className="grid gap-3 lg:col-span-2 md:grid-cols-2 xl:grid-cols-5">
-              {(plan.partitions ?? []).map((partition) => (
-              <article key={partition.partitionId} className="rounded-md border border-[#eadfca] bg-white p-3">
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-semibold text-[#2d2313]">{partition.label}</h3>
-                    <p className="text-xs text-[#7a6b55]">{partition.assignmentName}</p>
-                  </div>
-                  <span
-                    className="mt-0.5 size-3 shrink-0 rounded-full"
-                    style={{ backgroundColor: partitionColors[partition.type] }}
-                  />
-                </div>
-                <dl className="grid grid-cols-2 gap-2 text-xs text-[#6b6254]">
-                  <Metric label="Area" value={`${partition.areaSquareMeters} sq m`} compact />
-                  <Metric label="Sun" value={partition.sunExposure} compact />
-                  <Metric label="Water" value={partition.waterNeed} compact />
-                  <Metric label="Type" value={partition.type.replace("_", " ")} compact />
-                </dl>
-              </article>
-              ))}
+            <div className="rounded-md border border-[#eadfca] bg-white p-3 text-sm text-[#7a6b55] lg:col-span-2">
+              No voxel blocks saved for this plan.
             </div>
           )}
         </div>
@@ -1402,21 +1396,19 @@ function formatUiError(error: unknown) {
 }
 
 function summarizeTiles(tiles: PlanTile[]) {
-  const groups = new Map<PlanTileType, {
-    tileType: PlanTileType;
-    assignmentName: string;
-    count: number;
-    color: string;
-    iconPath: string;
-    sunExposure: PlanTile["sunExposure"];
-    waterNeed: PlanTile["waterNeed"];
-  }>();
+  const groups = new Map<PlanTileType, TileSummary & { totalX: number; totalZ: number }>();
 
   tiles.forEach((tile) => {
     const current = groups.get(tile.tileType);
 
     if (current) {
       current.count += 1;
+      current.totalX += tile.position.x;
+      current.totalZ += tile.position.z;
+      current.center = {
+        x: Number((current.totalX / current.count).toFixed(2)),
+        z: Number((current.totalZ / current.count).toFixed(2)),
+      };
       return;
     }
 
@@ -1428,6 +1420,12 @@ function summarizeTiles(tiles: PlanTile[]) {
       iconPath: tile.iconPath || defaultTileIcons[tile.tileType],
       sunExposure: tile.sunExposure,
       waterNeed: tile.waterNeed,
+      center: {
+        x: tile.position.x,
+        z: tile.position.z,
+      },
+      totalX: tile.position.x,
+      totalZ: tile.position.z,
     });
   });
 
