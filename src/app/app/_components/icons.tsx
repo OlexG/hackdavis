@@ -1,5 +1,12 @@
 import Image from "next/image";
-import type { AppIconName } from "./data";
+
+export type AppIconName =
+  | "farm"
+  | "inventory"
+  | "marketplace"
+  | "shop"
+  | "intelligence"
+  | "social";
 
 export type PixelGlyphName =
   | "scroll"
@@ -33,6 +40,7 @@ const glyphSources: Record<PixelGlyphName, string> = {
 const appIconSources: Record<AppIconName, string> = {
   farm: "/app-icons/farm.png",
   inventory: "/app-icons/inventory.png",
+  marketplace: "/app-icons/shop.png",
   shop: "/app-icons/shop.png",
   intelligence: "/app-icons/intelligence.png",
   social: "/app-icons/social.png",

@@ -1,3 +1,14 @@
+import type { AppIconName } from "./icons";
+
+type AppNavItem = {
+  label: string;
+  href: string;
+  activePrefix?: string;
+  shortLabel: string;
+  icon: AppIconName;
+  accent: string;
+};
+
 export const appNavItems = [
   {
     label: "Farm",
@@ -14,18 +25,12 @@ export const appNavItems = [
     accent: "#8a6f3f",
   },
   {
-    label: "Shop",
-    href: "/app/shop",
-    shortLabel: "$",
-    icon: "shop",
+    label: "Marketplace",
+    href: "/app/marketplace/shop",
+    activePrefix: "/app/marketplace",
+    shortLabel: "M",
+    icon: "marketplace",
     accent: "#e9823a",
-  },
-  {
-    label: "Offers",
-    href: "/app/offers",
-    shortLabel: "O",
-    icon: "social",
-    accent: "#c95b76",
   },
   {
     label: "Intelligence",
@@ -34,13 +39,4 @@ export const appNavItems = [
     icon: "intelligence",
     accent: "#48b9df",
   },
-  {
-    label: "Social",
-    href: "/app/social",
-    shortLabel: "S",
-    icon: "social",
-    accent: "#c95b76",
-  },
-] as const;
-
-export type AppIconName = (typeof appNavItems)[number]["icon"];
+] as const satisfies readonly AppNavItem[];

@@ -68,8 +68,9 @@ export function AppShell({ children, currentUser }: { children: ReactNode; curre
 
           <div className="flex min-h-[calc(100vh-4rem)] flex-col max-md:min-h-0">
             <nav className="space-y-1.5 p-3 max-md:flex max-md:gap-2 max-md:overflow-x-auto max-md:space-y-0 max-md:p-2">
-              {appNavItems.map(({ label, href, shortLabel, icon, accent }) => {
-                const active = pathname === href;
+              {appNavItems.map(({ label, href, shortLabel, icon, accent, ...item }) => {
+                const activePrefix = "activePrefix" in item ? item.activePrefix : undefined;
+                const active = pathname === href || (activePrefix ? pathname.startsWith(activePrefix) : false);
 
                 return (
                   <Link
