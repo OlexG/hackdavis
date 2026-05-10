@@ -89,7 +89,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to generate AI farm draft") },
-      { status: error instanceof AuthenticationError ? 401 : isRequestError(error) ? 400 : 500 },
+      { status: error instanceof AuthenticationError ? 401 : isPlannerTimeoutError(error) ? 504 : isRequestError(error) ? 400 : 500 },
     );
   }
 }
@@ -277,4 +277,8 @@ function isRequestError(error: unknown) {
     error.message.includes("Gemini") ||
     error.message.includes("GEMINI_API_KEY")
   );
+}
+
+function isPlannerTimeoutError(error: unknown) {
+  return error instanceof Error && error.message.includes("farm planner timed out");
 }

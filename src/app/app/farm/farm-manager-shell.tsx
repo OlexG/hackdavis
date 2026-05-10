@@ -735,9 +735,9 @@ export function FarmManagerShell() {
         {chrome.backendMessage ? (
           <div className={`backend-gate ${chrome.backendError ? "backend-error" : ""}`} role="status" aria-live="polite">
             <div className="backend-card">
-              <span>{chrome.backendError ? "Backend error" : "Backend"}</span>
+              <span>{chrome.backendError ? backendErrorTitle(chrome.backendMessage) : "Backend"}</span>
               <strong>{chrome.backendMessage}</strong>
-              {chrome.backendError ? <em>Fix the backend response, then refresh this tab.</em> : null}
+              {chrome.backendError ? <em>{backendErrorHint(chrome.backendMessage)}</em> : null}
             </div>
           </div>
         ) : null}
@@ -752,6 +752,19 @@ export function FarmManagerShell() {
       {loadError ? <div className={styles.loadError}>Farm manager failed to load: {loadError}</div> : null}
     </div>
   );
+}
+
+function backendErrorTitle(message: string) {
+  return isPlannerTimeoutMessage(message) ? "Planner timeout" : "Backend error";
+}
+
+function backendErrorHint(message: string) {
+  if (isPlannerTimeoutMessage(message)) return "The AI planner took too long. Review the notes and try Generate again.";
+  return "The saved farm data could not be loaded or updated. Check the backend response before refreshing.";
+}
+
+function isPlannerTimeoutMessage(message: string) {
+  return message.toLowerCase().includes("farm planner timed out");
 }
 
 function FarmObjectPanel({ content, actions }: { content: FarmManagerContentState; actions?: FarmManagerActions }) {
@@ -1060,7 +1073,7 @@ function CatalogSearchPicker({
     setOpen(false);
   }
 
-  function useCustomName(name: string) {
+  function applyCustomName(name: string) {
     const nextName = name.trim();
     if (!nextName) return;
     onCustom(nextName);
@@ -1093,7 +1106,7 @@ function CatalogSearchPicker({
             if (event.key === "Enter") {
               event.preventDefault();
               if (matches[0]) selectItem(matches[0].key);
-              else useCustomName(trimmedQuery);
+              else applyCustomName(trimmedQuery);
             }
           }}
         />
@@ -1132,7 +1145,7 @@ function CatalogSearchPicker({
                 className="catalog-search-option custom"
                 onMouseDown={(event) => {
                   event.preventDefault();
-                  useCustomName(trimmedQuery);
+                  applyCustomName(trimmedQuery);
                 }}
               >
                 <strong>{customLabel}</strong>

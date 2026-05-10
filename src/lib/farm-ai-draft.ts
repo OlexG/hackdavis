@@ -62,6 +62,7 @@ export type AiDraftStructure = {
 
 type GeminiFarmIntent = {
   planName: string;
+  requiredCropKeys?: string[];
   summary: {
     description: string;
     highlights: string[];
@@ -129,6 +130,15 @@ type SiteGrowingContext = {
   livestockHeatStress: "low" | "medium" | "high";
 };
 
+type PlannerPreprocess = {
+  siteContext: SiteGrowingContext;
+  candidateCrops: AiDraftCrop[];
+  notePreferredCrops: AiDraftCrop[];
+  noteExcludedCropKeys: string[];
+  compactCropPayload: ReturnType<typeof promptCropPayload>;
+  compactLivestockPayload: ReturnType<typeof promptLivestockPayload>;
+};
+
 type Placement = {
   x: number;
   y: number;
@@ -188,6 +198,8 @@ type LayoutAssessment = {
   notes: string[];
 };
 
+const PLANNER_TIMEOUT_MS = 60_000;
+
 export function normalizeAiDraftPreferences(raw: unknown): FarmAiDraftPreferences {
   const body = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
 
@@ -229,9 +241,8 @@ export async function generateAiFarmPlan({
   const local = sanitizeLocalPoints(boundaryLocal);
   const geo = sanitizeGeoPoints(boundaryGeo);
   const areaSquareFeet = Math.max(1, Math.round(polygonArea(local)));
-  const siteContext = buildSiteGrowingContext(geo, preferences);
-  const candidateCrops = selectCandidateCrops(crops, preferences, siteContext);
-  const planner = await createPlannerIntent({ boundaryLocal: local, areaSquareFeet, preferences, siteContext, crops, candidateCrops, livestock, structures });
+  const preprocess = preprocessPlannerInput({ geo, preferences, crops, livestock });
+  const planner = await createPlannerIntent({ boundaryLocal: local, areaSquareFeet, preferences, preprocess, crops, livestock, structures });
   const intent = planner.intent;
   const generated = createObjectsFromIntent(local, intent, crops, livestock, structures);
   const objects = generated.objects;
@@ -276,8 +287,10 @@ export async function generateAiFarmPlan({
           ? process.env.OPENAI_MODEL || "gpt-5-mini"
           : process.env.GEMINI_MODEL || "gemini-2.5-flash",
         availableCropCount: crops.length,
-        candidateCropCount: candidateCrops.length,
-        siteContext,
+        candidateCropCount: preprocess.candidateCrops.length,
+        noteMatchedCropKeys: preprocess.notePreferredCrops.map((crop) => crop.key),
+        noteExcludedCropKeys: preprocess.noteExcludedCropKeys,
+        siteContext: preprocess.siteContext,
         generatedObjectCount: objects.length,
         plannerSource: planner.source,
         plannerError: planner.error,
@@ -298,9 +311,8 @@ async function createPlannerIntent(input: {
   boundaryLocal: LocalPoint[];
   areaSquareFeet: number;
   preferences: FarmAiDraftPreferences;
-  siteContext: SiteGrowingContext;
+  preprocess: PlannerPreprocess;
   crops: AiDraftCrop[];
-  candidateCrops: AiDraftCrop[];
   livestock: AiDraftLivestock[];
   structures: AiDraftStructure[];
 }): Promise<PlannerResult> {
@@ -333,9 +345,8 @@ async function callOpenAiPlanner(input: {
   boundaryLocal: LocalPoint[];
   areaSquareFeet: number;
   preferences: FarmAiDraftPreferences;
-  siteContext: SiteGrowingContext;
+  preprocess: PlannerPreprocess;
   crops: AiDraftCrop[];
-  candidateCrops: AiDraftCrop[];
   livestock: AiDraftLivestock[];
   structures: AiDraftStructure[];
 }): Promise<unknown> {
@@ -343,8 +354,9 @@ async function callOpenAiPlanner(input: {
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
   const model = process.env.OPENAI_MODEL || "gpt-5-mini";
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const response = await fetchWithPlannerTimeout("openai", "https://api.openai.com/v1/responses", {
     method: "POST",
+    signal: AbortSignal.timeout(PLANNER_TIMEOUT_MS),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
@@ -383,9 +395,8 @@ async function callGeminiPlanner(input: {
   boundaryLocal: LocalPoint[];
   areaSquareFeet: number;
   preferences: FarmAiDraftPreferences;
-  siteContext: SiteGrowingContext;
+  preprocess: PlannerPreprocess;
   crops: AiDraftCrop[];
-  candidateCrops: AiDraftCrop[];
   livestock: AiDraftLivestock[];
   structures: AiDraftStructure[];
 }): Promise<unknown> {
@@ -393,8 +404,9 @@ async function callGeminiPlanner(input: {
   if (!apiKey) throw new Error("Missing GEMINI_API_KEY");
 
   const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+  const response = await fetchWithPlannerTimeout("gemini", `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
+    signal: AbortSignal.timeout(PLANNER_TIMEOUT_MS),
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
       contents: [{ parts: [{ text: plannerPrompt(input) }] }],
@@ -417,9 +429,8 @@ function plannerPrompt(input: {
   boundaryLocal: LocalPoint[];
   areaSquareFeet: number;
   preferences: FarmAiDraftPreferences;
-  siteContext: SiteGrowingContext;
+  preprocess: PlannerPreprocess;
   crops: AiDraftCrop[];
-  candidateCrops: AiDraftCrop[];
   livestock: AiDraftLivestock[];
   structures: AiDraftStructure[];
 }) {
@@ -439,11 +450,18 @@ function plannerPrompt(input: {
       boundaryLocal: input.boundaryLocal,
       areaSquareFeet: input.areaSquareFeet,
       preferences: input.preferences,
-      siteContext: input.siteContext,
+      resolvedRequirements: {
+        noteMatchedCropKeys: input.preprocess.notePreferredCrops.map((crop) => crop.key),
+        noteExcludedCropKeys: input.preprocess.noteExcludedCropKeys,
+        weeklyHours: input.preferences.weeklyHours,
+        season: input.preferences.season,
+        waterPriority: input.preferences.waterPriority,
+      },
+      siteContext: input.preprocess.siteContext,
       layoutGeometry: summarizeLayoutGeometry(input.boundaryLocal),
-      allowedCropKeys: input.candidateCrops.map((crop) => crop.key),
-      candidateCrops: input.candidateCrops,
-      allowedLivestock: input.livestock,
+      allowedCropKeys: input.preprocess.candidateCrops.map((crop) => crop.key),
+      candidateCrops: input.preprocess.compactCropPayload,
+      allowedLivestock: input.preprocess.compactLivestockPayload,
       allowedStructures: input.structures,
     }),
   ].join("\n\n");
@@ -679,13 +697,12 @@ function ensureSupportAssignments(
   input: {
     areaSquareFeet: number;
     preferences: FarmAiDraftPreferences;
-    siteContext: SiteGrowingContext;
-    candidateCrops: AiDraftCrop[];
+    preprocess: PlannerPreprocess;
     livestock: AiDraftLivestock[];
     structures: AiDraftStructure[];
   },
 ): GeminiFarmIntent {
-  const cropAssignments = ensureCropAssignments(intent.cropAssignments, input.candidateCrops, input.preferences, input.siteContext, input.areaSquareFeet);
+  const cropAssignments = ensureCropAssignments(intent.cropAssignments, input.preprocess, input.preferences, input.areaSquareFeet);
   const canPlaceLivestock = input.areaSquareFeet >= 650;
   const canPlaceStructures = input.areaSquareFeet >= 450;
   let livestockAssignments = canPlaceLivestock ? [...intent.livestockAssignments] : [];
@@ -697,7 +714,7 @@ function ensureSupportAssignments(
     const animal = selectLivestockForSite(
       input.livestock,
       input.preferences,
-      input.siteContext,
+      input.preprocess.siteContext,
       input.areaSquareFeet,
       livestockAssignments[0]?.livestockKey,
     );
@@ -705,7 +722,7 @@ function ensureSupportAssignments(
       livestockKey: animal.key,
       count: livestockCountForSite(animal, input.preferences, input.areaSquareFeet),
       areaRatio: livestockAreaRatioForSite(animal, input.areaSquareFeet),
-      reason: `Selected by deterministic size-fit and climate scoring for ${Math.round(input.areaSquareFeet)} sq ft, ${input.siteContext.region}, budget, labor, experience, water, season, and household constraints.`,
+      reason: `Selected by deterministic size-fit and climate scoring for ${Math.round(input.areaSquareFeet)} sq ft, ${input.preprocess.siteContext.region}, budget, labor, experience, water, season, and household constraints.`,
     }] : [];
   }
 
@@ -726,6 +743,7 @@ function ensureSupportAssignments(
 
   return {
     ...intent,
+    requiredCropKeys: input.preprocess.notePreferredCrops.map((crop) => crop.key),
     cropAssignments,
     livestockAssignments: normalizeRatios(livestockAssignments, 0.2),
     structures: normalizeRatios(structureAssignments, 0.14),
@@ -734,17 +752,17 @@ function ensureSupportAssignments(
 
 function ensureCropAssignments(
   assignments: GeminiFarmIntent["cropAssignments"],
-  candidateCrops: AiDraftCrop[],
+  preprocess: PlannerPreprocess,
   preferences: FarmAiDraftPreferences,
-  siteContext: SiteGrowingContext,
   areaSquareFeet: number,
 ): GeminiFarmIntent["cropAssignments"] {
   const targetCount = targetCropCountForLabor(areaSquareFeet, preferences);
   const assignmentMap = new Map(assignments.map((assignment) => [assignment.cropKey, assignment]));
   const maxCropCount = maxCropCountForLabor(preferences);
-  const notePreferredCrops = noteMatchedCrops(candidateCrops, preferences, "prefer").slice(0, Math.max(1, Math.min(3, maxCropCount - 1)));
-  const selected = selectDiverseCrops(candidateCrops, preferences, siteContext, Math.min(12, Math.max(targetCount + 4, assignments.length)), areaSquareFeet);
-  const selectedWithNotes = mergePreferredCrops(notePreferredCrops, selected, Math.min(maxCropCount, Math.max(targetCount, Math.min(8, selected.length))));
+  const notePreferredCrops = preprocess.notePreferredCrops.slice(0, 6);
+  const finalCropLimit = Math.min(10, Math.max(maxCropCount, targetCount, notePreferredCrops.length));
+  const selected = selectDiverseCrops(preprocess.candidateCrops, preferences, preprocess.siteContext, Math.min(12, Math.max(targetCount + 4, assignments.length)), areaSquareFeet);
+  const selectedWithNotes = mergePreferredCrops(notePreferredCrops, selected, Math.max(notePreferredCrops.length, Math.min(finalCropLimit, Math.max(targetCount, Math.min(8, selected.length)))));
   const merged = selectedWithNotes.map((crop) => {
     const existing = assignmentMap.get(crop.key);
     const notePreferred = notePreferredCrops.some((item) => item.key === crop.key);
@@ -759,6 +777,56 @@ function ensureCropAssignments(
   });
 
   return normalizeRatios(merged, 0.72);
+}
+
+function promptCropPayload(crops: AiDraftCrop[]) {
+  return crops.map((crop) => ({
+    key: crop.key,
+    name: crop.name,
+    category: crop.cropCategory,
+    lifeSpan: crop.lifeSpan,
+    idealSpaceSqft: crop.idealSpaceSqft,
+    harvestCycles: crop.harvestCycles,
+    waterConsumptionMl: crop.waterConsumptionMl,
+    temperatureMinC: crop.temperatureMinC,
+    temperatureMaxC: crop.temperatureMaxC,
+  }));
+}
+
+function promptLivestockPayload(livestock: AiDraftLivestock[]) {
+  return livestock.map((animal) => ({
+    key: animal.key,
+    name: animal.name,
+    defaultCount: animal.defaultCount,
+    idealSpaceSqft: animal.idealSpaceSqft,
+    yieldTypes: animal.yieldTypes,
+  }));
+}
+
+function preprocessPlannerInput({
+  geo,
+  preferences,
+  crops,
+  livestock,
+}: {
+  geo: GeoPoint[];
+  preferences: FarmAiDraftPreferences;
+  crops: AiDraftCrop[];
+  livestock: AiDraftLivestock[];
+}): PlannerPreprocess {
+  const siteContext = buildSiteGrowingContext(geo, preferences);
+  const candidateCrops = selectCandidateCrops(crops, preferences, siteContext);
+  const notePreferredCrops = noteMatchedCrops(candidateCrops, preferences, "prefer").slice(0, 6);
+  const noteExcludedCropKeys = noteMatchedCrops(crops, preferences, "exclude").map((crop) => crop.key);
+
+  return {
+    siteContext,
+    candidateCrops,
+    notePreferredCrops,
+    noteExcludedCropKeys,
+    compactCropPayload: promptCropPayload(candidateCrops),
+    compactLivestockPayload: promptLivestockPayload(livestock),
+  };
 }
 
 function preferredStructureKeys(hasLivestock: boolean) {
@@ -933,7 +1001,10 @@ function rectPolygon({ x, y, width, depth }: Placement): LocalPoint[] {
 function createLayoutVariants(boundary: LocalPoint[], intent: GeminiFarmIntent): LayoutVariant[] {
   const area = Math.max(1, polygonArea(boundary));
   const baseCropLimit = area < 700 ? 2 : area < 1500 ? 3 : area < 2500 ? 4 : area < 7000 ? 6 : 8;
-  const requestedCropLimit = Math.min(baseCropLimit, Math.max(Math.min(3, baseCropLimit), intent.cropAssignments.length));
+  const requiredCropCount = intent.requiredCropKeys?.length ?? 0;
+  const requestedCropLimit = Math.min(Math.max(baseCropLimit, requiredCropCount), Math.max(Math.min(3, baseCropLimit), intent.cropAssignments.length, requiredCropCount));
+  const secondaryCropLimit = Math.max(requiredCropCount, Math.min(2, baseCropLimit), requestedCropLimit - 1);
+  const labelSafeCropLimit = Math.max(requiredCropCount, Math.min(2, baseCropLimit), Math.min(5, requestedCropLimit - 2));
   const variants: LayoutVariant[] = [
     {
       name: "balanced",
@@ -942,20 +1013,26 @@ function createLayoutVariants(boundary: LocalPoint[], intent: GeminiFarmIntent):
       minCellSide: 14,
     },
     {
+      name: "compact-required",
+      cropLimit: requestedCropLimit,
+      gapScale: 0.65,
+      minCellSide: 12,
+    },
+    {
       name: "spacious",
-      cropLimit: Math.max(Math.min(2, baseCropLimit), requestedCropLimit - 1),
+      cropLimit: secondaryCropLimit,
       gapScale: 1,
       minCellSide: 16,
     },
     {
       name: "wide-utility",
-      cropLimit: Math.max(Math.min(2, baseCropLimit), requestedCropLimit - 1),
+      cropLimit: secondaryCropLimit,
       gapScale: 1.1,
       minCellSide: 16,
     },
     {
       name: "label-safe",
-      cropLimit: Math.max(Math.min(2, baseCropLimit), Math.min(5, requestedCropLimit - 2)),
+      cropLimit: labelSafeCropLimit,
       gapScale: 1.2,
       minCellSide: 18,
     },
@@ -1268,7 +1345,10 @@ function assessGeneratedLayout(
     }
   }
 
-  const sides = solidBoxes.flatMap(({ box }) => [box.maxX - box.minX, box.maxY - box.minY]).filter((value) => value > 0);
+  const productionSides = solidBoxes
+    .filter(({ object }) => object.type !== "structure")
+    .flatMap(({ box }) => [box.maxX - box.minX, box.maxY - box.minY])
+    .filter((value) => value > 0);
   const aspects = solidBoxes.map(({ box }) => {
     const width = Math.max(1, box.maxX - box.minX);
     const depth = Math.max(1, box.maxY - box.minY);
@@ -1277,12 +1357,18 @@ function assessGeneratedLayout(
   const solidArea = solids.reduce((sum, object) => sum + polygonArea(objectPolygon(object) || []), 0);
   const solidCoverageRatio = clampScore(solidArea / Math.max(1, polygonArea(buildablePolygon)));
   const buildableArea = Math.max(1, polygonArea(buildablePolygon));
-  const minSolidSide = sides.length ? Math.min(...sides) : 0;
+  const minSolidSide = productionSides.length ? Math.min(...productionSides) : 0;
   const maxAspectRatio = aspects.length ? Math.max(...aspects) : 0;
   const cropCount = objects.filter((object) => object.type === "cropField").length;
+  const cropKeys = new Set(objects
+    .filter((object): object is Extract<FarmV2Object, { type: "cropField" }> => object.type === "cropField")
+    .map((object) => typeof object.attrs.cropKey === "string" ? object.attrs.cropKey : "")
+    .filter(Boolean));
+  const missingRequiredCropKeys = (intent.requiredCropKeys ?? []).filter((key) => !cropKeys.has(key));
   const livestockCount = objects.filter((object) => object.type === "livestock").length;
   const structureCount = objects.filter((object) => object.type === "structure").length;
-  const requiredCropCount = buildableArea < 700 ? 1 : buildableArea < 1500 ? 2 : 3;
+  const areaRequiredCropCount = buildableArea < 700 ? 1 : buildableArea < 1500 ? 2 : 3;
+  const requiredCropCount = Math.min(areaRequiredCropCount, intent.cropAssignments.length);
   const requiredLivestockCount = intent.livestockAssignments.length ? 1 : 0;
   const requiredStructureCount = intent.structures.length ? 1 : 0;
   const minSideThreshold = buildableArea < 450 ? 3 : buildableArea < 1000 ? 3.5 : 8;
@@ -1297,6 +1383,7 @@ function assessGeneratedLayout(
   if (labelCollisions.length) notes.push(`Label collision risk: ${labelCollisions.slice(0, 2).join("; ")}`);
   if (wideLabels.length) notes.push(`Long labels need spacious cells: ${wideLabels.map(({ object }) => object.label).slice(0, 3).join(", ")}`);
   if (solidCoverageRatio < coverageThreshold) notes.push(`Low section fill ratio: ${solidCoverageRatio}`);
+  if (missingRequiredCropKeys.length) notes.push(`Required note crops missing from layout: ${missingRequiredCropKeys.join(", ")}`);
   if (livestockCount < requiredLivestockCount) notes.push("Livestock was requested but no paddock survived deterministic placement.");
   if (structureCount < requiredStructureCount) notes.push("Structures were requested but no compact structure survived deterministic placement.");
   if (minSolidSide < minSideThreshold) notes.push(`A generated cell is too small: ${roundPoint(minSolidSide)} ft`);
@@ -1313,6 +1400,7 @@ function assessGeneratedLayout(
     - Math.max(0, coverageThreshold + 0.06 - solidCoverageRatio) * 0.4
     - (nonRectangularCount ? 0 : 0.04)
     - (cropCount < requiredCropCount ? 0.2 : 0)
+    - missingRequiredCropKeys.length * 0.3
     - (livestockCount < requiredLivestockCount ? 0.2 : 0)
     - (structureCount < requiredStructureCount ? 0.16 : 0),
   );
@@ -1321,6 +1409,7 @@ function assessGeneratedLayout(
     && outside.length === 0
     && labelCollisions.length <= labelCollisionAllowance
     && cropCount >= requiredCropCount
+    && missingRequiredCropKeys.length === 0
     && livestockCount >= requiredLivestockCount
     && structureCount >= requiredStructureCount
     && minSolidSide >= minSideThreshold
@@ -1797,8 +1886,8 @@ function noteMatchedCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPreferen
 
 function noteCropScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences) {
   if (noteRejectsCrop(crop, preferences.notes)) return -500;
-  if (noteWantsCrop(crop, preferences.notes)) return 240;
-  if (noteMentionsCrop(crop, preferences.notes)) return 120;
+  if (noteWantsCrop(crop, preferences.notes)) return 1_000;
+  if (noteMentionsCrop(crop, preferences.notes)) return 600;
   return 0;
 }
 
@@ -1831,8 +1920,19 @@ function cropAliases(crop: AiDraftCrop) {
   ];
   return Array.from(new Set(candidates.flatMap((value) => {
     const normalized = normalizeNoteText(value);
-    return normalized ? [normalized, singularizeCropAlias(normalized)] : [];
+    return normalized ? [normalized, singularizeCropAlias(normalized), pluralizeCropAlias(normalized)] : [];
   }).filter(Boolean))).sort((first, second) => second.length - first.length);
+}
+
+function pluralizeCropAlias(value: string) {
+  return value.split(" ").map((word) => {
+    if (word.endsWith("s")) return word;
+    if (word.endsWith("y") && word.length > 2) return `${word.slice(0, -1)}ies`;
+    if (word.endsWith("o") && word.length > 2) return `${word}es`;
+    if (/(ch|sh|x|z)$/.test(word)) return `${word}es`;
+    if (word.length > 2) return `${word}s`;
+    return word;
+  }).join(" ");
 }
 
 function singularizeCropAlias(value: string) {
@@ -2196,15 +2296,18 @@ function maintenanceLevelForHours(weeklyHours: number): GeminiFarmIntent["summar
 function createCatalogFallbackIntent(input: {
   areaSquareFeet: number;
   preferences: FarmAiDraftPreferences;
-  siteContext: SiteGrowingContext;
-  candidateCrops: AiDraftCrop[];
+  preprocess: PlannerPreprocess;
   livestock: AiDraftLivestock[];
   structures: AiDraftStructure[];
 }): GeminiFarmIntent {
   const cropCount = Math.min(targetCropCountForLabor(input.areaSquareFeet, input.preferences), input.areaSquareFeet < 2500 ? 5 : input.areaSquareFeet < 7000 ? 7 : 9);
-  const selectedCrops = input.candidateCrops.slice(0, Math.max(3, cropCount));
+  const selectedCrops = mergePreferredCrops(
+    input.preprocess.notePreferredCrops,
+    input.preprocess.candidateCrops,
+    Math.max(input.preprocess.notePreferredCrops.length, Math.max(3, cropCount)),
+  );
   const selectedLivestockAnimal = input.preferences.includeLivestock && input.areaSquareFeet >= 650
-    ? selectLivestockForSite(input.livestock, input.preferences, input.siteContext, input.areaSquareFeet)
+    ? selectLivestockForSite(input.livestock, input.preferences, input.preprocess.siteContext, input.areaSquareFeet)
     : null;
   const selectedLivestock = selectedLivestockAnimal ? [selectedLivestockAnimal] : [];
   const structureKeys = new Set(input.structures.map((structure) => structure.key));
@@ -2215,6 +2318,7 @@ function createCatalogFallbackIntent(input: {
 
   return {
     planName: "Catalog Optimized Homestead Plan",
+    requiredCropKeys: input.preprocess.notePreferredCrops.map((crop) => crop.key),
     summary: {
       description: "A catalog-scored fallback plan generated while the LLM planner is unavailable.",
       highlights: ["Crop choices use local climate and seasonal temperature scoring", "Layout remains deterministic and boundary-aware", "Structures are compact and grid cells follow the boundary"],
@@ -2295,8 +2399,29 @@ function isRecoverableGeminiError(error: unknown) {
     || message.includes("missing openai_api_key")
     || message.includes("missing gemini_api_key")
     || message.includes("temporarily")
-    || message.includes("unavailable")
-    || message.includes("timeout");
+    || message.includes("unavailable");
+}
+
+async function fetchWithPlannerTimeout(provider: PlannerResult["source"], url: string, init: RequestInit) {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    if (isPlannerTimeoutError(error)) {
+      throw new Error(`${provider === "openai" ? "OpenAI" : "Gemini"} farm planner timed out after ${PLANNER_TIMEOUT_MS / 1000} seconds. Please try again; the plan was not generated.`);
+    }
+    throw error;
+  }
+}
+
+function isPlannerTimeoutError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const name = "name" in error ? String((error as { name?: unknown }).name).toLowerCase() : "";
+  const message = "message" in error ? String((error as { message?: unknown }).message).toLowerCase() : "";
+  return name === "aborterror"
+    || name === "timeouterror"
+    || message.includes("operation was aborted")
+    || message.includes("signal timed out")
+    || message.includes("aborted");
 }
 
 function readOpenAiResponseText(data: unknown) {
