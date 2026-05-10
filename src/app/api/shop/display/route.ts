@@ -10,14 +10,20 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, PATCH, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+};
+
 export async function GET() {
   try {
     const snapshot = await getShopSnapshot();
-    return NextResponse.json(snapshot);
+    return NextResponse.json(snapshot, { headers: corsHeaders });
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to load shop display") },
-      { status: error instanceof AuthenticationError ? 401 : 500 },
+      { status: error instanceof AuthenticationError ? 401 : 500, headers: corsHeaders },
     );
   }
 }
@@ -27,13 +33,17 @@ export async function PATCH(request: Request) {
     const payload = normalizeRequest(await request.json());
     const snapshot = await saveShopDisplay(payload);
 
-    return NextResponse.json(snapshot);
+    return NextResponse.json(snapshot, { headers: corsHeaders });
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to save shop display") },
-      { status: error instanceof AuthenticationError ? 401 : isRequestError(error) || error instanceof ShopValidationError ? 400 : 500 },
+      { status: error instanceof AuthenticationError ? 401 : isRequestError(error) || error instanceof ShopValidationError ? 400 : 500, headers: corsHeaders },
     );
   }
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: corsHeaders });
 }
 
 function normalizeRequest(raw: unknown): { slots: ShopDisplaySaveSlot[]; details?: ShopDisplaySaveDetails } {

@@ -36,6 +36,7 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
   const [isDirtyState, setIsDirtyState] = useState(false);
+  const [isPublished, setIsPublished] = useState(initialSnapshot.isPublished);
   const hasUserEdited = useRef(false);
   const saveTokenRef = useRef(0);
 
@@ -73,6 +74,7 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
 
       hasUserEdited.current = false;
       setIsDirtyState(false);
+      setIsPublished(true);
       setSaveStatus("saved");
     } catch (error) {
       setSaveStatus("error");
@@ -201,6 +203,7 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
         actionMessage={actionMessage}
         draggedItemId={draggedItemId}
         uploadingItemId={uploadingItemId}
+        isPublished={isPublished}
         isDirty={isDirtyState}
         onSave={saveChanges}
         onDragStart={handleDragStart}
@@ -246,6 +249,7 @@ export function PublicShopfrontPreview({ snapshot }: { snapshot: ShopSnapshot })
       actionMessage={null}
       draggedItemId={null}
       uploadingItemId={null}
+      isPublished={snapshot.isPublished}
       isDirty={false}
       onSave={noopAsync}
       onDragStart={noop}
@@ -301,6 +305,7 @@ function FarmStandPanel({
   actionMessage,
   draggedItemId,
   uploadingItemId,
+  isPublished,
   isDirty,
   onSave,
   onDragStart,
@@ -320,6 +325,7 @@ function FarmStandPanel({
   actionMessage: string | null;
   draggedItemId: string | null;
   uploadingItemId: string | null;
+  isPublished: boolean;
   isDirty: boolean;
   onSave: () => Promise<void>;
   onDragStart: (itemId: string) => void;
@@ -331,6 +337,14 @@ function FarmStandPanel({
 }) {
   const isEditing = mode === "edit";
   const shopName = details.shopName || displayName;
+  const canSave = isDirty || !isPublished;
+  const saveLabel = saveStatus === "saving"
+    ? "Saving..."
+    : !isPublished
+      ? "Publish shop"
+      : isDirty
+        ? "Save changes"
+        : "Saved";
 
   return (
     <section
@@ -364,7 +378,7 @@ function FarmStandPanel({
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            {isEditing ? <StatusBadge status={saveStatus} error={saveError} dirty={isDirty} /> : null}
+            {isEditing ? <StatusBadge status={saveStatus} error={saveError} dirty={isDirty} published={isPublished} /> : null}
             <span className="rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] px-2.5 py-1 font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#5e4a26] shadow-[0_2px_0_#3b2a14]">
               {visibleSlots.length} on shelf · {Math.round(totalDisplayed * 10) / 10} units
             </span>
@@ -372,14 +386,14 @@ function FarmStandPanel({
               <button
                 type="button"
                 onClick={() => onSave()}
-                disabled={!isDirty || saveStatus === "saving"}
+                disabled={!canSave || saveStatus === "saving"}
                 className={`rounded-none border-2 px-3 py-1 font-mono text-[11px] font-black uppercase tracking-[0.1em] shadow-[0_2px_0_#3b2a14] transition active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14] ${
-                  isDirty && saveStatus !== "saving"
+                  canSave && saveStatus !== "saving"
                     ? "border-[#3b2a14] bg-[#7da854] text-[#fffdf5] hover:bg-[#9bc278]"
                     : "cursor-not-allowed border-[#a8916a] bg-[#f1e4c2] text-[#7a6843] opacity-70"
                 }`}
               >
-                {saveStatus === "saving" ? "Saving…" : isDirty ? "Save changes" : "Saved"}
+                {saveLabel}
               </button>
             ) : null}
           </div>
@@ -1160,21 +1174,33 @@ function ImageSlot({
   );
 }
 
-function StatusBadge({ status, error, dirty }: { status: SaveStatus; error: string | null; dirty: boolean }) {
+function StatusBadge({
+  status,
+  error,
+  dirty,
+  published,
+}: {
+  status: SaveStatus;
+  error: string | null;
+  dirty: boolean;
+  published: boolean;
+}) {
   const text = status === "saving"
     ? "Saving"
     : status === "error"
       ? "Save error"
-      : dirty
+      : !published
+        ? "Unpublished"
+        : dirty
         ? "Unsaved"
         : status === "saved"
           ? "Saved"
           : "Ready";
   const classes = status === "error"
     ? "border-[#efb16b] bg-[#fff1dc] text-[#7a461f]"
-    : status === "saving"
-      ? "border-[#68b8c9] bg-[#e4f7f8] text-[#245c65]"
-      : dirty
+      : status === "saving"
+        ? "border-[#68b8c9] bg-[#e4f7f8] text-[#245c65]"
+      : !published || dirty
         ? "border-[#d8a05a] bg-[#fff1dc] text-[#7a461f]"
         : "border-[#9bc278] bg-[#eef8df] text-[#335a2d]";
 

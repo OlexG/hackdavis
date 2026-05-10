@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const formData = await request.formData();
+    const formData = await request.formData() as unknown as { get(name: string): unknown };
     const inventoryItemId = formData.get("inventoryItemId");
     const file = formData.get("file");
 
