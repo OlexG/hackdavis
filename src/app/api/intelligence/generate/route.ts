@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { AuthenticationError } from "@/lib/auth";
 import { generateAndSaveFarmIntelligence } from "@/lib/intelligence";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +12,7 @@ export async function POST() {
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to generate farm intelligence") },
-      { status: isSetupError(error) ? 400 : 500 },
+      { status: error instanceof AuthenticationError ? 401 : isSetupError(error) ? 400 : 500 },
     );
   }
 }

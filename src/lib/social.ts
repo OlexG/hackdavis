@@ -1,6 +1,7 @@
 import "server-only";
 
 import { ObjectId, type WithId } from "mongodb";
+import { AuthenticationError, requireUserSession } from "@/lib/auth";
 import { getMongoDb } from "@/lib/mongodb";
 import type {
   Farm,
@@ -15,7 +16,6 @@ import type {
 import type { InventoryViewItem } from "@/lib/inventory";
 import type { ShopDisplaySlotView, ShopSnapshot } from "@/lib/shop";
 
-const demoUserEmail = "test@gmail.com";
 const sellableCategories = ["harvest", "preserves"] as const;
 
 export type SocialFarmCard = {
@@ -61,11 +61,11 @@ export type CreateFarmReviewResult = {
 export async function getSocialSnapshot(): Promise<SocialSnapshot> {
   try {
     const db = await getMongoDb();
+    const currentUser = await requireUserSession();
     const users = await db
       .collection<User>("users")
-      .find({ email: { $ne: demoUserEmail } })
+      .find({ _id: { $ne: currentUser.userId } })
       .sort({ createdAt: 1 })
-      .limit(12)
       .toArray();
 
     if (!users.length) {
@@ -146,7 +146,11 @@ export async function getSocialSnapshot(): Promise<SocialSnapshot> {
       farms: farmCards,
       lastUpdated: farmCards.map((farm) => farm.snapshot.lastUpdated).sort().at(-1) ?? new Date().toISOString(),
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+
     return getFallbackSocialSnapshot();
   }
 }
@@ -171,9 +175,15 @@ export async function createFarmReview(input: CreateFarmReviewInput): Promise<Cr
   }
 
   const db = await getMongoDb();
+  const currentUser = await requireUserSession();
   const farmUserId = new ObjectId(input.farmUserId);
+
+  if (farmUserId.equals(currentUser.userId)) {
+    throw new SocialReviewError("You cannot review your own farm");
+  }
+
   const [targetUser, display] = await Promise.all([
-    db.collection<User>("users").findOne({ _id: farmUserId, email: { $ne: demoUserEmail } }),
+    db.collection<User>("users").findOne({ _id: farmUserId }),
     db.collection<ShopDisplay>("shop_displays").findOne({ userId: farmUserId }),
   ]);
 

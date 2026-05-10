@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { AuthenticationError } from "@/lib/auth";
 import { ShopValidationError, uploadShopImage } from "@/lib/shop";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
     const isClientError = error instanceof ShopValidationError;
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to upload image" },
-      { status: isClientError ? 400 : 500 },
+      { status: error instanceof AuthenticationError ? 401 : isClientError ? 400 : 500 },
     );
   }
 }

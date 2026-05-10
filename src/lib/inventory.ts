@@ -1,8 +1,7 @@
 import { ObjectId } from "mongodb";
+import { AuthenticationError, requireUserSession } from "@/lib/auth";
 import { getMongoDb } from "@/lib/mongodb";
 import type { CatalogItem, InventoryCategory, InventoryItem, InventoryStatus, Plan } from "@/lib/models";
-
-const demoUserEmail = "test@gmail.com";
 
 export type InventoryViewItem = {
   id: string;
@@ -222,25 +221,17 @@ const demoPlan: InventoryPlanSnapshot = {
 export async function getInventorySnapshot(): Promise<InventorySnapshot> {
   try {
     const db = await getMongoDb();
-    const user = await db.collection("users").findOne({ email: demoUserEmail });
-
-    if (!user) {
-      return getDemoSnapshot();
-    }
+    const currentUser = await requireUserSession();
 
     const [profile, items, latestPlan] = await Promise.all([
-      db.collection("profiles").findOne({ userId: user._id }),
+      db.collection("profiles").findOne({ userId: currentUser.userId }),
       db
         .collection<InventoryItem>("inventory_items")
-        .find({ userId: user._id })
+        .find({ userId: currentUser.userId })
         .sort({ category: 1, status: 1, name: 1 })
         .toArray(),
-      db.collection<Plan>("plans").findOne({ userId: user._id }, { sort: { createdAt: -1 } }),
+      db.collection<Plan>("plans").findOne({ userId: currentUser.userId }, { sort: { createdAt: -1 } }),
     ]);
-
-    if (!items.length) {
-      return getDemoSnapshot();
-    }
 
     const viewItems = items.map((item) => ({
       id: item._id.toString(),
@@ -270,21 +261,25 @@ export async function getInventorySnapshot(): Promise<InventorySnapshot> {
     const catalogById = new Map(catalogItems.map((item) => [item._id.toString(), item]));
 
     return {
-      userEmail: user.email,
-      displayName: typeof profile?.displayName === "string" ? profile.displayName : "Test Farmer",
+      userEmail: currentUser.email,
+      displayName: typeof profile?.displayName === "string" ? profile.displayName : currentUser.displayName,
       source: "mongodb",
       items: viewItems,
       plan: latestPlan ? buildPlanSnapshot(latestPlan, catalogById) : undefined,
-      lastUpdated: newestTimestamp(viewItems),
+      lastUpdated: newestTimestamp(viewItems) ?? new Date().toISOString(),
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+
     return getDemoSnapshot();
   }
 }
 
 function getDemoSnapshot(): InventorySnapshot {
   return {
-    userEmail: demoUserEmail,
+    userEmail: "demo@sunpatch.local",
     displayName: "Test Farmer",
     source: "demo",
     items: demoInventoryItems,

@@ -2,6 +2,7 @@ import "server-only";
 
 import { GridFSBucket, ObjectId } from "mongodb";
 import { Readable } from "node:stream";
+import { AuthenticationError, requireUserSession } from "@/lib/auth";
 import { getInventorySnapshot, type InventoryViewItem } from "@/lib/inventory";
 import { getMongoDb } from "@/lib/mongodb";
 import type {
@@ -16,7 +17,6 @@ import type {
   ShopPickupCoords,
 } from "@/lib/models";
 
-const demoUserEmail = "test@gmail.com";
 const sellableCategories = ["harvest", "preserves"] as const;
 const shopImagesBucket = "shop_images";
 const maxImageBytes = 4 * 1024 * 1024;
@@ -121,54 +121,47 @@ export type ShopDisplaySaveSlot = {
 export async function getShopSnapshot(): Promise<ShopSnapshot> {
   try {
     const db = await getMongoDb();
-    const user = await db.collection("users").findOne({ email: demoUserEmail });
-
-    if (!user) {
-      return getFallbackShopSnapshot();
-    }
+    const currentUser = await requireUserSession();
 
     const [profile, inventoryItems, display] = await Promise.all([
-      db.collection("profiles").findOne({ userId: user._id }),
+      db.collection("profiles").findOne({ userId: currentUser.userId }),
       db
         .collection<InventoryItem>("inventory_items")
-        .find({ userId: user._id, category: { $in: [...sellableCategories] } })
+        .find({ userId: currentUser.userId, category: { $in: [...sellableCategories] } })
         .sort({ category: 1, status: 1, name: 1 })
         .toArray(),
-      db.collection<ShopDisplay>("shop_displays").findOne({ userId: user._id }),
+      db.collection<ShopDisplay>("shop_displays").findOne({ userId: currentUser.userId }),
     ]);
 
     const sellableItems = inventoryItems.map(toInventoryViewItem);
 
-    if (!sellableItems.length) {
-      return getFallbackShopSnapshot();
-    }
-
+    const displayName = typeof profile?.displayName === "string" ? profile.displayName : currentUser.displayName;
     return {
-      userEmail: user.email,
-      displayName: typeof profile?.displayName === "string" ? profile.displayName : "Test Farmer",
+      userEmail: currentUser.email,
+      displayName,
       theme: "farm-stand",
       layoutMode: "shelves",
-      details: normalizeDetails(display?.details, typeof profile?.displayName === "string" ? profile.displayName : "Test Farmer"),
+      details: normalizeDetails(display?.details, displayName),
       sellableItems,
       slots: buildShopSlots(sellableItems, display?.slots),
       lastUpdated: newestTimestamp(sellableItems, display?.updatedAt),
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+
     return getFallbackShopSnapshot();
   }
 }
 
 export async function saveShopDisplay({ slots, details }: ShopDisplaySavePayload) {
   const db = await getMongoDb();
-  const user = await db.collection("users").findOne({ email: demoUserEmail });
-
-  if (!user) {
-    throw new Error("Seed the demo user before saving a shop display");
-  }
+  const currentUser = await requireUserSession();
 
   const sellableItems = await db
     .collection<InventoryItem>("inventory_items")
-    .find({ userId: user._id, category: { $in: [...sellableCategories] } })
+    .find({ userId: currentUser.userId, category: { $in: [...sellableCategories] } })
     .toArray();
   const sellableById = new Map(sellableItems.map((item) => [item._id.toString(), item]));
   const invalidSlot = slots.find((slot) => !sellableById.has(slot.inventoryItemId));
@@ -180,17 +173,17 @@ export async function saveShopDisplay({ slots, details }: ShopDisplaySavePayload
   const normalizedSlots = slots
     .map((slot, index) => normalizeSaveSlot(slot, index, sellableById))
     .filter(isShopDisplaySlot);
-  const profile = await db.collection("profiles").findOne({ userId: user._id });
-  const displayName = typeof profile?.displayName === "string" ? profile.displayName : "Test Farmer";
+  const profile = await db.collection("profiles").findOne({ userId: currentUser.userId });
+  const displayName = typeof profile?.displayName === "string" ? profile.displayName : currentUser.displayName;
   const normalizedDetails = normalizeDetails(details, displayName);
   const now = new Date();
 
   await db.collection("shop_displays").createIndex({ userId: 1 }, { unique: true });
   await db.collection<ShopDisplay>("shop_displays").findOneAndUpdate(
-    { userId: user._id },
+    { userId: currentUser.userId },
     {
       $set: {
-        userId: user._id,
+        userId: currentUser.userId,
         theme: "farm-stand",
         layoutMode: "shelves",
         details: normalizedDetails,
@@ -619,15 +612,11 @@ export async function uploadShopImage({
   }
 
   const db = await getMongoDb();
-  const user = await db.collection("users").findOne({ email: demoUserEmail });
-
-  if (!user) {
-    throw new Error("Seed the demo user before uploading shop images");
-  }
+  const currentUser = await requireUserSession();
 
   const item = await db
     .collection<InventoryItem>("inventory_items")
-    .findOne({ _id: new ObjectId(inventoryItemId), userId: user._id });
+    .findOne({ _id: new ObjectId(inventoryItemId), userId: currentUser.userId });
 
   if (!item) {
     throw new ShopValidationError("Inventory item not found for current user");
@@ -636,7 +625,7 @@ export async function uploadShopImage({
   const bucket = new GridFSBucket(db, { bucketName: shopImagesBucket });
   const uploadStream = bucket.openUploadStream(fileName || "shop-image", {
     metadata: {
-      userId: user._id,
+      userId: currentUser.userId,
       inventoryItemId: item._id,
       contentType: mimeType,
       uploadedAt: new Date(),
@@ -670,10 +659,11 @@ export async function openShopImageStream(imageId: string): Promise<ShopImageStr
   }
 
   const db = await getMongoDb();
+  const currentUser = await requireUserSession();
   const bucket = new GridFSBucket(db, { bucketName: shopImagesBucket });
   const file = await db
-    .collection<{ _id: ObjectId; length: number; metadata?: { contentType?: string } }>(`${shopImagesBucket}.files`)
-    .findOne({ _id: new ObjectId(imageId) });
+    .collection<{ _id: ObjectId; length: number; metadata?: { contentType?: string; userId?: ObjectId } }>(`${shopImagesBucket}.files`)
+    .findOne({ _id: new ObjectId(imageId), "metadata.userId": currentUser.userId });
 
   if (!file) {
     return null;

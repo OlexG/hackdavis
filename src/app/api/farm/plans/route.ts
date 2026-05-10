@@ -5,14 +5,10 @@ import {
   type FarmPlannerCatalogItem,
   type FarmPlannerInput,
 } from "@/lib/farm-planner";
+import { AuthenticationError, requireUserSession } from "@/lib/auth";
 import { getMongoDb } from "@/lib/mongodb";
 
 export const dynamic = "force-dynamic";
-
-const demoUser = {
-  email: "test@gmail.com",
-  displayName: "Test Farmer",
-};
 
 function getCatalogSeed(): FarmPlannerCatalogItem[] {
   return [
@@ -127,7 +123,7 @@ export async function GET() {
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to load farm plans") },
-      { status: 500 },
+      { status: error instanceof AuthenticationError ? 401 : 500 },
     );
   }
 }
@@ -186,7 +182,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to generate farm plan") },
-      { status: isRequestError(error) ? 400 : 500 },
+      { status: error instanceof AuthenticationError ? 401 : isRequestError(error) ? 400 : 500 },
     );
   }
 }
@@ -221,44 +217,35 @@ export async function PATCH(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to save farm plan edits") },
-      { status: isRequestError(error) ? 400 : 500 },
+      { status: error instanceof AuthenticationError ? 401 : isRequestError(error) ? 400 : 500 },
     );
   }
 }
 
 async function ensureFarmContext() {
   const db = await getMongoDb();
+  const currentUser = await requireUserSession();
   const now = new Date();
 
   await Promise.all([
     db.collection("users").createIndex({ email: 1 }, { unique: true }),
+    db.collection("users").createIndex({ username: 1 }, { unique: true, sparse: true }),
     db.collection("profiles").createIndex({ userId: 1 }, { unique: true }),
     db.collection("catalog_items").createIndex({ type: 1, slug: 1 }, { unique: true }),
     db.collection("farms").createIndex({ userId: 1 }),
     db.collection("plans").createIndex({ userId: 1, farmId: 1, createdAt: -1 }),
   ]);
 
-  const user = await db.collection("users").findOneAndUpdate(
-    { email: demoUser.email },
-    {
-      $set: { email: demoUser.email, role: "user", updatedAt: now },
-      $setOnInsert: {
-        passwordHash: "development-placeholder",
-        createdAt: now,
-      },
-    },
-    { upsert: true, returnDocument: "after" },
-  );
-
-  if (!user) {
-    throw new Error("Unable to create demo user");
-  }
-
   await db.collection("profiles").updateOne(
-    { userId: user._id },
+    { userId: currentUser.userId },
     {
-      $set: { displayName: demoUser.displayName, updatedAt: now },
-      $setOnInsert: { bio: "Generated for local farm planning.", avatarUrl: null, createdAt: now },
+      $setOnInsert: {
+        displayName: currentUser.displayName,
+        bio: "Generated for local farm planning.",
+        avatarUrl: null,
+        createdAt: now,
+        updatedAt: now,
+      },
     },
     { upsert: true },
   );
@@ -296,10 +283,10 @@ async function ensureFarmContext() {
   }
 
   const farm = await db.collection("farms").findOneAndUpdate(
-    { userId: user._id, name: "Drawn Homestead Site" },
+    { userId: currentUser.userId, name: "Drawn Homestead Site" },
     {
       $set: {
-        userId: user._id,
+        userId: currentUser.userId,
         name: "Drawn Homestead Site",
         units: "feet",
         updatedAt: now,
@@ -313,11 +300,11 @@ async function ensureFarmContext() {
   );
 
   if (!farm) {
-    throw new Error("Unable to create demo farm");
+    throw new Error("Unable to create farm");
   }
 
   await db.collection("plans").deleteMany({
-    userId: user._id,
+    userId: currentUser.userId,
     farmId: farm._id,
     $or: [
       { version: { $lt: 7 } },
@@ -327,7 +314,7 @@ async function ensureFarmContext() {
   });
 
   return {
-    userId: user._id as ObjectId,
+    userId: currentUser.userId,
     farmId: farm._id as ObjectId,
     catalog,
     catalogBySlug,

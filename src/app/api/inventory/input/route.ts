@@ -1,11 +1,10 @@
 import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
+import { AuthenticationError, requireUserSession } from "@/lib/auth";
 import { getMongoDb } from "@/lib/mongodb";
 import type { InventoryCategory, InventoryItem, InventoryStatus, Plan } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
-
-const demoUserEmail = "test@gmail.com";
 
 type GeneratedNeedItem = {
   name: string;
@@ -37,7 +36,7 @@ const needColors: Record<(typeof allowedNeedCategories)[number], string> = {
 
 export async function GET() {
   try {
-    const { userId } = await getDemoUserContext();
+    const { userId } = await requireUserSession();
     const db = await getMongoDb();
     const plans = await db
       .collection<Plan>("plans")
@@ -59,7 +58,7 @@ export async function GET() {
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to load inventory input plans") },
-      { status: 500 },
+      { status: error instanceof AuthenticationError ? 401 : 500 },
     );
   }
 }
@@ -68,7 +67,7 @@ export async function POST(request: Request) {
   try {
     const input = normalizeRequest(await request.json());
 
-    const { userId } = await getDemoUserContext();
+    const { userId } = await requireUserSession();
     const db = await getMongoDb();
     const plan = await db.collection<Plan>("plans").findOne({ _id: new ObjectId(input.planId), userId });
 
@@ -128,7 +127,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to generate inventory inputs") },
-      { status: isRequestError(error) ? 400 : 500 },
+      { status: error instanceof AuthenticationError ? 401 : isRequestError(error) ? 400 : 500 },
     );
   }
 }
@@ -244,17 +243,6 @@ function isLivestockNeedItem(item: GeneratedNeedItem) {
     item.category === "feed" ||
     /\b(chicken|chick|hen|rooster|coop|egg|feed|bedding|nest box|oyster shell)\b/.test(searchable)
   );
-}
-
-async function getDemoUserContext() {
-  const db = await getMongoDb();
-  const user = await db.collection("users").findOne({ email: demoUserEmail });
-
-  if (!user) {
-    throw new Error("Seed the demo user before generating inventory inputs");
-  }
-
-  return { userId: user._id as ObjectId };
 }
 
 function normalizeRequest(raw: unknown): InventoryInputRequest {

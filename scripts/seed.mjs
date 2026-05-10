@@ -20,6 +20,7 @@ const now = new Date();
 const shopImagesBucket = "shop_images";
 const imageUserAgent = "davishacks-seed/1.0 (local development seed script)";
 const testUser = {
+  username: "testfarmer",
   email: "test@gmail.com",
   password: "test1234",
   displayName: "Test Farmer",
@@ -653,11 +654,168 @@ const neighborFarms = [
       reviewSeed("Cal Foster", 5, "Sauce jar tasted like summer.", ["preserves", "tomatoes"]),
     ],
   },
+  {
+    email: "peppergate@sunpatch.local",
+    displayName: "Marisol at Pepper Gate",
+    farmName: "Pepper Gate Garden",
+    bio: "A sunny gate-side stand with peppers, tomatoes, salsa jars, and a few herb bunches.",
+    details: {
+      shopName: "Pepper Gate Stand",
+      hours: "Tue and Sat, 9 AM - 12 PM",
+      pickupLocation: "Southwest Davis red gate",
+      pickupCoords: { lat: 38.5326, lng: -121.7609 },
+      pickupInstructions: "Stand is just inside the red gate; use the left basket for paid orders.",
+      paymentOptions: "Venmo, cash, or pepper starts",
+      contact: "marisol@peppergate.local",
+      availabilityNote: "Pepper boxes rotate by heat level and tomatoes are packed when fully colored.",
+    },
+    inventory: [
+      itemSeed("Sweet pepper bags", "harvest", "ready", 13, "bags", "gate stand", "pepper row", "#e9783a", 600, "Mixed sweet peppers sorted into mild snack bags.", "2026-05-16T07:00:00.000Z", imageSources.vegetables),
+      itemSeed("Roma tomato pounds", "harvest", "ready", 18, "lb", "shade crate", "sauce trellis", "#e9783a", 475, "Meaty Roma tomatoes for sauce and roasting.", "2026-05-15T07:00:00.000Z", imageSources.tomatoes),
+      itemSeed("Roasted salsa jars", "preserves", "curing", 20, "jars", "pantry tote", "pepper kitchen", "#c95b76", 950, "Smoky roasted salsa with mild garden heat.", "2026-10-25T07:00:00.000Z", imageSources.jam),
+    ],
+    reviews: [
+      reviewSeed("Alina Cruz", 5, "The pepper bags were labeled by heat and super easy to cook with.", ["peppers", "organized"]),
+      reviewSeed("Theo Grant", 4, "Roma tomatoes were dense and perfect for sauce.", ["tomatoes", "sauce"]),
+      reviewSeed("Cass Lee", 5, "Salsa jar disappeared in one dinner.", ["preserves", "flavorful"]),
+    ],
+  },
+  {
+    email: "maplebin@sunpatch.local",
+    displayName: "Hannah at Maple Bin",
+    farmName: "Maple Bin Farmlet",
+    bio: "A quiet north-side farmlet with eggs, salad greens, and weekend flower jars.",
+    details: {
+      shopName: "Maple Bin Pickup",
+      hours: "Mon, Thu, Sat, 8 AM - 10 AM",
+      pickupLocation: "North Davis maple tree bin",
+      pickupCoords: { lat: 38.5792, lng: -121.7336 },
+      pickupInstructions: "Cold items are in the green bin under the maple tree.",
+      paymentOptions: "Cash, Zelle, or egg carton returns",
+      contact: "hannah@maplebin.local",
+      availabilityNote: "Eggs are stocked most mornings; flower jars appear on weekends.",
+    },
+    inventory: [
+      itemSeed("Maple bin eggs", "harvest", "ready", 11, "dozen", "green bin", "cedar coop", "#d7b64b", 700, "Clean mixed-color dozens packed in reused cartons.", "2026-05-18T07:00:00.000Z", imageSources.eggs),
+      itemSeed("Baby kale bags", "harvest", "ready", 15, "bags", "cooler insert", "north bed", "#65a95a", 525, "Tender baby kale washed and packed loose.", "2026-05-13T07:00:00.000Z", imageSources.lettuce),
+      itemSeed("Weekend flower jars", "harvest", "ready", 8, "jars", "maple table", "front border", "#d7b64b", 650, "Small jar arrangements with edible and pollinator flowers.", "2026-05-14T07:00:00.000Z", imageSources.flowers),
+    ],
+    reviews: [
+      reviewSeed("Grace Patel", 5, "Egg pickup was clear and the carton return note was helpful.", ["eggs", "easy pickup"]),
+      reviewSeed("Leo Santos", 5, "Baby kale was tender enough for salad.", ["greens", "fresh"]),
+      reviewSeed("Imani Rowe", 4, "The flower jar made a sweet desk bouquet.", ["flowers", "cute"]),
+    ],
+  },
+  {
+    email: "orchardcrate@sunpatch.local",
+    displayName: "Devin at Orchard Crate",
+    farmName: "Orchard Crate",
+    bio: "A small fruit-tree yard with berries, herbs, mushrooms, and pantry crate specials.",
+    details: {
+      shopName: "Orchard Crate Shelf",
+      hours: "Fri and Sun, 10 AM - 2 PM",
+      pickupLocation: "Central Davis alley crate",
+      pickupCoords: { lat: 38.5519, lng: -121.7468 },
+      pickupInstructions: "Alley crate is labeled Orchard Crate; cold bags are in the lower cooler.",
+      paymentOptions: "Cash, PayPal, or fruit swaps",
+      contact: "devin@orchardcrate.local",
+      availabilityNote: "Berries are limited, herbs are steady, and mushrooms depend on cool weather.",
+    },
+    inventory: [
+      itemSeed("Orchard berry cups", "harvest", "ready", 10, "cups", "lower cooler", "berry strip", "#d94d5c", 700, "Mixed berry cups picked before the afternoon heat.", "2026-05-11T07:00:00.000Z", imageSources.strawberries),
+      itemSeed("Rosemary thyme bundles", "harvest", "ready", 18, "bundles", "alley crate", "tree guild", "#8a6f3f", 300, "Woody herb bundles for roasting and bread.", "2026-05-18T07:00:00.000Z", imageSources.cilantro),
+      itemSeed("Chestnut mushroom boxes", "harvest", "ready", 6, "boxes", "cool bag", "mushroom shelf", "#b99067", 1050, "Nutty chestnut mushrooms packed in small boxes.", "2026-05-12T07:00:00.000Z", imageSources.mushrooms),
+    ],
+    reviews: [
+      reviewSeed("Nell Harper", 5, "Berry cups were small but packed with flavor.", ["berries", "sweet"]),
+      reviewSeed("Micah Sun", 4, "Herb bundles were generous and very fragrant.", ["herbs", "fragrant"]),
+      reviewSeed("Rae Kim", 5, "Chestnut mushrooms had great texture.", ["mushrooms", "fresh"]),
+    ],
+  },
+  {
+    email: "sageporch@sunpatch.local",
+    displayName: "Luca at Sage Porch",
+    farmName: "Sage Porch Garden",
+    bio: "A porch-side herb garden with salad boxes, fragrant bundles, and small-batch pantry jars.",
+    details: {
+      shopName: "Sage Porch Shelf",
+      hours: "Wed and Fri, 7 AM - 10 AM",
+      pickupLocation: "East Davis sage porch",
+      pickupCoords: { lat: 38.5573, lng: -121.7048 },
+      pickupInstructions: "Shelf is beside the sage planter; cold bags are in the striped cooler.",
+      paymentOptions: "Venmo, cash, or seed packet trade",
+      contact: "luca@sageporch.local",
+      availabilityNote: "Herbs are clipped early and salad boxes are packed while cool.",
+    },
+    inventory: [
+      itemSeed("Sage herb bundles", "harvest", "ready", 22, "bundles", "porch shelf", "herb rail", "#8a6f3f", 325, "Sage, thyme, and oregano bundles tied for roasting.", "2026-05-18T07:00:00.000Z", imageSources.cilantro),
+      itemSeed("Porch salad boxes", "harvest", "ready", 12, "boxes", "striped cooler", "shade trough", "#72b85b", 625, "Mixed baby greens with herbs tucked in.", "2026-05-12T07:00:00.000Z", imageSources.vegetables),
+      itemSeed("Herbed tomato chutney", "preserves", "curing", 15, "jars", "pantry shelf", "summer kettle", "#e9783a", 900, "Savory tomato chutney with sage and thyme.", "2026-10-12T07:00:00.000Z", imageSources.jam),
+    ],
+    reviews: [
+      reviewSeed("Mara Klein", 5, "The herb bundles made the whole kitchen smell good.", ["herbs", "fragrant"]),
+      reviewSeed("Soren Diaz", 4, "Salad boxes were neat and very fresh.", ["salad", "fresh"]),
+      reviewSeed("Viv Rao", 5, "Chutney was excellent with eggs.", ["preserves", "practical"]),
+    ],
+  },
+  {
+    email: "bluebarrel@sunpatch.local",
+    displayName: "Noemi at Blue Barrel",
+    farmName: "Blue Barrel Beds",
+    bio: "A water-wise barrel garden growing greens, strawberries, flowers, and bright porch extras.",
+    details: {
+      shopName: "Blue Barrel Beds",
+      hours: "Thu, 5 PM - 7 PM · Sun, 8 AM - 11 AM",
+      pickupLocation: "Blue barrel driveway stand",
+      pickupCoords: { lat: 38.5411, lng: -121.7244 },
+      pickupInstructions: "Driveway stand is next to the painted rain barrels.",
+      paymentOptions: "Cash, PayPal, or flower trade",
+      contact: "noemi@bluebarrel.local",
+      availabilityNote: "Strawberries and flowers are posted as short weekend batches.",
+    },
+    inventory: [
+      itemSeed("Barrel strawberries", "harvest", "ready", 11, "pints", "driveway cooler", "barrel row", "#d94d5c", 700, "Small sweet strawberries from the blue barrel row.", "2026-05-11T07:00:00.000Z", imageSources.strawberries),
+      itemSeed("Rain barrel greens", "harvest", "ready", 14, "bags", "cool shelf", "wicking bed", "#65a95a", 525, "Tender greens grown in the wicking beds.", "2026-05-13T07:00:00.000Z", imageSources.lettuce),
+      itemSeed("Marigold posies", "harvest", "ready", 10, "bunches", "water crock", "flower barrel", "#d7b64b", 450, "Cheerful marigold and herb posies.", "2026-05-14T07:00:00.000Z", imageSources.flowers),
+    ],
+    reviews: [
+      reviewSeed("Ivy Chen", 5, "The strawberry pints were tiny and very sweet.", ["berries", "sweet"]),
+      reviewSeed("Mateo Hill", 5, "Greens were washed well and stayed crisp.", ["greens", "clean"]),
+      reviewSeed("Asha Noor", 4, "The marigold bunch was bright and fun.", ["flowers", "colorful"]),
+    ],
+  },
+  {
+    email: "cedarcoop@sunpatch.local",
+    displayName: "Tomas at Cedar Coop",
+    farmName: "Cedar Coop Stand",
+    bio: "A cedar-fenced coop and garden with eggs, mushrooms, greens, and simple breakfast staples.",
+    details: {
+      shopName: "Cedar Coop Stand",
+      hours: "Daily, 8 AM - 10 AM while stocked",
+      pickupLocation: "Cedar fence egg cooler",
+      pickupCoords: { lat: 38.5694, lng: -121.7687 },
+      pickupInstructions: "Egg cooler is hooked to the cedar fence near the side path.",
+      paymentOptions: "Cash jar, Zelle, or carton returns",
+      contact: "tomas@cedarcoop.local",
+      availabilityNote: "Eggs restock daily; mushrooms show up in smaller flushes.",
+    },
+    inventory: [
+      itemSeed("Cedar coop eggs", "harvest", "ready", 12, "dozen", "fence cooler", "cedar coop", "#d7b64b", 725, "Mixed-size backyard eggs with date labels.", "2026-05-18T07:00:00.000Z", imageSources.eggs),
+      itemSeed("Breakfast greens", "harvest", "ready", 16, "bags", "cool tote", "coop-side bed", "#72b85b", 500, "Mild greens for omelets and toast.", "2026-05-12T07:00:00.000Z", imageSources.vegetables),
+      itemSeed("Pearl oyster boxes", "harvest", "ready", 7, "boxes", "shade cooler", "cedar rack", "#b99067", 1000, "Pearl oyster mushrooms packed in vented boxes.", "2026-05-12T07:00:00.000Z", imageSources.mushrooms),
+    ],
+    reviews: [
+      reviewSeed("Della Park", 5, "Egg labels were clear and the cooler was easy to find.", ["eggs", "organized"]),
+      reviewSeed("Kai Morgan", 4, "Breakfast greens cooked down perfectly.", ["greens", "practical"]),
+      reviewSeed("Ren Ito", 5, "Oyster mushrooms were clean and meaty.", ["mushrooms", "fresh"]),
+    ],
+  },
 ];
 
 async function ensureIndexes(db) {
   await Promise.all([
     db.collection("users").createIndex({ email: 1 }, { unique: true }),
+    db.collection("users").createIndex({ username: 1 }, { unique: true, sparse: true }),
     db.collection("profiles").createIndex({ userId: 1 }, { unique: true }),
     db.collection("catalog_items").createIndex({ type: 1, slug: 1 }, { unique: true }),
     db.collection("farms").createIndex({ userId: 1 }),
@@ -776,6 +934,7 @@ async function seedNeighborFarm(db, farmSeed, passwordHash) {
     {
       $set: {
         email: farmSeed.email,
+        username: farmSeed.email.split("@")[0].replace(/[^a-z0-9_-]/g, "").slice(0, 32),
         passwordHash,
         role: "user",
         updatedAt: now,
@@ -908,6 +1067,7 @@ async function seed() {
       {
         $set: {
           email: testUser.email,
+          username: testUser.username,
           passwordHash,
           role: "user",
           updatedAt: now,

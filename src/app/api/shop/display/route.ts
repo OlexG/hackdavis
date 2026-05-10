@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { AuthenticationError } from "@/lib/auth";
 import {
   getShopSnapshot,
   saveShopDisplay,
@@ -16,7 +17,7 @@ export async function GET() {
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to load shop display") },
-      { status: 500 },
+      { status: error instanceof AuthenticationError ? 401 : 500 },
     );
   }
 }
@@ -30,7 +31,7 @@ export async function PATCH(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to save shop display") },
-      { status: isRequestError(error) || error instanceof ShopValidationError ? 400 : 500 },
+      { status: error instanceof AuthenticationError ? 401 : isRequestError(error) || error instanceof ShopValidationError ? 400 : 500 },
     );
   }
 }

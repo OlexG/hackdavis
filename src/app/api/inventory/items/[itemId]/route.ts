@@ -1,11 +1,10 @@
 import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
+import { AuthenticationError, requireUserSession } from "@/lib/auth";
 import { getMongoDb } from "@/lib/mongodb";
 import type { InventoryItem } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
-
-const demoUserEmail = "test@gmail.com";
 
 type InventoryItemRouteContext = {
   params: Promise<{
@@ -21,7 +20,7 @@ export async function DELETE(_request: Request, context: InventoryItemRouteConte
       return NextResponse.json({ error: "Choose a valid inventory item" }, { status: 400 });
     }
 
-    const { userId } = await getDemoUserContext();
+    const { userId } = await requireUserSession();
     const db = await getMongoDb();
     const result = await db
       .collection<InventoryItem>("inventory_items")
@@ -35,20 +34,9 @@ export async function DELETE(_request: Request, context: InventoryItemRouteConte
   } catch (error) {
     return NextResponse.json(
       { error: formatApiError(error, "Unable to delete inventory item") },
-      { status: 500 },
+      { status: error instanceof AuthenticationError ? 401 : 500 },
     );
   }
-}
-
-async function getDemoUserContext() {
-  const db = await getMongoDb();
-  const user = await db.collection("users").findOne({ email: demoUserEmail });
-
-  if (!user) {
-    throw new Error("Seed the demo user before deleting inventory items");
-  }
-
-  return { userId: user._id as ObjectId };
 }
 
 function isObjectId(value: string) {

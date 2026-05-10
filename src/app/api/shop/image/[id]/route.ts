@@ -1,3 +1,4 @@
+import { AuthenticationError } from "@/lib/auth";
 import { openShopImageStream } from "@/lib/shop";
 
 export const dynamic = "force-dynamic";
@@ -5,7 +6,17 @@ export const runtime = "nodejs";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const image = await openShopImageStream(id);
+  let image;
+
+  try {
+    image = await openShopImageStream(id);
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    throw error;
+  }
 
   if (!image) {
     return new Response("Not found", { status: 404 });

@@ -21,6 +21,27 @@ export async function getUserByEmail(email: string, dbName?: string) {
   return users.findOne({ email: email.toLowerCase() });
 }
 
+export async function getUserByUsername(username: string, dbName?: string) {
+  const users = await usersCollection(dbName);
+  return users.findOne({ username: normalizeUsername(username) });
+}
+
+export async function getUserByIdentifier(identifier: string, dbName?: string) {
+  const normalizedIdentifier = identifier.trim().toLowerCase();
+
+  if (!normalizedIdentifier) {
+    return null;
+  }
+
+  const users = await usersCollection(dbName);
+  return users.findOne({
+    $or: [
+      { email: normalizedIdentifier },
+      { username: normalizeUsername(normalizedIdentifier) },
+    ],
+  });
+}
+
 export async function getProfileByUserId(userId: ObjectId, dbName?: string) {
   const profiles = await profilesCollection(dbName);
   return profiles.findOne({ userId });
@@ -38,6 +59,7 @@ export async function getProfileForEmail(email: string, dbName?: string) {
 }
 
 export async function createUserWithProfile(input: {
+  username: string;
   email: string;
   password: string;
   displayName: string;
@@ -48,13 +70,21 @@ export async function createUserWithProfile(input: {
   const profiles = db.collection<Profile>("profiles");
   const now = new Date();
   const normalizedEmail = input.email.toLowerCase();
+  const username = normalizeUsername(input.username);
   const passwordHash = await bcrypt.hash(input.password, PASSWORD_SALT_ROUNDS);
   const userId = new ObjectId();
   const profileId = new ObjectId();
 
+  await Promise.all([
+    users.createIndex({ email: 1 }, { unique: true }),
+    users.createIndex({ username: 1 }, { unique: true, sparse: true }),
+    profiles.createIndex({ userId: 1 }, { unique: true }),
+  ]);
+
   const userResult = await users.insertOne({
     _id: userId,
     email: normalizedEmail,
+    username,
     passwordHash,
     role: "user",
     createdAt: now,
@@ -75,8 +105,8 @@ export async function createUserWithProfile(input: {
   };
 }
 
-export async function verifyUserPassword(email: string, password: string, dbName?: string) {
-  const user = await getUserByEmail(email, dbName);
+export async function verifyUserPassword(identifier: string, password: string, dbName?: string) {
+  const user = await getUserByIdentifier(identifier, dbName);
 
   if (!user) {
     return null;
@@ -84,4 +114,8 @@ export async function verifyUserPassword(email: string, password: string, dbName
 
   const isValid = await bcrypt.compare(password, user.passwordHash);
   return isValid ? user : null;
+}
+
+export function normalizeUsername(username: string) {
+  return username.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
 }

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
+import { getCurrentUser } from "@/lib/auth";
 import { AppShell } from "./_components/app-shell";
 
 export const metadata: Metadata = {
@@ -8,6 +10,12 @@ export const metadata: Metadata = {
     "Farm planning workspace for crop planning, seasonal views, shop economics, and ecological impact.",
 };
 
-export default function AppLayout({ children }: { children: ReactNode }) {
-  return <AppShell>{children}</AppShell>;
+export default async function AppLayout({ children }: { children: ReactNode }) {
+  const currentUser = await getCurrentUser();
+
+  if (!currentUser) {
+    redirect("/login");
+  }
+
+  return <AppShell currentUser={currentUser}>{children}</AppShell>;
 }

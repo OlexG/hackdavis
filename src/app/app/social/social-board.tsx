@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useState } from "react";
 import { PixelGlyph, PixelIcon } from "../_components/icons";
 import { PublicShopfrontPreview } from "../shop/shop-board";
+import { FarmsLeafletMap } from "./farms-leaflet-map";
 import type { ShopDisplaySlotView } from "@/lib/shop";
 import type { SocialFarmCard, SocialFarmReview, SocialSnapshot } from "@/lib/social";
 
@@ -13,8 +14,11 @@ type ReviewDraft = {
   comment: string;
 };
 
+type SocialView = "list" | "map";
+
 export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [view, setView] = useState<SocialView>("list");
   const [farms, setFarms] = useState(snapshot.farms);
   const selectedFarm = selectedUserId
     ? farms.find((farm) => farm.userId === selectedUserId)
@@ -101,6 +105,12 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
     );
   }
 
+  const farmsWithCoords = farms.filter(
+    (farm) =>
+      typeof farm.snapshot.details.pickupCoords?.lat === "number" &&
+      typeof farm.snapshot.details.pickupCoords?.lng === "number",
+  );
+
   return (
     <div className="mx-auto w-full max-w-6xl">
       <section
@@ -108,32 +118,72 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
         className="pixel-frame overflow-hidden rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] shadow-[0_4px_0_#3b2a14]"
       >
         <div className="pixel-gradient-meadow border-b-2 border-[#3b2a14] p-4">
-          <div className="flex items-center gap-3">
-            <span className="grid size-12 shrink-0 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#fff8dc] text-[#c95b76] shadow-[0_2px_0_#3b2a14]">
-              <PixelIcon name="social" className="size-7" />
-            </span>
-            <div className="min-w-0">
-              <h1 className="font-mono text-lg font-black uppercase tracking-[0.16em] text-[#34432b]">
-                Top farms nearby
-              </h1>
-              <p className="text-xs font-semibold text-[#5f563f]">
-                See public shelves, ratings, and neighbor notes
-              </p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="grid size-12 shrink-0 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#fff8dc] text-[#c95b76] shadow-[0_2px_0_#3b2a14]">
+                <PixelIcon name="social" className="size-7" />
+              </span>
+              <div className="min-w-0">
+                <h1 className="font-mono text-lg font-black uppercase tracking-[0.16em] text-[#34432b]">
+                  Top farms nearby
+                </h1>
+                <p className="text-xs font-semibold text-[#5f563f]">
+                  {view === "list"
+                    ? `${farms.length} public ${farms.length === 1 ? "shelf" : "shelves"} to browse`
+                    : `${farmsWithCoords.length} pinned on the map`}
+                </p>
+              </div>
             </div>
+            <ViewTabs view={view} onChange={setView} />
           </div>
         </div>
 
-        <div className="grid gap-3 bg-[#fcf6e4] p-3 md:grid-cols-2 xl:grid-cols-3">
-          {farms.map((farm) => (
-            <FarmCard
-              key={farm.userId}
-              farm={farm}
-              selected={false}
-              onSelect={() => setSelectedUserId(farm.userId)}
-            />
-          ))}
-        </div>
+        {view === "list" ? (
+          <div className="grid gap-5 bg-[#fcf6e4] p-4 md:grid-cols-2 md:gap-6 xl:grid-cols-3">
+            {farms.map((farm) => (
+              <FarmCard
+                key={farm.userId}
+                farm={farm}
+                selected={false}
+                onSelect={() => setSelectedUserId(farm.userId)}
+              />
+            ))}
+          </div>
+        ) : (
+          <FarmsMapView
+            farms={farmsWithCoords}
+            allFarmsCount={farms.length}
+            onSelect={(userId) => setSelectedUserId(userId)}
+          />
+        )}
       </section>
+    </div>
+  );
+}
+
+function ViewTabs({ view, onChange }: { view: SocialView; onChange: (next: SocialView) => void }) {
+  const tabs: { value: SocialView; label: string; glyph: "ledger" | "wagon" }[] = [
+    { value: "list", label: "List", glyph: "ledger" },
+    { value: "map", label: "Map", glyph: "wagon" },
+  ];
+  return (
+    <div className="flex rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] p-1 shadow-[0_2px_0_#3b2a14]">
+      {tabs.map((tab) => {
+        const active = view === tab.value;
+        return (
+          <button
+            key={tab.value}
+            type="button"
+            onClick={() => onChange(tab.value)}
+            className={`flex h-8 items-center gap-1.5 px-3 font-mono text-[11px] font-black uppercase tracking-[0.1em] transition ${
+              active ? "bg-[#365833] text-[#fffdf5]" : "bg-transparent text-[#5e4a26] hover:bg-[#fff3cf]"
+            }`}
+          >
+            <PixelGlyph name={tab.glyph} className="size-3.5" />
+            {tab.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -147,65 +197,37 @@ function FarmCard({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const previewItems = farm.availablePreview.length
-    ? farm.availablePreview.join(" · ")
-    : "Shelf is being restocked";
+  const visibleSlots = farm.snapshot.slots.filter((slot) => slot.visible).slice(0, 3);
 
   return (
-    <article
+    <button
+      type="button"
+      onClick={onSelect}
       style={{ ["--pixel-frame-bg" as string]: "#fcf6e4" }}
-      className={`pixel-frame rounded-none border-2 bg-[#fffdf5] p-3 shadow-[0_2px_0_#b29c66] transition ${
-        selected ? "border-[#3b2a14] shadow-[0_4px_0_#3b2a14]" : "border-[#c9b88a] hover:-translate-y-0.5"
+      className={`pixel-frame grid gap-2 rounded-none border-2 bg-[#fffdf5] p-2.5 text-left shadow-[0_2px_0_#b29c66] transition ${
+        selected ? "border-[#3b2a14] shadow-[0_4px_0_#3b2a14]" : "border-[#c9b88a] hover:-translate-y-0.5 hover:shadow-[0_3px_0_#8b6f3e]"
       }`}
     >
-      <button type="button" onClick={onSelect} className="grid w-full gap-2 text-left">
-        <div className="flex items-start gap-3">
-          <span className="grid size-12 shrink-0 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#eef8df] text-[#365833] shadow-[0_2px_0_#6f8d45]">
-            <PixelIcon name="farm" className="size-7" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <h2 className="min-w-0 truncate text-base font-black leading-tight text-[#2d311f]">
-                {farm.farmName}
-              </h2>
-              <span className="rounded-none border border-[#9bc278] bg-[#eef8df] px-1.5 py-0.5 font-mono text-[9px] font-black uppercase tracking-[0.08em] text-[#335a2d]">
-                {farm.distanceLabel}
-              </span>
-            </div>
-            <p className="mt-0.5 text-xs font-semibold leading-snug text-[#6b5a35]">
-              {farm.bio}
-            </p>
+      <ShopImageRow slots={visibleSlots} />
+
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-sm font-black leading-tight text-[#2d311f]">
+            {farm.farmName}
+          </h2>
+          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#7a6843]">
+            <span className="text-[#335a2d]">{farm.distanceLabel}</span>
+            <span aria-hidden>·</span>
+            <span className="text-[#a8761c]">★ {farm.rating.toFixed(1)}</span>
+            <span aria-hidden>·</span>
+            <span>{farm.reviewCount} reviews</span>
           </div>
-          <RatingBadge rating={farm.rating} count={farm.reviewCount} />
         </div>
-
-        <div className="rounded-none border-2 border-[#e1d0a8] bg-[#fffaf0] px-2 py-1.5 text-xs font-black leading-snug text-[#6f3f1c]">
-          {previewItems}
-        </div>
-
-        <ShopImageRow slots={farm.snapshot.slots.filter((slot) => slot.visible).slice(0, 3)} />
-      </button>
-
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-1">
-          {farm.tags.map((tag) => (
-            <span
-              key={tag}
-              className="rounded-none border border-[#d8a05a] bg-[#fff4dc] px-1.5 py-0.5 font-mono text-[9px] font-black uppercase tracking-[0.08em] text-[#7a461f]"
-            >
-              {tag}
-            </span>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={onSelect}
-          className="rounded-none border-2 border-[#3b2a14] bg-[#fff3cf] px-2 py-1 font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#5e4a26] shadow-[0_2px_0_#3b2a14] transition hover:bg-[#ffe89a] active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14]"
-        >
-          Review
-        </button>
+        <span className="grid size-9 shrink-0 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#fff3cf] text-[#5e4a26] shadow-[0_2px_0_#3b2a14]">
+          <PixelGlyph name="wagon" className="size-4" />
+        </span>
       </div>
-    </article>
+    </button>
   );
 }
 
@@ -353,6 +375,82 @@ function ReviewCard({ review }: { review: SocialFarmReview }) {
   );
 }
 
+function FarmsMapView({
+  farms,
+  allFarmsCount,
+  onSelect,
+}: {
+  farms: SocialFarmCard[];
+  allFarmsCount: number;
+  onSelect: (userId: string) => void;
+}) {
+  const [activeUserId, setActiveUserId] = useState<string | null>(farms[0]?.userId ?? null);
+
+  if (!farms.length) {
+    return (
+      <div className="grid place-items-center bg-[#fcf6e4] p-8 text-center">
+        <div>
+          <PixelGlyph name="wagon" className="mx-auto mb-2 size-8 text-[#c9a64a]" />
+          <p className="font-mono text-xs font-black uppercase tracking-[0.12em] text-[#7a6843]">
+            No farms have dropped a pin yet
+          </p>
+          <p className="mt-1 max-w-xs text-[11px] text-[#9a8a66]">
+            {allFarmsCount} farms are listed but none have shared a pickup location.
+            Check back soon, or browse the list view.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const activeFarm = farms.find((farm) => farm.userId === activeUserId) ?? farms[0];
+
+  return (
+    <div className="grid gap-3 bg-[#fcf6e4] p-3">
+      <div
+        style={{ ["--pixel-frame-bg" as string]: "#fcf6e4" }}
+        className="pixel-frame relative overflow-hidden rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] shadow-[0_3px_0_#3b2a14]"
+      >
+        <FarmsLeafletMap
+          farms={farms}
+          activeUserId={activeFarm?.userId ?? null}
+          onSelect={(userId) => setActiveUserId(userId)}
+        />
+      </div>
+
+      {activeFarm ? (
+        <div
+          style={{ ["--pixel-frame-bg" as string]: "#fcf6e4" }}
+          className="pixel-frame grid gap-3 rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] p-3 shadow-[0_3px_0_#3b2a14] sm:grid-cols-[160px_1fr_auto] sm:items-center"
+        >
+          <ShopImageRow slots={activeFarm.snapshot.slots.filter((slot) => slot.visible).slice(0, 3)} />
+          <div className="min-w-0">
+            <h3 className="truncate text-base font-black text-[#2d311f]">{activeFarm.farmName}</h3>
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5 font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#7a6843]">
+              <span className="text-[#335a2d]">{activeFarm.distanceLabel}</span>
+              <span aria-hidden>·</span>
+              <span className="text-[#a8761c]">★ {activeFarm.rating.toFixed(1)}</span>
+              <span aria-hidden>·</span>
+              <span>{activeFarm.reviewCount} reviews</span>
+            </div>
+            <p className="mt-1 truncate text-xs font-semibold text-[#6b5a35]">
+              {activeFarm.snapshot.details.pickupLocation || "Pickup details on the shopfront"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onSelect(activeFarm.userId)}
+            className="inline-flex h-9 items-center gap-2 rounded-none border-2 border-[#3b2a14] bg-[#7da854] px-3 font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#fffdf5] shadow-[0_2px_0_#3b2a14] transition hover:bg-[#9bc278] active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14]"
+          >
+            <PixelGlyph name="wagon" className="size-3.5" />
+            Visit shopfront
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ShopImageRow({ slots }: { slots: ShopDisplaySlotView[] }) {
   if (!slots.length) {
     return (
@@ -407,14 +505,6 @@ function ShopImageTile({ slot }: { slot: ShopDisplaySlotView }) {
       <span className="absolute inset-x-1 bottom-1 truncate rounded-none border border-[#3b2a14] bg-[#fffdf5]/95 px-1 py-0.5 text-center text-[10px] font-black leading-tight text-[#2d311f]">
         {slot.item.name}
       </span>
-    </span>
-  );
-}
-
-function RatingBadge({ rating, count }: { rating: number; count: number }) {
-  return (
-    <span className="shrink-0 rounded-none border-2 border-[#3b2a14] bg-[#fff3cf] px-2 py-1 text-center font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#6f3f1c] shadow-[0_2px_0_#3b2a14]">
-      {rating.toFixed(1)} / {count}
     </span>
   );
 }

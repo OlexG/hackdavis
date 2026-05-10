@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { AuthenticationError } from "@/lib/auth";
 import { createFarmReview, SocialReviewError } from "@/lib/social";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to post review" },
-      { status: error instanceof SocialReviewError ? 400 : 500 },
+      { status: error instanceof AuthenticationError ? 401 : error instanceof SocialReviewError ? 400 : 500 },
     );
   }
 }

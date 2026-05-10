@@ -65,8 +65,18 @@ export type CatalogItem = {
 export type User = {
   _id: ObjectId;
   email: string;
+  username?: string;
   passwordHash: string;
   role: "user" | "admin";
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type UserSession = {
+  _id: ObjectId;
+  userId: ObjectId;
+  tokenHash: string;
+  expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
 };

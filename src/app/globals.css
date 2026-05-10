@@ -291,6 +291,7 @@ html {
 
 .hero-pixel-cloud {
   position: absolute;
+  left: 0;
   width: 240px;
   height: 78px;
   background: #f9fff5;
@@ -305,45 +306,47 @@ html {
     152px 20px 0 rgba(190, 232, 236, 0.86),
     210px 20px 0 rgba(190, 232, 236, 0.86);
   opacity: 0.9;
-  animation: hero-cloud-float 34s steps(8, end) infinite;
+  will-change: transform;
+  animation: hero-cloud-drift 60s linear infinite;
 }
 
 .hero-pixel-cloud-one {
-  top: 21%;
-  left: 9%;
+  top: 18%;
+  animation-duration: 72s;
+  animation-delay: -8s;
 }
 
 .hero-pixel-cloud-two {
-  top: 12%;
-  left: 42%;
+  top: 10%;
   scale: 0.72;
   opacity: 0.72;
-  animation-duration: 40s;
+  animation-duration: 90s;
+  animation-delay: -34s;
 }
 
 .hero-pixel-cloud-three {
-  top: 43%;
-  left: 64%;
+  top: 38%;
   scale: 0.84;
   opacity: 0.64;
-  animation-duration: 46s;
+  animation-duration: 104s;
+  animation-delay: -60s;
   animation-direction: reverse;
 }
 
 .hero-pixel-cloud-four {
-  top: 56%;
-  left: -5%;
+  top: 52%;
   scale: 0.66;
   opacity: 0.5;
-  animation-duration: 52s;
+  animation-duration: 118s;
+  animation-delay: -22s;
 }
 
 .hero-pixel-cloud-five {
-  top: 31%;
-  left: 77%;
-  scale: 0.48;
-  opacity: 0.5;
-  animation-duration: 58s;
+  top: 28%;
+  scale: 0.5;
+  opacity: 0.55;
+  animation-duration: 132s;
+  animation-delay: -80s;
   animation-direction: reverse;
 }
 
@@ -433,14 +436,13 @@ html {
   }
 }
 
-@keyframes hero-cloud-float {
-  0%,
-  100% {
-    translate: -8px 0;
+@keyframes hero-cloud-drift {
+  0% {
+    transform: translate3d(-280px, 0, 0);
   }
 
-  50% {
-    translate: 12px -5px;
+  100% {
+    transform: translate3d(calc(100vw + 80px), 0, 0);
   }
 }
 

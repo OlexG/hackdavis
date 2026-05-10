@@ -376,7 +376,7 @@ function MonthlyForecastChart({
 }
 
 function getMonthlyForecastTrend(forecast: ProductionForecast | Omit<ProductionForecast, "monthlyTrend">): MonthlyForecastPoint[] {
-  if ("monthlyTrend" in forecast && forecast.monthlyTrend?.length) {
+  if ("monthlyTrend" in forecast && forecast.monthlyTrend?.length && !isSteadyAnimalForecast(forecast.outputName)) {
     return forecast.monthlyTrend;
   }
 
@@ -404,7 +404,7 @@ function getMonthlyForecastTrend(forecast: ProductionForecast | Omit<ProductionF
 function fallbackForecastWeight(outputName: string, index: number) {
   const normalized = outputName.toLowerCase();
 
-  if (/\b(egg|milk|chicken|duck|goat|cow|rabbit|honey)\b/.test(normalized)) {
+  if (isSteadyAnimalForecast(normalized)) {
     return [0.92, 0.95, 1.02, 1.06, 1.08, 1.06, 1.03, 1, 0.98, 0.96, 0.94, 0.92][index] ?? 1;
   }
 
@@ -413,6 +413,10 @@ function fallbackForecastWeight(outputName: string, index: number) {
   }
 
   return [0.08, 0.12, 0.22, 0.55, 0.9, 1.3, 1.62, 1.74, 1.38, 0.82, 0.33, 0.14][index] ?? 1;
+}
+
+function isSteadyAnimalForecast(outputName: string) {
+  return /\b(eggs?|milk|chickens?|ducks?|goats?|cows?|rabbits?|honey)\b/.test(outputName.toLowerCase());
 }
 
 function monthNames() {

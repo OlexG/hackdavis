@@ -1,9 +1,9 @@
 import { ObjectId } from "mongodb";
+import { AuthenticationError, requireUserSession } from "@/lib/auth";
 import { getInventorySnapshot, type InventorySnapshot } from "@/lib/inventory";
 import { getMongoDb } from "@/lib/mongodb";
 import type { CatalogItem, InventoryItem, Plan } from "@/lib/models";
 
-const demoUserEmail = "test@gmail.com";
 const forecastYears = 5;
 const healthMetricNames = ["soil", "water", "pestRisk", "labor", "reliability", "storage"] as const;
 const confidenceLevels = ["low", "medium", "high"] as const;
@@ -156,14 +156,10 @@ export async function getFarmIntelligencePageData(): Promise<FarmIntelligencePag
 
   try {
     const db = await getMongoDb();
-    const user = await db.collection("users").findOne({ email: demoUserEmail });
-
-    if (!user) {
-      return { snapshot, hasGeminiKey, canPersist: false };
-    }
+    const currentUser = await requireUserSession();
 
     const latestPlan = await db.collection<Plan>("plans").findOne(
-      { userId: user._id },
+      { userId: currentUser.userId },
       { sort: { createdAt: -1 } },
     );
 
@@ -176,7 +172,7 @@ export async function getFarmIntelligencePageData(): Promise<FarmIntelligencePag
       .filter((sourceId): sourceId is ObjectId => sourceId instanceof ObjectId);
     const [savedReport, catalogItems] = await Promise.all([
       db.collection<FarmIntelligenceDocument>("farm_intelligence_reports").findOne({
-        userId: user._id,
+        userId: currentUser.userId,
         planId: latestPlan._id,
       }),
       sourceIds.length
@@ -191,7 +187,11 @@ export async function getFarmIntelligencePageData(): Promise<FarmIntelligencePag
       canPersist: true,
       savedReport: savedReport ? serializeSavedReport(savedReport) : undefined,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+
     return { snapshot, hasGeminiKey, canPersist: false };
   }
 }
@@ -245,17 +245,13 @@ async function getIntelligencePromptContext(): Promise<IntelligencePromptContext
 
   try {
     const db = await getMongoDb();
-    const user = await db.collection("users").findOne({ email: demoUserEmail });
-
-    if (!user) {
-      return { snapshot };
-    }
+    const currentUser = await requireUserSession();
 
     const [latestPlan, inventoryItems] = await Promise.all([
-      db.collection<Plan>("plans").findOne({ userId: user._id }, { sort: { createdAt: -1 } }),
+      db.collection<Plan>("plans").findOne({ userId: currentUser.userId }, { sort: { createdAt: -1 } }),
       db
         .collection<InventoryItem>("inventory_items")
-        .find({ userId: user._id })
+        .find({ userId: currentUser.userId })
         .sort({ category: 1, status: 1, name: 1 })
         .toArray(),
     ]);
@@ -272,13 +268,17 @@ async function getIntelligencePromptContext(): Promise<IntelligencePromptContext
 
     return {
       snapshot,
-      userId: user._id as ObjectId,
+      userId: currentUser.userId,
       planId: latestPlan?._id as ObjectId | undefined,
       latestPlan: latestPlan ?? undefined,
       inventoryItems,
       catalogItems,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+
     return { snapshot };
   }
 }
@@ -432,7 +432,7 @@ function buildMonthlyForecastTrend({
 function monthlyForecastWeights(outputName: string) {
   const normalized = outputName.toLowerCase();
 
-  if (/\b(egg|milk|chicken|duck|goat|cow|rabbit|honey)\b/.test(normalized)) {
+  if (isSteadyAnimalOutput(normalized)) {
     return monthLabels.map((_, index) => livestockMonthMultiplier(index));
   }
 
@@ -441,6 +441,10 @@ function monthlyForecastWeights(outputName: string) {
   }
 
   return monthLabels.map((_, index) => cropMonthMultiplier(index));
+}
+
+function isSteadyAnimalOutput(outputName: string) {
+  return /\b(eggs?|milk|chickens?|ducks?|goats?|cows?|rabbits?|honey)\b/.test(outputName.toLowerCase());
 }
 
 function replacementReserveForMonth(establishmentCost: number, index: number) {
@@ -695,20 +699,19 @@ function normalizeFarmIntelligenceReport(raw: unknown, planName: string, current
     const revenueTrend = arrayOf(forecast.revenueTrend, normalizeRevenueTrend).slice(0, forecastYears);
     const annualRevenue = revenueTrend.find((point) => point.year === currentYear)?.expectedValueUsd ?? revenueTrend[0]?.expectedValueUsd ?? 0;
     const monthlyTrend = arrayOf(forecast.monthlyTrend, normalizeMonthlyTrend).slice(0, 12);
+    const generatedMonthlyTrend = buildMonthlyForecastTrend({
+      year: currentYear,
+      outputName,
+      annualAmount: currentYearEstimate,
+      annualValueUsd: annualRevenue,
+    });
 
     return {
       outputId,
       outputName,
       unit: text(forecast.unit, "units", 24),
       currentYearEstimate,
-      monthlyTrend: monthlyTrend.length
-        ? monthlyTrend
-        : buildMonthlyForecastTrend({
-            year: currentYear,
-            outputName,
-            annualAmount: currentYearEstimate,
-            annualValueUsd: annualRevenue,
-          }),
+      monthlyTrend: isSteadyAnimalOutput(outputName) || !monthlyTrend.length ? generatedMonthlyTrend : monthlyTrend,
       yearlyTrend,
       revenueTrend,
       confidence: oneOf(forecast.confidence, confidenceLevels, "low"),
