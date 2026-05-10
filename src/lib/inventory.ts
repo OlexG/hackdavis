@@ -1,7 +1,6 @@
-import { ObjectId } from "mongodb";
 import { AuthenticationError, requireUserSession } from "@/lib/auth";
 import { getMongoDb } from "@/lib/mongodb";
-import type { CatalogItem, InventoryCategory, InventoryItem, InventoryStatus, Plan } from "@/lib/models";
+import type { FarmV2Plan, InventoryCategory, InventoryItem, InventoryStatus } from "@/lib/models";
 
 export type InventoryViewItem = {
   id: string;
@@ -230,7 +229,7 @@ export async function getInventorySnapshot(): Promise<InventorySnapshot> {
         .find({ userId: currentUser.userId })
         .sort({ category: 1, status: 1, name: 1 })
         .toArray(),
-      db.collection<Plan>("plans").findOne({ userId: currentUser.userId }, { sort: { createdAt: -1 } }),
+      db.collection<FarmV2Plan>("plans").findOne({ userId: currentUser.userId, schema: "farmv2" }, { sort: { createdAt: -1 } }),
     ]);
 
     const viewItems = items.map((item) => ({
@@ -249,23 +248,12 @@ export async function getInventorySnapshot(): Promise<InventorySnapshot> {
       updatedAt: item.updatedAt.toISOString(),
     }));
 
-    const sourceIds = latestPlan?.objects
-      .map((object) => object.sourceId)
-      .filter((sourceId): sourceId is ObjectId => sourceId instanceof ObjectId) ?? [];
-    const catalogItems = sourceIds.length
-      ? await db
-          .collection<CatalogItem>("catalog_items")
-          .find({ _id: { $in: sourceIds } })
-          .toArray()
-      : [];
-    const catalogById = new Map(catalogItems.map((item) => [item._id.toString(), item]));
-
     return {
       userEmail: currentUser.email,
       displayName: typeof profile?.displayName === "string" ? profile.displayName : currentUser.displayName,
       source: "mongodb",
       items: viewItems,
-      plan: latestPlan ? buildPlanSnapshot(latestPlan, catalogById) : undefined,
+      plan: latestPlan ? buildPlanSnapshot(latestPlan) : undefined,
       lastUpdated: newestTimestamp(viewItems) ?? new Date().toISOString(),
     };
   } catch (error) {
@@ -294,36 +282,47 @@ function newestTimestamp(items: InventoryViewItem[]) {
     .sort((left, right) => right.localeCompare(left))[0];
 }
 
-function buildPlanSnapshot(plan: Plan, catalogById: Map<string, CatalogItem>): InventoryPlanSnapshot {
+function buildPlanSnapshot(plan: FarmV2Plan): InventoryPlanSnapshot {
+  const now = new Date(plan.updatedAt);
   const outputs = plan.objects
-    .filter((object) => object.status !== "removed" && object.type !== "structure")
-    .map((object) => {
-      const outputType = object.type === "livestock" ? "livestock" : "crop";
-      const catalogItem = object.sourceId ? catalogById.get(object.sourceId.toString()) : undefined;
-      const startDay = getOutputStartDay(object.plantedAtDay ?? object.addedAtDay ?? 0, catalogItem);
-      const maxDay = getOutputEndDay(object.plantedAtDay ?? object.addedAtDay ?? 0, catalogItem);
-      const category: InventoryPlanOutput["category"] =
-        outputType === "livestock" ? "livestock" : "produce";
-      const startsAt =
-        outputType === "livestock" ? plan.simulation.currentDate : addDays(plan.simulation.startDate, startDay);
+    .reduce<InventoryPlanOutput[]>((items, object) => {
+      if (object.type === "cropField" && object.attrs.cropKey) {
+        items.push({
+          id: object.id,
+          name: `${object.attrs.cropName || object.attrs.cropKey} harvest`,
+          source: object.label,
+          category: "produce" as const,
+          startsAt: addDays(now, 30).toISOString(),
+          endsAt: addDays(now, 90).toISOString(),
+          cadence: "planned harvest window",
+          note: `${object.label} is tracked from Farmv2 crop field data.`,
+          color: "#65a95a",
+        });
+        return items;
+      }
 
-      return {
-        id: object.instanceId,
-        name: getOutputName(object.slug, object.displayName, outputType),
-        source: object.displayName,
-        category,
-        startsAt: startsAt.toISOString(),
-        endsAt: maxDay ? addDays(plan.simulation.startDate, maxDay).toISOString() : undefined,
-        cadence: outputType === "livestock" ? "daily" : getCropCadence(catalogItem),
-        note: getOutputNote(object.slug, outputType),
-        color: catalogItem?.render.fruitColor ?? catalogItem?.render.color ?? "#6f8f55",
-      };
-    });
+      if (object.type === "livestock") {
+        items.push({
+          id: object.id,
+          name: `${object.attrs.species} output`,
+          source: object.label,
+          category: "livestock" as const,
+          startsAt: now.toISOString(),
+          endsAt: undefined,
+          cadence: "daily",
+          note: `${object.attrs.count} ${object.attrs.species.toLowerCase()} tracked from Farmv2 livestock data.`,
+          color: "#d7b64b",
+        });
+        return items;
+      }
+
+      return items;
+    }, []);
 
   return {
     name: plan.name,
-    season: plan.simulation.season,
-    currentDate: plan.simulation.currentDate.toISOString(),
+    season: "spring",
+    currentDate: now.toISOString(),
     outputs: dedupePlanOutputs(outputs).sort((left, right) => left.startsAt.localeCompare(right.startsAt)),
   };
 }
@@ -355,49 +354,6 @@ function dedupePlanOutputs(outputs: InventoryPlanOutput[]) {
     note: output.note,
     color: output.color,
   }));
-}
-
-function getOutputStartDay(baseDay: number, catalogItem?: CatalogItem) {
-  const stage = catalogItem?.growthStages?.find((growthStage) =>
-    ["fruiting", "harvest_ready", "mature"].includes(growthStage.name),
-  );
-
-  return baseDay + (stage?.minAgeDays ?? 0);
-}
-
-function getOutputEndDay(baseDay: number, catalogItem?: CatalogItem) {
-  const stage = catalogItem?.growthStages?.find((growthStage) =>
-    ["fruiting", "harvest_ready", "mature"].includes(growthStage.name),
-  );
-
-  return stage?.maxAgeDays ? baseDay + stage.maxAgeDays : undefined;
-}
-
-function getCropCadence(catalogItem?: CatalogItem) {
-  const stageName = catalogItem?.growthStages?.at(-1)?.name;
-  return stageName === "fruiting" ? "weekly flush" : "one cut window";
-}
-
-function getOutputName(slug: string, displayName: string, type: "crop" | "livestock") {
-  if (slug === "chickens") {
-    return "Eggs";
-  }
-
-  if (type === "crop") {
-    return `${displayName.replace(/\s+bed$/i, "")} harvest`;
-  }
-
-  return `${displayName} output`;
-}
-
-function getOutputNote(slug: string, type: "crop" | "livestock") {
-  if (slug === "chickens") {
-    return "Adult flock output from the latest simulated plan.";
-  }
-
-  return type === "crop"
-    ? "Projected from the crop lifecycle stage in the latest plan."
-    : "Projected from livestock in the latest plan.";
 }
 
 function addDays(date: Date, days: number) {

@@ -31,8 +31,11 @@ const sparkLayout: { left: string; top: string; delay: string; tone: "pink" | "g
   { left: "92%", top: "78%", delay: "1.8s", tone: "pink" },
 ];
 
+const EXPECTED_SECONDS = 30;
+
 export function MagicGenerateOverlay({ visible }: { visible: boolean }) {
   const [phraseIndex, setPhraseIndex] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [mountTarget, setMountTarget] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -43,14 +46,23 @@ export function MagicGenerateOverlay({ visible }: { visible: boolean }) {
   useEffect(() => {
     if (!visible) {
       setPhraseIndex(0);
+      setElapsedSeconds(0);
       return;
     }
 
-    const id = window.setInterval(() => {
+    const phraseTimer = window.setInterval(() => {
       setPhraseIndex((current) => (current + 1) % phrases.length);
-    }, 1700);
+    }, 2400);
 
-    return () => window.clearInterval(id);
+    const startedAt = Date.now();
+    const elapsedTimer = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 250);
+
+    return () => {
+      window.clearInterval(phraseTimer);
+      window.clearInterval(elapsedTimer);
+    };
   }, [visible]);
 
   useEffect(() => {
@@ -115,9 +127,12 @@ export function MagicGenerateOverlay({ visible }: { visible: boolean }) {
 
         <div className="mt-5 grid gap-2">
           <div className="magic-progress" />
-          <p className="font-mono text-[10px] font-black uppercase tracking-[0.14em] text-[#7a6843]">
-            This usually takes a few seconds.
-          </p>
+          <div className="flex items-center justify-between gap-2 font-mono text-[10px] font-black uppercase tracking-[0.14em] text-[#7a6843]">
+            <span>~ {EXPECTED_SECONDS}s · please don&apos;t close this tab</span>
+            <span className="rounded-none border-2 border-[#3b2a14] bg-[#fff8dc] px-1.5 py-0.5 text-[#5e4a26] shadow-[0_1px_0_#3b2a14]">
+              {formatElapsed(elapsedSeconds)}
+            </span>
+          </div>
         </div>
 
         <div className="mt-5 flex items-center justify-center gap-3 text-[#5e4a26]">
@@ -132,4 +147,11 @@ export function MagicGenerateOverlay({ visible }: { visible: boolean }) {
   );
 
   return createPortal(overlay, mountTarget);
+}
+
+function formatElapsed(seconds: number) {
+  const safe = Math.max(0, seconds);
+  const minutes = Math.floor(safe / 60);
+  const remainder = safe % 60;
+  return `${minutes}:${remainder.toString().padStart(2, "0")}`;
 }

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Homestead 3D GUI Demo</title>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.23.0/dist/maplibre-gl.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <span class="eyebrow">Orchard Ridge</span>
+            <strong>Homestead Map</strong>
+          </div>
+        </div>
+
+        <div class="toolbar-group">
+          <div class="segmented" aria-label="Interaction mode">
+            <button id="selectMode" class="active" type="button">Select</button>
+            <button id="drawMode" type="button">Draw</button>
+          </div>
+
+          <div class="segmented" aria-label="Object type">
+            <button data-draw-type="cropArea" class="active" type="button">Crop Area</button>
+            <button data-draw-type="cropField" type="button">Crop Field</button>
+            <button data-draw-type="livestock" type="button">Livestock</button>
+            <button data-draw-type="structure" type="button">Structure</button>
+            <button data-draw-type="path" type="button">Path</button>
+          </div>
+
+          <button id="closeShape" type="button">Close</button>
+          <button id="clearDraft" type="button">Clear</button>
+        </div>
+
+        <div class="toolbar-group right">
+          <div class="segmented" aria-label="Map view">
+            <button data-view="grid" class="active" type="button">Grid</button>
+            <button data-view="satellite" type="button">Satellite</button>
+          </div>
+
+          <div class="segmented" aria-label="Measurement units">
+            <button data-units="ft" class="active" type="button">ft</button>
+            <button data-units="m" type="button">m</button>
+          </div>
+
+          <button id="zoomOut" type="button">-</button>
+          <button id="zoomIn" type="button">+</button>
+          <button id="rotateView" type="button">Rotate</button>
+          <button id="resetView" type="button">Reset</button>
+          <button id="settingsButton" type="button">Settings</button>
+        </div>
+      </header>
+
+      <main class="stage">
+        <canvas id="farmCanvas" aria-label="Interactive low-poly farm map"></canvas>
+
+        <aside class="object-panel" aria-live="polite">
+          <div class="panel-header">
+            <span id="panelKicker">Selection</span>
+            <strong id="panelTitle">No object selected</strong>
+          </div>
+          <div id="objectDetails" class="details"></div>
+        </aside>
+
+        <div class="snapshot-chip">
+          <span id="snapshotDate"></span>
+          <strong id="snapshotLabel"></strong>
+        </div>
+      </main>
+
+      <footer class="timeline">
+        <button id="playTimeline" type="button">Play</button>
+        <input id="timelineInput" type="range" min="0" value="0" step="1" />
+        <div id="timelineMarkers" class="timeline-markers"></div>
+        <button id="addTimelineEntry" class="timeline-add" type="button">+</button>
+      </footer>
+
+      <section id="onboarding" class="onboarding">
+        <div class="onboarding-card">
+          <div class="wizard-copy">
+            <span class="eyebrow">Step 1</span>
+            <h1>Draw Homestead Boundary</h1>
+            <p>
+              Click points on the real map to define the farm boundary. The saved boundary
+              becomes the local low-poly planning board.
+            </p>
+          </div>
+          <div class="map-shell">
+            <div id="boundaryMap"></div>
+            <div id="mapFallback" class="map-fallback hidden">
+              <strong>Map tiles unavailable</strong>
+              <span>Use the demo boundary to continue without live map tiles.</span>
+            </div>
+            <div class="map-tools">
+              <button id="useDemoBoundary" type="button">Demo Boundary</button>
+              <button id="clearBoundary" type="button">Clear</button>
+              <button id="saveBoundary" type="button">Save Boundary</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="setupChoice" class="setup-choice hidden">
+          <div class="choice-card">
+            <span class="eyebrow">Step 2</span>
+            <h2>Set Up Farm</h2>
+            <div class="choice-grid">
+              <button id="manualSetup" class="choice-button" type="button">
+                <strong>Manual</strong>
+                <span>Draw slots, then populate crop fields, paddocks, structures, and paths.</span>
+              </button>
+              <button id="aiSetup" class="choice-button" type="button">
+                <strong>AI Draft</strong>
+                <span>Future Gemini partitioning flow. This demo loads a preset recommendation.</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div id="commitModal" class="modal hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+          <span class="eyebrow">Timeline</span>
+          <h2>Create Timeline Entry</h2>
+          <p>Name the current farm state, or skip to use an automatic timestamp label.</p>
+          <input id="commitName" type="text" placeholder="Optional name" />
+          <div class="modal-actions">
+            <button id="skipCommitName" type="button">Skip</button>
+            <button id="saveCommitName" class="active" type="button">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/maplibre-gl@5.23.0/dist/maplibre-gl.js"></script>
+    <script src="./src/catalog.js"></script>
+    <script src="./src/geometry.js"></script>
+    <script src="./src/demoState.js"></script>
+    <script src="./src/boundaryMap.js"></script>
+    <script src="./src/renderer.js"></script>
+    <script src="./src/app.js"></script>
+  </body>
+</html>
