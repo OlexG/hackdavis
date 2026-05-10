@@ -6,6 +6,7 @@ import type {
   CropFieldAttrs,
   CropFieldObject,
   FarmCommit,
+  FarmManagerSnapshot,
   FarmObject,
   FarmState,
   LivestockAttrs,
@@ -223,6 +224,50 @@ export function currentObjects(): FarmObject[] {
 
 export function setCurrentObjects(objects: FarmObject[]): void {
     state.objects = clone(objects);
+}
+
+export function exportSnapshot(): FarmManagerSnapshot {
+    return {
+      version: 1,
+      boundaryConfirmed: state.boundaryConfirmed,
+      boundaryGeo: clone(state.boundaryGeo),
+      boundaryLocal: clone(activeBoundary()),
+      objects: clone(state.objects),
+      commits: clone(state.commits),
+      commitIndex: state.commitIndex,
+      units: state.units,
+      view: state.view,
+      selectedId: state.selectedId
+    };
+}
+
+export function importSnapshot(snapshot: FarmManagerSnapshot): void {
+    state.boundaryConfirmed = Boolean(snapshot.boundaryConfirmed);
+    state.boundaryGeo = clone(snapshot.boundaryGeo);
+    state.boundaryLocal = snapshot.boundaryLocal?.length >= 3 ? clone(snapshot.boundaryLocal) : clone(DEFAULT_FARM_BOUNDS);
+    state.objects = clone(snapshot.objects || []);
+    state.commits = snapshot.commits?.length
+      ? clone(snapshot.commits)
+      : [
+          {
+            id: `commit-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            name: "Loaded farm state",
+            autoName: "Loaded farm state",
+            objects: clone(state.objects)
+          }
+        ];
+    state.commitIndex = Geometry.clamp(Number(snapshot.commitIndex) || 0, 0, state.commits.length - 1);
+    state.objects = clone(state.commits[state.commitIndex].objects);
+    state.units = snapshot.units || "ft";
+    state.view = snapshot.view || "grid";
+    state.selectedId = snapshot.selectedId && state.objects.some((object) => object.id === snapshot.selectedId)
+      ? snapshot.selectedId
+      : state.objects[0]?.id || null;
+    state.draft = [];
+    state.mouse = null;
+    state.pendingCatalogMode = null;
+    state.dirtyPanelKey = "";
 }
 
 export function createCommit(name: string): FarmCommit {

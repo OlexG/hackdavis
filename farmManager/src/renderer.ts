@@ -31,13 +31,24 @@ const { state } = DemoState;
   let ctx;
   let logicalWidth = 0;
   let logicalHeight = 0;
+  let animationFrame = 0;
+  let isRendering = false;
 
-export function init(targetCanvas: HTMLCanvasElement): void {
+export function init(targetCanvas: HTMLCanvasElement): () => void {
     canvas = targetCanvas;
     ctx = canvas.getContext("2d");
+    isRendering = true;
     window.addEventListener("resize", resize);
     resize();
-    requestAnimationFrame(render);
+    animationFrame = requestAnimationFrame(render);
+
+    return () => {
+      isRendering = false;
+      window.removeEventListener("resize", resize);
+      cancelAnimationFrame(animationFrame);
+      canvas = null;
+      ctx = null;
+    };
   }
 
 export function resize(): void {
@@ -98,7 +109,7 @@ export function unproject(screenX: number, screenY: number): Point {
     ];
   }
 
-  function projectedBoundarySize(zoom = 1): { width: number; height: number } {
+  function projectedBoundaryBounds(zoom = 1): { minX: number; maxX: number; minY: number; maxY: number; width: number; height: number } {
     const points = DemoState.activeBoundary().map((point) => {
       const rotated = G.rotatePoint(worldToBoard(point), BOARD_CENTER, state.rotation);
       return {
@@ -108,14 +119,22 @@ export function unproject(screenX: number, screenY: number): Point {
     });
     const xs = points.map((point) => point.x);
     const ys = points.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
     return {
-      width: Math.max(...xs) - Math.min(...xs),
-      height: Math.max(...ys) - Math.min(...ys)
+      minX,
+      maxX,
+      minY,
+      maxY,
+      width: maxX - minX,
+      height: maxY - minY
     };
   }
 
 export function getZoomLimits(): ZoomLimits {
-    const size = projectedBoundarySize(1);
+    const size = projectedBoundaryBounds(1);
     const minZoom = Math.min(
       logicalWidth / Math.max(1, size.width * 1.25),
       logicalHeight / Math.max(1, size.height * 1.25)
@@ -129,13 +148,24 @@ export function getZoomLimits(): ZoomLimits {
     };
   }
 
+export function getCenteredPan(zoom = state.zoom): { x: number; y: number } {
+    const bounds = projectedBoundaryBounds(zoom);
+    const boundaryCenterX = (bounds.minX + bounds.maxX) / 2;
+    const boundaryCenterY = (bounds.minY + bounds.maxY) / 2;
+    return {
+      x: logicalWidth * 0.5 - logicalWidth * 0.49 - boundaryCenterX,
+      y: logicalHeight * 0.52 - 92 - boundaryCenterY
+    };
+  }
+
   function render() {
+    if (!ctx || !isRendering) return;
     ctx.clearRect(0, 0, logicalWidth, logicalHeight);
     drawBackdrop();
     drawGround();
     drawObjects();
     drawDraft();
-    requestAnimationFrame(render);
+    animationFrame = requestAnimationFrame(render);
   }
 
   function drawBackdrop() {

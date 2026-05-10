@@ -133,9 +133,15 @@
           </div>
         </div>
       </div>
+
+      <div id="backendGate" class="backend-gate hidden" role="status" aria-live="polite"></div>
     </div>
 
     <script src="https://unpkg.com/maplibre-gl@5.23.0/dist/maplibre-gl.js"></script>
-    <script type="module" src="./dist/app.js"></script>
+    <script type="module">
+      import { mountFarmManager } from "./dist/app.js";
+
+      mountFarmManager(document);
+    </script>
   </body>
 </html>

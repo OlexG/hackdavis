@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { FarmPlanner } from "./farm-planner";
+import { FarmManagerShell } from "./farm-manager-shell";
 
 export const metadata: Metadata = {
   title: "Farm Space Studio | Sunpatch",
@@ -7,5 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function FarmPage() {
-  return <FarmPlanner />;
+  return <FarmManagerShell />;
 }

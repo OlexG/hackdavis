@@ -162,6 +162,19 @@ export interface FarmState {
   pendingCatalogMode: "crop" | "livestock" | "structure" | null;
 }
 
+export interface FarmManagerSnapshot {
+  version: 1;
+  boundaryConfirmed: boolean;
+  boundaryGeo: Point[] | null;
+  boundaryLocal: Point[];
+  objects: FarmObject[];
+  commits: FarmCommit[];
+  commitIndex: number;
+  units: Units;
+  view: ViewMode;
+  selectedId: string | null;
+}
+
 export interface BBox {
   minX: number;
   maxX: number;
@@ -180,6 +193,7 @@ export interface ZoomLimits {
 }
 
 export interface BoundaryMapUi {
+  boundaryMap: HTMLElement;
   mapFallback: HTMLElement;
   clearBoundary: HTMLButtonElement;
   useDemoBoundary: HTMLButtonElement;

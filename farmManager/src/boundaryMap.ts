@@ -5,15 +5,17 @@ declare const maplibregl: any;
 const boundaryPoints: Point[] = [];
 let map: any = null;
 
-export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => void): void {
+export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => void): () => void {
+    const controller = new AbortController();
+
     if (typeof maplibregl === "undefined") {
       ui.mapFallback.classList.remove("hidden");
-      return;
+      return () => controller.abort();
     }
 
     try {
       map = new maplibregl.Map({
-        container: "boundaryMap",
+        container: ui.boundaryMap,
         style: "https://tiles.openfreemap.org/styles/liberty",
         center: [-121.7405, 38.5449],
         zoom: 13.5,
@@ -65,7 +67,7 @@ export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => vo
     ui.clearBoundary.addEventListener("click", () => {
       boundaryPoints.length = 0;
       updateMapSource();
-    });
+    }, { signal: controller.signal });
     ui.useDemoBoundary.addEventListener("click", () => {
       boundaryPoints.length = 0;
       boundaryPoints.push(
@@ -75,7 +77,7 @@ export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => vo
         [-121.7462, 38.5399]
       );
       updateMapSource();
-    });
+    }, { signal: controller.signal });
     ui.saveBoundary.addEventListener("click", () => {
       if (boundaryPoints.length < 3) {
         boundaryPoints.length = 0;
@@ -88,7 +90,16 @@ export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => vo
       }
       updateMapSource();
       onBoundarySaved(boundaryPoints.slice());
-    });
+    }, { signal: controller.signal });
+
+    return () => {
+      controller.abort();
+      boundaryPoints.length = 0;
+      if (map) {
+        map.remove();
+        map = null;
+      }
+    };
 }
 
 export function redraw(): void {

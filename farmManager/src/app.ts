@@ -2,107 +2,181 @@ import * as BoundaryMap from "./boundaryMap.js";
 import * as DemoState from "./demoState.js";
 import * as FarmRenderer from "./renderer.js";
 import * as G from "./geometry.js";
+import * as ApiClient from "./apiClient.js";
 import { CATALOG } from "./catalog.js";
+import { hasSavedFarmState } from "./stateContract.js";
 import type { CropFieldObject, DrawType, FarmObject, Point, ScreenPoint, Units, ViewMode } from "./types.js";
 
 const { state } = DemoState;
 
-const byId = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
-
-const ui = {
-  canvas: byId<HTMLCanvasElement>("farmCanvas"),
-  selectMode: byId<HTMLButtonElement>("selectMode"),
-  drawMode: byId<HTMLButtonElement>("drawMode"),
-  closeShape: byId<HTMLButtonElement>("closeShape"),
-  clearDraft: byId<HTMLButtonElement>("clearDraft"),
-  zoomOut: byId<HTMLButtonElement>("zoomOut"),
-  zoomIn: byId<HTMLButtonElement>("zoomIn"),
-  rotateView: byId<HTMLButtonElement>("rotateView"),
-  resetView: byId<HTMLButtonElement>("resetView"),
-  settingsButton: byId<HTMLButtonElement>("settingsButton"),
-  timelineInput: byId<HTMLInputElement>("timelineInput"),
-  timelineMarkers: byId<HTMLElement>("timelineMarkers"),
-  playTimeline: byId<HTMLButtonElement>("playTimeline"),
-  addTimelineEntry: byId<HTMLButtonElement>("addTimelineEntry"),
-  snapshotDate: byId<HTMLElement>("snapshotDate"),
-  snapshotLabel: byId<HTMLElement>("snapshotLabel"),
-  panelKicker: byId<HTMLElement>("panelKicker"),
-  panelTitle: byId<HTMLElement>("panelTitle"),
-  objectDetails: byId<HTMLElement>("objectDetails"),
-  onboarding: byId<HTMLElement>("onboarding"),
-  setupChoice: byId<HTMLElement>("setupChoice"),
-  boundaryMap: byId<HTMLElement>("boundaryMap"),
-  mapFallback: byId<HTMLElement>("mapFallback"),
-  useDemoBoundary: byId<HTMLButtonElement>("useDemoBoundary"),
-  clearBoundary: byId<HTMLButtonElement>("clearBoundary"),
-  saveBoundary: byId<HTMLButtonElement>("saveBoundary"),
-  manualSetup: byId<HTMLButtonElement>("manualSetup"),
-  aiSetup: byId<HTMLButtonElement>("aiSetup"),
-  commitModal: byId<HTMLElement>("commitModal"),
-  commitName: byId<HTMLInputElement>("commitName"),
-  skipCommitName: byId<HTMLButtonElement>("skipCommitName"),
-  saveCommitName: byId<HTMLButtonElement>("saveCommitName")
+const byId = <T extends HTMLElement>(root: ParentNode, id: string): T => {
+  const element = root.querySelector<T>(`#${id}`);
+  if (!element) throw new Error(`Missing farmManager element: #${id}`);
+  return element;
 };
 
-function init() {
-    FarmRenderer.init(ui.canvas);
-    BoundaryMap.init(ui, onBoundarySaved);
-    bindUi();
-    updateDrawControls();
-    updateTimeline();
-    updatePanel();
-    window.setInterval(updateHud, 150);
+const createUi = (root: ParentNode) => ({
+  canvas: byId<HTMLCanvasElement>(root, "farmCanvas"),
+  selectMode: byId<HTMLButtonElement>(root, "selectMode"),
+  drawMode: byId<HTMLButtonElement>(root, "drawMode"),
+  closeShape: byId<HTMLButtonElement>(root, "closeShape"),
+  clearDraft: byId<HTMLButtonElement>(root, "clearDraft"),
+  zoomOut: byId<HTMLButtonElement>(root, "zoomOut"),
+  zoomIn: byId<HTMLButtonElement>(root, "zoomIn"),
+  rotateView: byId<HTMLButtonElement>(root, "rotateView"),
+  resetView: byId<HTMLButtonElement>(root, "resetView"),
+  settingsButton: byId<HTMLButtonElement>(root, "settingsButton"),
+  timelineInput: byId<HTMLInputElement>(root, "timelineInput"),
+  timelineMarkers: byId<HTMLElement>(root, "timelineMarkers"),
+  playTimeline: byId<HTMLButtonElement>(root, "playTimeline"),
+  addTimelineEntry: byId<HTMLButtonElement>(root, "addTimelineEntry"),
+  snapshotDate: byId<HTMLElement>(root, "snapshotDate"),
+  snapshotLabel: byId<HTMLElement>(root, "snapshotLabel"),
+  panelKicker: byId<HTMLElement>(root, "panelKicker"),
+  panelTitle: byId<HTMLElement>(root, "panelTitle"),
+  objectDetails: byId<HTMLElement>(root, "objectDetails"),
+  onboarding: byId<HTMLElement>(root, "onboarding"),
+  setupChoice: byId<HTMLElement>(root, "setupChoice"),
+  boundaryMap: byId<HTMLElement>(root, "boundaryMap"),
+  mapFallback: byId<HTMLElement>(root, "mapFallback"),
+  useDemoBoundary: byId<HTMLButtonElement>(root, "useDemoBoundary"),
+  clearBoundary: byId<HTMLButtonElement>(root, "clearBoundary"),
+  saveBoundary: byId<HTMLButtonElement>(root, "saveBoundary"),
+  manualSetup: byId<HTMLButtonElement>(root, "manualSetup"),
+  aiSetup: byId<HTMLButtonElement>(root, "aiSetup"),
+  commitModal: byId<HTMLElement>(root, "commitModal"),
+  commitName: byId<HTMLInputElement>(root, "commitName"),
+  skipCommitName: byId<HTMLButtonElement>(root, "skipCommitName"),
+  saveCommitName: byId<HTMLButtonElement>(root, "saveCommitName"),
+  backendGate: byId<HTMLElement>(root, "backendGate")
+});
+
+let rootElement: ParentNode = document;
+let ui: ReturnType<typeof createUi>;
+
+export function mountFarmManager(root: ParentNode = document): () => void {
+    rootElement = root;
+    ui = createUi(root);
+    const controller = new AbortController();
+    let rendererCleanup: (() => void) | null = null;
+    let boundaryCleanup: (() => void) | null = null;
+    let hudTimer: number | null = null;
+
+    setBackendGate("Loading saved farm state...");
+    void bootFarmManager(controller.signal).then((cleanup) => {
+      if (!cleanup) return;
+      if (controller.signal.aborted) {
+        cleanup.rendererCleanup();
+        cleanup.boundaryCleanup();
+        window.clearInterval(cleanup.hudTimer);
+        return;
+      }
+      rendererCleanup = cleanup.rendererCleanup;
+      boundaryCleanup = cleanup.boundaryCleanup;
+      hudTimer = cleanup.hudTimer;
+    });
+
+    return () => {
+      controller.abort();
+      if (hudTimer) window.clearInterval(hudTimer);
+      if (state.playTimer) {
+        window.clearInterval(state.playTimer);
+        state.playTimer = null;
+      }
+      boundaryCleanup?.();
+      rendererCleanup?.();
+    };
 }
 
-  function bindUi() {
-    ui.selectMode.addEventListener("click", () => setMode("select"));
-    ui.drawMode.addEventListener("click", () => setMode("draw"));
-    ui.closeShape.addEventListener("click", finishDraft);
-    ui.clearDraft.addEventListener("click", clearDraft);
-    ui.zoomIn.addEventListener("click", () => zoomAtScreenPoint(canvasCenter(), 0.18));
-    ui.zoomOut.addEventListener("click", () => zoomAtScreenPoint(canvasCenter(), -0.18));
-    ui.rotateView.addEventListener("click", () => {
+  async function bootFarmManager(signal: AbortSignal): Promise<{
+    rendererCleanup: () => void;
+    boundaryCleanup: () => void;
+    hudTimer: number;
+  } | null> {
+    try {
+      const loadResult = await ApiClient.loadFarmState();
+      if (signal.aborted) return null;
+
+      if (loadResult.ok === false) throw new Error(loadResult.error);
+
+      if (loadResult.hasSavedFarm && hasSavedFarmState(loadResult.state)) {
+        DemoState.importSnapshot(loadResult.state);
+        hideOnboarding();
+      } else {
+        showOnboarding();
+      }
+
+      const rendererCleanup = FarmRenderer.init(ui.canvas);
+      const boundaryCleanup = BoundaryMap.init(ui, onBoundarySaved);
+      bindUi(signal);
+      updateDrawControls();
+      syncControlState();
+      fitFarmToView();
+      updateTimeline();
+      updatePanel();
+      clearBackendGate();
+      const hudTimer = window.setInterval(updateHud, 150);
+
+      return { rendererCleanup, boundaryCleanup, hudTimer };
+    } catch (error) {
+      setBackendGate(readErrorMessage(error), true);
+      return null;
+    }
+  }
+
+  function bindUi(signal: AbortSignal) {
+    const listen = (target: EventTarget, type: string, listener: EventListenerOrEventListenerObject, options: AddEventListenerOptions = {}) => {
+      target.addEventListener(type, listener, { ...options, signal });
+    };
+
+    listen(ui.selectMode, "click", () => setMode("select"));
+    listen(ui.drawMode, "click", () => setMode("draw"));
+    listen(ui.closeShape, "click", finishDraft);
+    listen(ui.clearDraft, "click", clearDraft);
+    listen(ui.zoomIn, "click", () => zoomAtScreenPoint(canvasCenter(), 0.18));
+    listen(ui.zoomOut, "click", () => zoomAtScreenPoint(canvasCenter(), -0.18));
+    listen(ui.rotateView, "click", () => {
       state.rotation = (state.rotation + 90) % 360;
       state.zoom = G.clamp(state.zoom, FarmRenderer.getZoomLimits().min, FarmRenderer.getZoomLimits().max);
     });
-    ui.resetView.addEventListener("click", () => {
+    listen(ui.resetView, "click", () => {
       state.rotation = 0;
       fitFarmToView();
     });
-    ui.settingsButton.addEventListener("click", () => {
+    listen(ui.settingsButton, "click", () => {
       BoundaryMap.redraw();
       ui.onboarding.classList.remove("hidden");
       ui.setupChoice.classList.add("hidden");
     });
 
-    document.querySelectorAll<HTMLButtonElement>("[data-draw-type]").forEach((button) => {
-      button.addEventListener("click", () => {
+    rootElement.querySelectorAll<HTMLButtonElement>("[data-draw-type]").forEach((button) => {
+      listen(button, "click", () => {
         state.drawType = button.dataset.drawType as DrawType;
-        document.querySelectorAll("[data-draw-type]").forEach((item) => item.classList.remove("active"));
+        rootElement.querySelectorAll("[data-draw-type]").forEach((item) => item.classList.remove("active"));
         button.classList.add("active");
         clearDraft();
         updateDrawControls();
       });
     });
 
-    document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) => {
-      button.addEventListener("click", () => {
+    rootElement.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) => {
+      listen(button, "click", () => {
         state.view = button.dataset.view as ViewMode;
-        document.querySelectorAll("[data-view]").forEach((item) => item.classList.remove("active"));
+        rootElement.querySelectorAll("[data-view]").forEach((item) => item.classList.remove("active"));
         button.classList.add("active");
       });
     });
 
-    document.querySelectorAll<HTMLButtonElement>("[data-units]").forEach((button) => {
-      button.addEventListener("click", () => {
+    rootElement.querySelectorAll<HTMLButtonElement>("[data-units]").forEach((button) => {
+      listen(button, "click", () => {
         state.units = button.dataset.units as Units;
-        document.querySelectorAll("[data-units]").forEach((item) => item.classList.remove("active"));
+        rootElement.querySelectorAll("[data-units]").forEach((item) => item.classList.remove("active"));
         button.classList.add("active");
         markPanelDirty();
       });
     });
 
-    ui.manualSetup.addEventListener("click", () => {
+    listen(ui.manualSetup, "click", () => {
       DemoState.resetForManualPlan();
       ui.onboarding.classList.add("hidden");
       fitFarmToView();
@@ -110,7 +184,7 @@ function init() {
       markPanelDirty();
       setMode("draw");
     });
-    ui.aiSetup.addEventListener("click", () => {
+    listen(ui.aiSetup, "click", () => {
       DemoState.useAiPreset();
       ui.onboarding.classList.add("hidden");
       state.selectedId = "squash-slot";
@@ -118,27 +192,28 @@ function init() {
       markPanelDirty();
     });
 
-    ui.timelineInput.addEventListener("input", (event) => {
+    listen(ui.timelineInput, "input", (event) => {
       DemoState.loadCommit(Number((event.target as HTMLInputElement).value));
       state.selectedId = DemoState.currentObjects()[0]?.id || null;
       updateTimeline();
       markPanelDirty();
     });
-    ui.playTimeline.addEventListener("click", togglePlayback);
-    ui.addTimelineEntry.addEventListener("click", openCommitModal);
-    ui.skipCommitName.addEventListener("click", () => saveCommit(""));
-    ui.saveCommitName.addEventListener("click", () => saveCommit(ui.commitName.value.trim()));
+    listen(ui.playTimeline, "click", togglePlayback);
+    listen(ui.addTimelineEntry, "click", openCommitModal);
+    listen(ui.skipCommitName, "click", () => saveCommit(""));
+    listen(ui.saveCommitName, "click", () => saveCommit(ui.commitName.value.trim()));
 
-    ui.canvas.addEventListener("pointerdown", onPointerDown);
-    ui.canvas.addEventListener("pointermove", onPointerMove);
-    ui.canvas.addEventListener("pointerup", onPointerUp);
-    ui.canvas.addEventListener("pointercancel", onPointerUp);
-    ui.canvas.addEventListener("pointerleave", () => {
+    listen(ui.canvas, "pointerdown", onPointerDown);
+    listen(ui.canvas, "pointermove", onPointerMove);
+    listen(ui.canvas, "pointerup", onPointerUp);
+    listen(ui.canvas, "pointercancel", onPointerUp);
+    listen(ui.canvas, "pointerleave", () => {
       state.mouse = null;
       onPointerUp();
     });
-    ui.canvas.addEventListener("click", onCanvasClick);
-    ui.canvas.addEventListener(
+    listen(ui.canvas, "click", onCanvasClick);
+    listen(
+      ui.canvas,
       "wheel",
       (event) => {
         event.preventDefault();
@@ -146,17 +221,64 @@ function init() {
       },
       { passive: false }
     );
-    window.addEventListener("keydown", onKeyDown);
+    listen(window, "keydown", onKeyDown);
 
-    ui.objectDetails.addEventListener("click", onPanelClick);
-    ui.objectDetails.addEventListener("input", onPanelInput);
-    ui.objectDetails.addEventListener("change", onPanelChange);
-    ui.panelTitle.addEventListener("dblclick", beginRenameSelected);
+    listen(ui.objectDetails, "click", onPanelClick);
+    listen(ui.objectDetails, "input", onPanelInput);
+    listen(ui.objectDetails, "change", onPanelChange);
+    listen(ui.panelTitle, "dblclick", beginRenameSelected);
   }
 
-  function onBoundarySaved(points) {
+  function onBoundarySaved(points: Point[]): void {
     DemoState.setBoundaryFromGeo(points);
     ui.setupChoice.classList.remove("hidden");
+  }
+
+  function showOnboarding(): void {
+    ui.onboarding.classList.remove("hidden");
+    ui.setupChoice.classList.add("hidden");
+  }
+
+  function hideOnboarding(): void {
+    ui.onboarding.classList.add("hidden");
+    ui.setupChoice.classList.add("hidden");
+  }
+
+  async function persistToBackend(): Promise<boolean> {
+    const result = await ApiClient.saveFarmState(DemoState.exportSnapshot());
+    if (result.ok === false) {
+      setBackendGate(result.error, true);
+      return false;
+    }
+    clearBackendGate();
+    return true;
+  }
+
+  function setBackendGate(message: string, isError = false): void {
+    ui.backendGate.classList.remove("hidden");
+    ui.backendGate.classList.toggle("backend-error", isError);
+    ui.backendGate.innerHTML = `
+      <div class="backend-card">
+        <span>${isError ? "Backend error" : "Backend"}</span>
+        <strong>${escapeHtml(message)}</strong>
+        ${isError ? "<em>Fix the backend response, then refresh this tab.</em>" : ""}
+      </div>
+    `;
+  }
+
+  function clearBackendGate(): void {
+    ui.backendGate.classList.add("hidden");
+    ui.backendGate.classList.remove("backend-error");
+    ui.backendGate.innerHTML = "";
+  }
+
+  function syncControlState(): void {
+    rootElement.querySelectorAll("[data-view]").forEach((item) => {
+      item.classList.toggle("active", (item as HTMLElement).dataset.view === state.view);
+    });
+    rootElement.querySelectorAll("[data-units]").forEach((item) => {
+      item.classList.toggle("active", (item as HTMLElement).dataset.units === state.units);
+    });
   }
 
   function setMode(mode) {
@@ -224,8 +346,9 @@ function init() {
   function fitFarmToView() {
     const limits = FarmRenderer.getZoomLimits();
     state.zoom = limits.min;
-    state.panX = 0;
-    state.panY = -18;
+    const pan = FarmRenderer.getCenteredPan(state.zoom);
+    state.panX = pan.x;
+    state.panY = pan.y;
   }
 
   function zoomAtScreenPoint(cursor, delta) {
@@ -721,11 +844,16 @@ function init() {
     ui.commitName.focus();
   }
 
-  function saveCommit(name) {
+  async function saveCommit(name) {
     DemoState.createCommit(name);
-    ui.commitModal.classList.add("hidden");
     updateTimeline();
     markPanelDirty();
+    ui.skipCommitName.disabled = true;
+    ui.saveCommitName.disabled = true;
+    const saved = await persistToBackend();
+    ui.skipCommitName.disabled = false;
+    ui.saveCommitName.disabled = false;
+    if (saved) ui.commitModal.classList.add("hidden");
   }
 
   function togglePlayback() {
@@ -796,4 +924,17 @@ function init() {
     state.dirtyPanelKey = "";
   }
 
-  init();
+  function readErrorMessage(error: unknown): string {
+    return error instanceof Error && error.message ? error.message : "Unable to load farm manager state";
+  }
+
+  function escapeHtml(value: string): string {
+    return value.replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;",
+      "'": "&#39;"
+    })[char] || char);
+  }
+
