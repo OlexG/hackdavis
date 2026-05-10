@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import type { DragEvent } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PixelGlyph, type PixelGlyphName } from "../_components/icons";
 import type { InventoryPlanOutput, InventoryViewItem } from "@/lib/inventory";
 import { yieldForecastDragType } from "./drag-types";
@@ -22,6 +22,11 @@ type InventoryItemResponse = {
   item?: InventoryViewItem;
   error?: string;
 };
+
+type InventoryItemPatch = Partial<Pick<
+  InventoryViewItem,
+  "name" | "category" | "status" | "quantity" | "reorderAt" | "location" | "source" | "notes" | "color"
+>>;
 
 const categoryLabels: Record<InventoryViewItem["category"], string> = {
   harvest: "Harvest",
@@ -54,6 +59,11 @@ const statuses = Object.keys(statusStyles) as InventoryViewItem["status"][];
 
 export function InventoryBoard({ initialItems }: { initialItems: InventoryViewItem[] }) {
   const [items, setItems] = useState(initialItems);
+  const itemsRef = useRef(initialItems);
+  const saveTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const pendingPatchesRef = useRef(new Map<string, InventoryItemPatch>());
+  const rollbackItemsRef = useRef(new Map<string, InventoryViewItem>());
+  const saveVersionsRef = useRef(new Map<string, number>());
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [inputOpen, setInputOpen] = useState(false);
   const [inputPlans, setInputPlans] = useState<InputPlan[]>([]);
@@ -80,24 +90,120 @@ export function InventoryBoard({ initialItems }: { initialItems: InventoryViewIt
     [items],
   );
 
+  useEffect(() => {
+    const saveTimers = saveTimersRef.current;
+
+    return () => {
+      for (const timer of saveTimers.values()) {
+        clearTimeout(timer);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
   function updateItem(id: string, patch: Partial<InventoryViewItem>) {
-    setItems((current) =>
-      current.map((item) => (item.id === id ? { ...item, ...patch, updatedAt: new Date().toISOString() } : item)),
-    );
+    applyOptimisticInventoryPatch(id, toInventoryPatch(patch));
   }
 
   function updateQuantity(id: string, patch: Partial<InventoryViewItem["quantity"]>) {
-    setItems((current) =>
-      current.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              quantity: { ...item.quantity, ...patch },
-              updatedAt: new Date().toISOString(),
-            }
-          : item,
-      ),
+    const currentItem = itemsRef.current.find((item) => item.id === id);
+
+    if (!currentItem) {
+      return;
+    }
+
+    applyOptimisticInventoryPatch(id, {
+      quantity: {
+        ...currentItem.quantity,
+        ...patch,
+      },
+    });
+  }
+
+  function applyOptimisticInventoryPatch(id: string, patch: InventoryItemPatch) {
+    if (!Object.keys(patch).length) {
+      return;
+    }
+
+    const currentItem = itemsRef.current.find((item) => item.id === id);
+
+    if (!currentItem) {
+      return;
+    }
+
+    const nextItems = itemsRef.current.map((item) =>
+      item.id === id
+        ? applyInventoryPatch(item, patch)
+        : item,
     );
+    itemsRef.current = nextItems;
+    setItems(nextItems);
+    queueInventorySave(id, patch, currentItem);
+  }
+
+  function queueInventorySave(id: string, patch: InventoryItemPatch, rollbackItem: InventoryViewItem) {
+    if (!isPersistedInventoryId(id)) {
+      return;
+    }
+
+    setDeleteError(null);
+
+    if (!rollbackItemsRef.current.has(id)) {
+      rollbackItemsRef.current.set(id, rollbackItem);
+    }
+
+    pendingPatchesRef.current.set(id, mergeInventoryPatch(pendingPatchesRef.current.get(id), patch));
+
+    const version = (saveVersionsRef.current.get(id) ?? 0) + 1;
+    saveVersionsRef.current.set(id, version);
+
+    const existingTimer = saveTimersRef.current.get(id);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    const timer = setTimeout(() => {
+      void flushInventorySave(id, version);
+    }, 350);
+    saveTimersRef.current.set(id, timer);
+  }
+
+  async function flushInventorySave(id: string, version: number) {
+    const patch = pendingPatchesRef.current.get(id);
+
+    if (!patch) {
+      return;
+    }
+
+    pendingPatchesRef.current.delete(id);
+    saveTimersRef.current.delete(id);
+
+    try {
+      const saved = await patchInventoryItem(id, patch);
+
+      if (saveVersionsRef.current.get(id) !== version) {
+        return;
+      }
+
+      rollbackItemsRef.current.delete(id);
+      setItems((current) => mergeInventoryItems(current, [saved]));
+    } catch (error) {
+      if (saveVersionsRef.current.get(id) !== version) {
+        return;
+      }
+
+      const rollbackItem = rollbackItemsRef.current.get(id);
+      rollbackItemsRef.current.delete(id);
+
+      if (rollbackItem) {
+        setItems((current) => mergeInventoryItems(current, [rollbackItem]));
+      }
+
+      setDeleteError(formatClientError(error));
+    }
   }
 
   async function deleteItem(id: string) {
@@ -1182,6 +1288,44 @@ async function patchInventoryItem(id: string, patch: Partial<InventoryViewItem>)
   }
 
   return data.item;
+}
+
+function toInventoryPatch(patch: Partial<InventoryViewItem>): InventoryItemPatch {
+  const nextPatch: InventoryItemPatch = {};
+
+  if ("name" in patch) nextPatch.name = patch.name;
+  if ("category" in patch) nextPatch.category = patch.category;
+  if ("status" in patch) nextPatch.status = patch.status;
+  if ("quantity" in patch) nextPatch.quantity = patch.quantity;
+  if ("reorderAt" in patch) nextPatch.reorderAt = patch.reorderAt;
+  if ("location" in patch) nextPatch.location = patch.location;
+  if ("source" in patch) nextPatch.source = patch.source;
+  if ("notes" in patch) nextPatch.notes = patch.notes;
+  if ("color" in patch) nextPatch.color = patch.color;
+
+  return nextPatch;
+}
+
+function applyInventoryPatch(item: InventoryViewItem, patch: InventoryItemPatch): InventoryViewItem {
+  return {
+    ...item,
+    ...patch,
+    quantity: patch.quantity ? { ...item.quantity, ...patch.quantity } : item.quantity,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function mergeInventoryPatch(
+  current: InventoryItemPatch | undefined,
+  next: InventoryItemPatch,
+): InventoryItemPatch {
+  return {
+    ...current,
+    ...next,
+    quantity: next.quantity
+      ? { ...current?.quantity, ...next.quantity }
+      : current?.quantity,
+  };
 }
 
 function insertOrMergeInventoryItem(current: InventoryViewItem[], item: InventoryViewItem, targetId?: string) {

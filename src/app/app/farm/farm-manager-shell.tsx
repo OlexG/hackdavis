@@ -313,44 +313,6 @@ export function FarmManagerShell() {
           </div>
         </main>
 
-        <footer className="timeline pixel-gradient-meadow">
-          <div className="timeline-label">
-            <PixelGlyph name="ledger" className="button-icon" />
-            <span>Timeline</span>
-          </div>
-          <button id="playTimeline" type="button" onClick={() => actions?.togglePlayback()}>
-            {content.timeline.playing ? "Pause" : "Play"}
-          </button>
-          <input
-            id="timelineInput"
-            type="range"
-            min="0"
-            max={Math.max(0, content.timeline.commits.length - 1)}
-            value={content.timeline.commitIndex}
-            step="1"
-            onChange={(event) => actions?.loadCommit(Number(event.target.value))}
-          />
-          <div
-            id="timelineMarkers"
-            className="timeline-markers"
-            style={{ ["--marker-count" as string]: String(Math.max(1, content.timeline.commits.length)) }}
-          >
-            {content.timeline.commits.map((commit, index) => (
-              <button
-                key={commit.id}
-                className={index === content.timeline.commitIndex ? "active" : ""}
-                type="button"
-                onClick={() => actions?.loadCommit(index)}
-              >
-                {commit.name}
-              </button>
-            ))}
-          </div>
-          <button id="addTimelineEntry" className="timeline-add" type="button" onClick={() => actions?.openCommitModal()}>
-            +
-          </button>
-        </footer>
-
         <section id="onboarding" className={`onboarding ${chrome.onboardingVisible ? "" : "hidden"}`}>
           <div className="onboarding-card">
             <div className="wizard-copy">

@@ -124,6 +124,17 @@ export type ShopDisplaySaveSlot = {
   imageId?: string | null;
 };
 
+type InventoryShopSyncInput = {
+  item: InventoryItem;
+  userUuid: string;
+  previousItem?: InventoryItem | null;
+};
+
+type InventoryShopRemovalInput = {
+  userId: ObjectId;
+  itemId: ObjectId;
+};
+
 export async function getShopSnapshot(): Promise<ShopSnapshot> {
   try {
     const db = await getMongoDb();
@@ -227,6 +238,115 @@ export async function saveShopDisplay({ slots, details }: ShopDisplaySavePayload
   });
 
   return getShopSnapshot();
+}
+
+export async function syncInventoryItemToShop({ item, userUuid, previousItem }: InventoryShopSyncInput) {
+  const db = await getMongoDb();
+  const now = new Date();
+  const itemId = item._id;
+  const display = await db.collection<ShopDisplay>("shop_displays").findOne({ userId: item.userId });
+  const displaySlot = display?.slots.find((slot) => slot.inventoryItemId.equals(itemId));
+  const offerings = db.collection<ShopOffering>("shop_offerings");
+
+  await Promise.all([
+    offerings.createIndex({ listingId: 1 }, { unique: true }),
+    offerings.createIndex({ userUuid: 1, position: 1 }),
+    offerings.createIndex({ userId: 1, inventoryItemId: 1 }, { unique: true }),
+  ]);
+
+  if (!isSellableInventoryItem(toInventoryViewItem(item))) {
+    await Promise.all([
+      offerings.updateOne(
+        { userId: item.userId, inventoryItemId: itemId },
+        {
+          $set: {
+            name: item.name,
+            category: item.category,
+            amount: item.quantity.amount,
+            unit: item.quantity.unit,
+            visible: false,
+            updatedAt: now,
+          },
+        },
+      ),
+      db.collection<ShopDisplay>("shop_displays").updateOne(
+        { userId: item.userId },
+        {
+          $pull: { slots: { inventoryItemId: itemId } },
+          $set: { updatedAt: now },
+        },
+      ),
+    ]);
+    return;
+  }
+
+  const existingOffering = await offerings.findOne({ userId: item.userId, inventoryItemId: itemId });
+  const existingAmount = displaySlot?.displayAmount ?? existingOffering?.amount;
+  const existingUnit = displaySlot?.displayUnit ?? existingOffering?.unit;
+  const amount = syncedDisplayAmount(existingAmount, item, previousItem);
+  const unit = syncedDisplayUnit(existingUnit, item, previousItem);
+  const listingId = normalizeListingId(displaySlot?.listingId ?? existingOffering?.listingId) ?? randomUUID();
+  const visible = displaySlot?.visible ?? existingOffering?.visible ?? true;
+  const viewItem = toInventoryViewItem(item);
+
+  await offerings.updateOne(
+    { userId: item.userId, inventoryItemId: itemId },
+    {
+      $set: {
+        listingId,
+        userId: item.userId,
+        userUuid,
+        inventoryItemId: itemId,
+        name: item.name,
+        category: item.category,
+        amount,
+        unit,
+        priceCents: existingOffering?.priceCents ?? displaySlot?.priceCents ?? suggestedPriceCents(viewItem),
+        signText: existingOffering?.signText ?? displaySlot?.signText ?? suggestedSignText(viewItem),
+        visible,
+        position: displaySlot?.position ?? existingOffering?.position ?? 0,
+        ...(displaySlot?.imageId ?? existingOffering?.imageId ? { imageId: displaySlot?.imageId ?? existingOffering?.imageId } : {}),
+        ...(displaySlot?.imageMimeType ?? existingOffering?.imageMimeType
+          ? { imageMimeType: displaySlot?.imageMimeType ?? existingOffering?.imageMimeType }
+          : {}),
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        _id: new ObjectId(),
+        createdAt: now,
+      },
+    },
+    { upsert: true },
+  );
+
+  if (displaySlot) {
+    await db.collection<ShopDisplay>("shop_displays").updateOne(
+      { userId: item.userId, "slots.inventoryItemId": itemId },
+      {
+        $set: {
+          "slots.$.displayAmount": amount,
+          "slots.$.displayUnit": unit,
+          updatedAt: now,
+        },
+      },
+    );
+  }
+}
+
+export async function removeInventoryItemFromShop({ userId, itemId }: InventoryShopRemovalInput) {
+  const db = await getMongoDb();
+  const now = new Date();
+
+  await Promise.all([
+    db.collection<ShopOffering>("shop_offerings").deleteOne({ userId, inventoryItemId: itemId }),
+    db.collection<ShopDisplay>("shop_displays").updateOne(
+      { userId },
+      {
+        $pull: { slots: { inventoryItemId: itemId } },
+        $set: { updatedAt: now },
+      },
+    ),
+  ]);
 }
 
 async function getFallbackShopSnapshot() {
@@ -693,6 +813,32 @@ function clampAmount(value: number, available: number) {
   }
 
   return Math.round(Math.min(amount, available) * 10) / 10;
+}
+
+function syncedDisplayAmount(value: number | undefined, item: InventoryItem, previousItem?: InventoryItem | null) {
+  if (value === undefined || shouldMirrorPreviousAmount(value, previousItem)) {
+    return clampAmount(item.quantity.amount, item.quantity.amount);
+  }
+
+  return clampAmount(value, item.quantity.amount);
+}
+
+function shouldMirrorPreviousAmount(value: number, previousItem?: InventoryItem | null) {
+  if (!previousItem) {
+    return false;
+  }
+
+  return Math.abs(Number(value) - previousItem.quantity.amount) < 0.01;
+}
+
+function syncedDisplayUnit(value: string | undefined, item: InventoryItem, previousItem?: InventoryItem | null) {
+  const normalized = typeof value === "string" ? value.trim().slice(0, 24) : "";
+
+  if (!normalized || normalized === previousItem?.quantity.unit) {
+    return item.quantity.unit;
+  }
+
+  return normalized;
 }
 
 function normalizePrice(value: number) {

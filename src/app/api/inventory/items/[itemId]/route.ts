@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
 import { AuthenticationError, requireUserSession } from "@/lib/auth";
 import { getMongoDb } from "@/lib/mongodb";
+import { removeInventoryItemFromShop, syncInventoryItemToShop } from "@/lib/shop";
 import type { InventoryCategory, InventoryItem, InventoryStatus } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
@@ -44,8 +45,14 @@ export async function PATCH(request: Request, context: InventoryItemRouteContext
       return NextResponse.json({ error: "Choose inventory changes to save" }, { status: 400 });
     }
 
-    const { userId } = await requireUserSession();
+    const { userId, uuid } = await requireUserSession();
     const db = await getMongoDb();
+    const previousItem = await db.collection<InventoryItem>("inventory_items").findOne({ _id: new ObjectId(itemId), userId });
+
+    if (!previousItem) {
+      return NextResponse.json({ error: "Inventory item was not found" }, { status: 404 });
+    }
+
     const saved = await db.collection<InventoryItem>("inventory_items").findOneAndUpdate(
       { _id: new ObjectId(itemId), userId },
       {
@@ -60,6 +67,8 @@ export async function PATCH(request: Request, context: InventoryItemRouteContext
     if (!saved) {
       return NextResponse.json({ error: "Inventory item was not found" }, { status: 404 });
     }
+
+    await syncInventoryItemToShop({ item: saved, userUuid: uuid, previousItem });
 
     return NextResponse.json({ item: toInventoryViewItem(saved) });
   } catch (error) {
@@ -87,6 +96,8 @@ export async function DELETE(_request: Request, context: InventoryItemRouteConte
     if (!result.deletedCount) {
       return NextResponse.json({ error: "Inventory item was not found" }, { status: 404 });
     }
+
+    await removeInventoryItemFromShop({ userId, itemId: new ObjectId(itemId) });
 
     return NextResponse.json({ id: itemId });
   } catch (error) {

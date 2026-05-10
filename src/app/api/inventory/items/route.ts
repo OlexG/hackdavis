@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { AuthenticationError, requireUserSession } from "@/lib/auth";
 import { getMongoDb } from "@/lib/mongodb";
+import { syncInventoryItemToShop } from "@/lib/shop";
 import type { InventoryCategory, InventoryItem, InventoryStatus } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +26,7 @@ const inventoryStatuses = ["stocked", "low", "ready", "curing"] as const;
 export async function POST(request: Request) {
   try {
     const payload = normalizePayload(await request.json());
-    const { userId } = await requireUserSession();
+    const { userId, uuid } = await requireUserSession();
     const db = await getMongoDb();
     const now = new Date();
 
@@ -51,6 +52,8 @@ export async function POST(request: Request) {
     if (!saved) {
       throw new Error("Unable to create inventory item");
     }
+
+    await syncInventoryItemToShop({ item: saved, userUuid: uuid });
 
     return NextResponse.json({ item: toInventoryViewItem(saved) }, { status: 201 });
   } catch (error) {
