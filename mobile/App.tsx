@@ -1781,6 +1781,13 @@ const styles = StyleSheet.create({
   shelfCardCompact: {
     opacity: 0.86,
   },
+  shelfCardSelected: {
+    borderColor: colors.soil,
+    shadowColor: colors.soil,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 1,
+    shadowRadius: 0,
+  },
   itemSwatch: {
     alignItems: "center",
     borderColor: colors.soil,
@@ -2085,6 +2092,15 @@ const styles = StyleSheet.create({
   offerFieldHalf: {
     flex: 1,
     minWidth: 0,
+  },
+  selectedOfferItem: {
+    alignItems: "center",
+    backgroundColor: colors.cream,
+    borderColor: colors.soil,
+    borderWidth: 2,
+    flexDirection: "row",
+    gap: 10,
+    padding: 9,
   },
   offerList: {
     gap: 8,
