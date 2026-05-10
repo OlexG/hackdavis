@@ -19,6 +19,8 @@ type PlantDocument = {
   soil_ph_max?: number;
   light_requirement?: string;
   soil_texture?: string;
+  temperature_min?: number;
+  temperature_max?: number;
   water_consumption_ml?: number;
   rainfall_max_ml?: number;
   how_to_grow?: string;
@@ -89,6 +91,8 @@ function normalizePlant(plant: PlantDocument) {
     soilPhMax: finiteNumber(plant.soil_ph_max),
     lightRequirement: normalizeString(plant.light_requirement) || undefined,
     soilTexture: normalizeString(plant.soil_texture) || undefined,
+    temperatureMinC: finiteNumber(plant.temperature_min),
+    temperatureMaxC: finiteNumber(plant.temperature_max),
     waterConsumptionMl: finiteNumber(plant.water_consumption_ml),
     rainfallMaxMl: finiteNumber(plant.rainfall_max_ml),
     howToGrow: normalizeString(plant.how_to_grow) || undefined,

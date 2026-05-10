@@ -128,7 +128,7 @@ export type FarmIntelligencePageData = {
   snapshot: InventorySnapshot;
   savedReport?: SavedFarmIntelligence;
   economics?: PlanEconomicsProjection;
-  hasGeminiKey: boolean;
+  hasBackupModelKey: boolean;
   canPersist: boolean;
 };
 
@@ -153,7 +153,7 @@ type IntelligencePromptContext = {
 
 export async function getFarmIntelligencePageData(): Promise<FarmIntelligencePageData> {
   const snapshot = await getInventorySnapshot();
-  const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
+  const hasBackupModelKey = Boolean(process.env.OPENAI_API_KEY);
 
   try {
     const db = await getMongoDb();
@@ -165,7 +165,7 @@ export async function getFarmIntelligencePageData(): Promise<FarmIntelligencePag
     );
 
     if (!latestPlan) {
-      return { snapshot, hasGeminiKey, canPersist: false };
+      return { snapshot, hasBackupModelKey, canPersist: false };
     }
 
     const savedReport = await db.collection<FarmIntelligenceDocument>("farm_intelligence_reports").findOne({
@@ -176,7 +176,7 @@ export async function getFarmIntelligencePageData(): Promise<FarmIntelligencePag
     return {
       snapshot,
       economics: buildPlanEconomicsProjection(latestPlan),
-      hasGeminiKey,
+      hasBackupModelKey,
       canPersist: true,
       savedReport: savedReport ? serializeSavedReport(savedReport) : undefined,
     };
@@ -185,15 +185,15 @@ export async function getFarmIntelligencePageData(): Promise<FarmIntelligencePag
       throw error;
     }
 
-    return { snapshot, hasGeminiKey, canPersist: false };
+    return { snapshot, hasBackupModelKey, canPersist: false };
   }
 }
 
 export async function generateAndSaveFarmIntelligence() {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
-    throw new Error("Missing GEMINI_API_KEY environment variable");
+    throw new Error("Missing OPENAI_API_KEY environment variable");
   }
 
   const context = await getIntelligencePromptContext();
@@ -394,7 +394,7 @@ async function generateFarmIntelligenceReport({
   apiKey: string;
   context: IntelligencePromptContext;
 }) {
-  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const model = process.env.OPENAI_MODEL || "gpt-5-mini";
   const planName = context.latestPlan?.name ?? context.snapshot.plan?.name ?? "Demo farm plan";
   const currentDate =
     context.latestPlan?.updatedAt.toISOString() ??
@@ -402,48 +402,51 @@ async function generateFarmIntelligenceReport({
     new Date().toISOString();
   const currentYear = new Date(currentDate).getUTCFullYear();
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                text: buildGeminiPrompt(context, currentYear),
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: farmIntelligenceResponseSchema,
-        },
-      }),
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
     },
-  );
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "system",
+          content: "You are Sunpatch Farm Intelligence, the backup model for farm planning analysis. Return only structured JSON.",
+        },
+        {
+          role: "user",
+          content: buildBackupModelPrompt(context, currentYear),
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "farm_intelligence_report",
+          strict: true,
+          schema: openAiFarmIntelligenceResponseSchema(),
+        },
+      },
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini request failed: ${response.status} ${errorText.slice(0, 240)}`);
+    throw new Error(readOpenAiError(data));
   }
 
-  const data = await response.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  const text = readOpenAiResponseText(data);
 
-  if (typeof text !== "string" || !text.trim()) {
-    throw new Error("Gemini did not return an intelligence report");
+  if (!text) {
+    throw new Error("Backup model did not return an intelligence report");
   }
 
   return parseFarmIntelligenceReport(text, planName, currentYear);
 }
 
-function buildGeminiPrompt(context: IntelligencePromptContext, currentYear: number) {
+function buildBackupModelPrompt(context: IntelligencePromptContext, currentYear: number) {
   const plan = context.latestPlan;
   const snapshot = context.snapshot;
   const outputs = snapshot.plan?.outputs ?? [];
@@ -451,7 +454,7 @@ function buildGeminiPrompt(context: IntelligencePromptContext, currentYear: numb
   return [
     "You are Sunpatch Farm Intelligence, an AI planning analyst for people running a real small home farm.",
     "Generate practical, specific farm intelligence as JSON matching the provided schema.",
-    "Gemini is responsible for the forecast values. Estimate directional values from the farm plan and inventory inputs.",
+    "The backup model is responsible for the forecast values. Estimate directional values from the farm plan and inventory inputs.",
     "Do not invent extra farm assets outside the provided inputs. If data is sparse, make conservative assumptions and mark confidence low.",
     `Forecast exactly ${forecastYears} years: ${Array.from({ length: forecastYears }, (_, index) => currentYear + index).join(", ")}.`,
     "Every productionForecast must correspond to one provided plan output. Use the output id exactly.",
@@ -503,7 +506,7 @@ function summarizeInventory(items: InventoryItem[]) {
 
 function normalizeFarmIntelligenceReport(raw: unknown, planName: string, currentYear: number): FarmIntelligenceReport {
   if (!raw || typeof raw !== "object") {
-    throw new Error("Gemini returned invalid report JSON");
+    throw new Error("Backup model returned invalid report JSON");
   }
 
   const candidate = raw as Partial<FarmIntelligenceReport>;
@@ -512,7 +515,7 @@ function normalizeFarmIntelligenceReport(raw: unknown, planName: string, current
     .slice(0, 12);
 
   if (!productionForecasts.length) {
-    throw new Error("Gemini returned no usable production forecasts");
+    throw new Error("Backup model returned no usable production forecasts");
   }
 
   return {
@@ -777,116 +780,182 @@ function serializeSavedReport(document: FarmIntelligenceDocument): SavedFarmInte
   };
 }
 
-const farmIntelligenceResponseSchema = {
-  type: "OBJECT",
-  properties: {
-    generatedAt: { type: "STRING" },
-    planName: { type: "STRING" },
-    executiveSummary: { type: "STRING" },
-    productionForecasts: {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          outputId: { type: "STRING" },
-          outputName: { type: "STRING" },
-          unit: { type: "STRING" },
-          currentYearEstimate: { type: "NUMBER" },
-          monthlyTrend: {
-            type: "ARRAY",
-            items: {
-              type: "OBJECT",
-              properties: {
-                year: { type: "INTEGER" },
-                month: { type: "INTEGER" },
-                label: { type: "STRING" },
-                expectedAmount: { type: "NUMBER" },
-                expectedValueUsd: { type: "NUMBER" },
-                lowEstimate: { type: "NUMBER" },
-                highEstimate: { type: "NUMBER" },
-              },
-            },
+function readOpenAiResponseText(data: unknown) {
+  if (!data || typeof data !== "object") return "";
+  const response = data as {
+    output_text?: unknown;
+    output?: Array<{ content?: Array<{ text?: unknown; type?: unknown }> }>;
+  };
+  if (typeof response.output_text === "string") return response.output_text;
+  return response.output
+    ?.flatMap((item) => item.content || [])
+    .map((content) => typeof content.text === "string" ? content.text : "")
+    .join("")
+    .trim() || "";
+}
+
+function readOpenAiError(data: unknown) {
+  if (data && typeof data === "object") {
+    const error = (data as { error?: { message?: unknown } }).error;
+    if (typeof error?.message === "string") return error.message;
+  }
+  return "Backup model request failed";
+}
+
+function openAiFarmIntelligenceResponseSchema() {
+  const monthlyTrendPoint = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      year: { type: "integer" },
+      month: { type: "integer" },
+      label: { type: "string" },
+      expectedAmount: { type: "number" },
+      expectedValueUsd: { type: "number" },
+      lowEstimate: { type: "number" },
+      highEstimate: { type: "number" },
+    },
+    required: ["year", "month", "label", "expectedAmount", "expectedValueUsd", "lowEstimate", "highEstimate"],
+  };
+  const yearlyTrendPoint = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      year: { type: "integer" },
+      expectedAmount: { type: "number" },
+      lowEstimate: { type: "number" },
+      highEstimate: { type: "number" },
+    },
+    required: ["year", "expectedAmount", "lowEstimate", "highEstimate"],
+  };
+  const revenueTrendPoint = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      year: { type: "integer" },
+      expectedValueUsd: { type: "number" },
+    },
+    required: ["year", "expectedValueUsd"],
+  };
+
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      generatedAt: { type: "string" },
+      planName: { type: "string" },
+      executiveSummary: { type: "string" },
+      productionForecasts: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            outputId: { type: "string" },
+            outputName: { type: "string" },
+            unit: { type: "string" },
+            currentYearEstimate: { type: "number" },
+            monthlyTrend: { type: "array", items: monthlyTrendPoint },
+            yearlyTrend: { type: "array", items: yearlyTrendPoint },
+            revenueTrend: { type: "array", items: revenueTrendPoint },
+            confidence: { type: "string", enum: confidenceLevels },
+            trendSummary: { type: "string" },
+            keyDrivers: { type: "array", items: { type: "string" } },
           },
-          yearlyTrend: {
-            type: "ARRAY",
-            items: {
-              type: "OBJECT",
-              properties: {
-                year: { type: "INTEGER" },
-                expectedAmount: { type: "NUMBER" },
-                lowEstimate: { type: "NUMBER" },
-                highEstimate: { type: "NUMBER" },
-              },
-            },
+          required: [
+            "outputId",
+            "outputName",
+            "unit",
+            "currentYearEstimate",
+            "monthlyTrend",
+            "yearlyTrend",
+            "revenueTrend",
+            "confidence",
+            "trendSummary",
+            "keyDrivers",
+          ],
+        },
+      },
+      aiSuggestions: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            title: { type: "string" },
+            affectedOutputs: { type: "array", items: { type: "string" } },
+            recommendation: { type: "string" },
+            expectedImpact: { type: "string" },
+            effort: { type: "string", enum: effortLevels },
+            cost: { type: "string", enum: costLevels },
+            bestTiming: { type: "string" },
+            confidence: { type: "string", enum: confidenceLevels },
           },
-          revenueTrend: {
-            type: "ARRAY",
-            items: {
-              type: "OBJECT",
-              properties: {
-                year: { type: "INTEGER" },
-                expectedValueUsd: { type: "NUMBER" },
-              },
-            },
+          required: [
+            "title",
+            "affectedOutputs",
+            "recommendation",
+            "expectedImpact",
+            "effort",
+            "cost",
+            "bestTiming",
+            "confidence",
+          ],
+        },
+      },
+      scenarioCards: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            title: { type: "string" },
+            change: { type: "string" },
+            expectedUpside: { type: "string" },
+            tradeoff: { type: "string" },
+            affectedMetrics: { type: "array", items: { type: "string" } },
           },
-          confidence: { type: "STRING" },
-          trendSummary: { type: "STRING" },
-          keyDrivers: { type: "ARRAY", items: { type: "STRING" } },
+          required: ["title", "change", "expectedUpside", "tradeoff", "affectedMetrics"],
+        },
+      },
+      surplusCalendar: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            month: { type: "string" },
+            likelySurplus: { type: "array", items: { type: "string" } },
+            likelyShortage: { type: "array", items: { type: "string" } },
+            recommendedActions: { type: "array", items: { type: "string" } },
+          },
+          required: ["month", "likelySurplus", "likelyShortage", "recommendedActions"],
+        },
+      },
+      farmHealth: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            name: { type: "string", enum: healthMetricNames },
+            score: { type: "integer" },
+            status: { type: "string", enum: healthStatuses },
+            explanation: { type: "string" },
+          },
+          required: ["name", "score", "status", "explanation"],
         },
       },
     },
-    aiSuggestions: {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          title: { type: "STRING" },
-          affectedOutputs: { type: "ARRAY", items: { type: "STRING" } },
-          recommendation: { type: "STRING" },
-          expectedImpact: { type: "STRING" },
-          effort: { type: "STRING" },
-          cost: { type: "STRING" },
-          bestTiming: { type: "STRING" },
-          confidence: { type: "STRING" },
-        },
-      },
-    },
-    scenarioCards: {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          title: { type: "STRING" },
-          change: { type: "STRING" },
-          expectedUpside: { type: "STRING" },
-          tradeoff: { type: "STRING" },
-          affectedMetrics: { type: "ARRAY", items: { type: "STRING" } },
-        },
-      },
-    },
-    surplusCalendar: {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          month: { type: "STRING" },
-          likelySurplus: { type: "ARRAY", items: { type: "STRING" } },
-          likelyShortage: { type: "ARRAY", items: { type: "STRING" } },
-          recommendedActions: { type: "ARRAY", items: { type: "STRING" } },
-        },
-      },
-    },
-    farmHealth: {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          name: { type: "STRING" },
-          score: { type: "INTEGER" },
-          status: { type: "STRING" },
-          explanation: { type: "STRING" },
-        },
-      },
-    },
-  },
-};
+    required: [
+      "generatedAt",
+      "planName",
+      "executiveSummary",
+      "productionForecasts",
+      "aiSuggestions",
+      "scenarioCards",
+      "surplusCalendar",
+      "farmHealth",
+    ],
+  };
+}

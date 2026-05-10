@@ -25,6 +25,8 @@ type PlantDocument = {
   yield_count?: number;
   light_requirement?: string;
   soil_texture?: string;
+  temperature_min?: number;
+  temperature_max?: number;
   water_consumption_ml?: number;
   rainfall_max_ml?: number;
   how_to_grow?: string;
@@ -42,7 +44,6 @@ type LivestockDocument = {
 const structures = [
   { key: "barn", name: "Barn", material: "Timber frame", height: 8.6 },
   { key: "shed", name: "Shed", material: "Cedar siding", height: 5.8 },
-  { key: "greenhouse", name: "Greenhouse", material: "Polycarbonate", height: 6.6 },
   { key: "coop", name: "Coop", material: "Pine", height: 4.2 },
   { key: "storage", name: "Storage Unit", material: "Timber", height: 5.2 },
 ];
@@ -194,6 +195,8 @@ function normalizePlant(plant: PlantDocument): AiDraftCrop | null {
     lifeSpan: normalizeString(plant.life_span) || undefined,
     lightRequirement: normalizeString(plant.light_requirement) || undefined,
     soilTexture: normalizeString(plant.soil_texture) || undefined,
+    temperatureMinC: finiteNumber(plant.temperature_min),
+    temperatureMaxC: finiteNumber(plant.temperature_max),
     waterConsumptionMl: finiteNumber(plant.water_consumption_ml),
     rainfallMaxMl: finiteNumber(plant.rainfall_max_ml),
     howToGrow: normalizeString(plant.how_to_grow) || undefined,

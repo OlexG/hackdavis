@@ -203,12 +203,20 @@ const defaultAiDraftPreferences: FarmAiDraftPreferences = {
   includeStructures: true,
   irrigation: "hose",
   waterPriority: "balanced",
-  season: "spring",
+  season: currentSeason(),
   dietaryPreferences: [],
   excludedCropKeys: [],
   preferredCropKeys: [],
   notes: "",
 };
+
+function currentSeason(): FarmAiDraftPreferences["season"] {
+  const month = new Date().getMonth();
+  if (month <= 1 || month === 11) return "winter";
+  if (month <= 4) return "spring";
+  if (month <= 7) return "summer";
+  return "fall";
+}
 
 export function FarmManagerShell() {
   const rootRef = useRef<HTMLDivElement | null>(null);

@@ -36,6 +36,8 @@ export type AiDraftCrop = {
   lifeSpan?: string;
   lightRequirement?: string;
   soilTexture?: string;
+  temperatureMinC?: number;
+  temperatureMaxC?: number;
   waterConsumptionMl?: number;
   rainfallMaxMl?: number;
   howToGrow?: string;
@@ -107,6 +109,24 @@ type ScoredCrop = {
   crop: AiDraftCrop;
   score: number;
   family: string;
+};
+
+type SiteGrowingContext = {
+  latitude: number | null;
+  longitude: number | null;
+  hemisphere: "north" | "south";
+  region: string;
+  climate: "arid" | "mediterranean" | "temperate" | "humid" | "cold" | "tropical";
+  season: FarmAiDraftPreferences["season"];
+  seasonLabel: string;
+  estimatedSeasonLowC: number;
+  estimatedSeasonHighC: number;
+  estimatedWinterLowC: number;
+  estimatedSummerHighC: number;
+  estimatedAnnualRainfallMm: number;
+  frostRisk: "low" | "medium" | "high";
+  heatRisk: "low" | "medium" | "high";
+  livestockHeatStress: "low" | "medium" | "high";
 };
 
 type Placement = {
@@ -181,7 +201,7 @@ export function normalizeAiDraftPreferences(raw: unknown): FarmAiDraftPreference
     includeStructures: body.includeStructures !== false,
     irrigation: enumValue(body.irrigation, ["none", "hose", "drip", "sprinkler"], "hose"),
     waterPriority: enumValue(body.waterPriority, ["low-water", "balanced", "high-production"], "balanced"),
-    season: enumValue(body.season, ["spring", "summer", "fall", "winter", "year-round"], "spring"),
+    season: enumValue(body.season, ["spring", "summer", "fall", "winter", "year-round"], seasonForDate(new Date())),
     dietaryPreferences: stringArray(body.dietaryPreferences, 8, 40),
     excludedCropKeys: stringArray(body.excludedCropKeys, 50, 80),
     preferredCropKeys: stringArray(body.preferredCropKeys, 30, 80),
@@ -209,8 +229,9 @@ export async function generateAiFarmPlan({
   const local = sanitizeLocalPoints(boundaryLocal);
   const geo = sanitizeGeoPoints(boundaryGeo);
   const areaSquareFeet = Math.max(1, Math.round(polygonArea(local)));
-  const candidateCrops = selectCandidateCrops(crops, preferences);
-  const planner = await createPlannerIntent({ boundaryLocal: local, areaSquareFeet, preferences, crops, candidateCrops, livestock, structures });
+  const siteContext = buildSiteGrowingContext(geo, preferences);
+  const candidateCrops = selectCandidateCrops(crops, preferences, siteContext);
+  const planner = await createPlannerIntent({ boundaryLocal: local, areaSquareFeet, preferences, siteContext, crops, candidateCrops, livestock, structures });
   const intent = planner.intent;
   const generated = createObjectsFromIntent(local, intent, crops, livestock, structures);
   const objects = generated.objects;
@@ -247,6 +268,7 @@ export async function generateAiFarmPlan({
           : process.env.GEMINI_MODEL || "gemini-2.5-flash",
         availableCropCount: crops.length,
         candidateCropCount: candidateCrops.length,
+        siteContext,
         generatedObjectCount: objects.length,
         plannerSource: planner.source,
         plannerError: planner.error,
@@ -266,6 +288,7 @@ async function createPlannerIntent(input: {
   boundaryLocal: LocalPoint[];
   areaSquareFeet: number;
   preferences: FarmAiDraftPreferences;
+  siteContext: SiteGrowingContext;
   crops: AiDraftCrop[];
   candidateCrops: AiDraftCrop[];
   livestock: AiDraftLivestock[];
@@ -300,6 +323,7 @@ async function callOpenAiPlanner(input: {
   boundaryLocal: LocalPoint[];
   areaSquareFeet: number;
   preferences: FarmAiDraftPreferences;
+  siteContext: SiteGrowingContext;
   crops: AiDraftCrop[];
   candidateCrops: AiDraftCrop[];
   livestock: AiDraftLivestock[];
@@ -349,6 +373,7 @@ async function callGeminiPlanner(input: {
   boundaryLocal: LocalPoint[];
   areaSquareFeet: number;
   preferences: FarmAiDraftPreferences;
+  siteContext: SiteGrowingContext;
   crops: AiDraftCrop[];
   candidateCrops: AiDraftCrop[];
   livestock: AiDraftLivestock[];
@@ -382,6 +407,7 @@ function plannerPrompt(input: {
   boundaryLocal: LocalPoint[];
   areaSquareFeet: number;
   preferences: FarmAiDraftPreferences;
+  siteContext: SiteGrowingContext;
   crops: AiDraftCrop[];
   candidateCrops: AiDraftCrop[];
   livestock: AiDraftLivestock[];
@@ -391,8 +417,9 @@ function plannerPrompt(input: {
     "You are designing an optimized editable homestead farm plan.",
     "Return only data that matches the schema. Use only cropKey, livestockKey, and structureKey values from the allowed lists.",
     "Optimize for real farm usefulness: budget, weekly labor, crop diversity, water fit, household food value, maintenance level, and usable access.",
-    "Do not invent crop names. Prefer popular homestead staples that match the goal, season, labor, water, household size, and budget. Avoid niche medicinal, ornamental, sprout, orchard, and slow perennial crops unless the user's goals and site size clearly justify them.",
-    "For livestock, match animal size to the selected land and budget: small sites should use compact animals like quail, chickens, rabbits, or ducks; larger sites can use pigs, sheep, goats, and only very large well-funded sites should use cows.",
+    "Do not invent crop names. Prefer popular homestead staples that match the goal, season, location climate, labor, water, household size, and budget. Avoid niche medicinal, ornamental, sprout, orchard, tropical, and slow perennial crops unless the user's goals, site climate, and site size clearly justify them.",
+    "Use the siteContext climate and selected season as hard agronomic constraints. Candidate crops were pre-scored for local seasonal temperature, annual heat/cold risk, rainfall, and water fit; stay within those candidate keys.",
+    "For livestock, match animal size and heat/cold/water tolerance to the selected land, local climate, season, and budget: small sites should use compact animals like quail, chickens, rabbits, or ducks only when climate supports them; larger sites can use pigs, sheep, goats, and only very large well-funded sites should use cows.",
     "Use layoutGeometry to choose crop priorities for the available land shape.",
     "When includeStructures is true, include at least one compact support structure. When includeLivestock is true and the site has enough area, include a small livestock paddock.",
     "Do not choose shapes and do not place coordinates. The deterministic layout engine will partition the land outline, clip plots to the site geometry, and preserve walking gaps.",
@@ -400,8 +427,9 @@ function plannerPrompt(input: {
       boundaryLocal: input.boundaryLocal,
       areaSquareFeet: input.areaSquareFeet,
       preferences: input.preferences,
+      siteContext: input.siteContext,
       layoutGeometry: summarizeLayoutGeometry(input.boundaryLocal),
-      allowedCropKeys: input.crops.map((crop) => crop.key),
+      allowedCropKeys: input.candidateCrops.map((crop) => crop.key),
       candidateCrops: input.candidateCrops,
       allowedLivestock: input.livestock,
       allowedStructures: input.structures,
@@ -637,22 +665,25 @@ function ensureSupportAssignments(
   input: {
     areaSquareFeet: number;
     preferences: FarmAiDraftPreferences;
+    siteContext: SiteGrowingContext;
     candidateCrops: AiDraftCrop[];
     livestock: AiDraftLivestock[];
     structures: AiDraftStructure[];
   },
 ): GeminiFarmIntent {
-  const cropAssignments = ensureCropAssignments(intent.cropAssignments, input.candidateCrops, input.preferences, input.areaSquareFeet);
+  const cropAssignments = ensureCropAssignments(intent.cropAssignments, input.candidateCrops, input.preferences, input.siteContext, input.areaSquareFeet);
   const canPlaceLivestock = input.areaSquareFeet >= 650;
   const canPlaceStructures = input.areaSquareFeet >= 450;
   let livestockAssignments = canPlaceLivestock ? [...intent.livestockAssignments] : [];
-  const structureAssignments = canPlaceStructures ? [...intent.structures] : [];
-  const structureKeys = new Set(input.structures.map((structure) => structure.key));
+  const allowedStructures = input.structures.filter((structure) => structure.key !== "greenhouse");
+  const structureAssignments = canPlaceStructures ? intent.structures.filter((assignment) => assignment.structureKey !== "greenhouse") : [];
+  const structureKeys = new Set(allowedStructures.map((structure) => structure.key));
 
   if (input.preferences.includeLivestock && input.livestock.length && canPlaceLivestock) {
     const animal = selectLivestockForSite(
       input.livestock,
       input.preferences,
+      input.siteContext,
       input.areaSquareFeet,
       livestockAssignments[0]?.livestockKey,
     );
@@ -660,7 +691,7 @@ function ensureSupportAssignments(
       livestockKey: animal.key,
       count: livestockCountForSite(animal, input.preferences, input.areaSquareFeet),
       areaRatio: livestockAreaRatioForSite(animal, input.areaSquareFeet),
-      reason: `Selected by deterministic size-fit scoring for ${Math.round(input.areaSquareFeet)} sq ft, budget, labor, experience, water, season, and household constraints.`,
+      reason: `Selected by deterministic size-fit and climate scoring for ${Math.round(input.areaSquareFeet)} sq ft, ${input.siteContext.region}, budget, labor, experience, water, season, and household constraints.`,
     }] : [];
   }
 
@@ -691,18 +722,19 @@ function ensureCropAssignments(
   assignments: GeminiFarmIntent["cropAssignments"],
   candidateCrops: AiDraftCrop[],
   preferences: FarmAiDraftPreferences,
+  siteContext: SiteGrowingContext,
   areaSquareFeet: number,
 ): GeminiFarmIntent["cropAssignments"] {
   const targetCount = areaSquareFeet < 700 ? 2 : areaSquareFeet < 1500 ? 3 : areaSquareFeet < 2500 ? 4 : areaSquareFeet < 7000 ? 6 : 8;
   const assignmentMap = new Map(assignments.map((assignment) => [assignment.cropKey, assignment]));
-  const selected = selectDiverseCrops(candidateCrops, preferences, Math.min(12, Math.max(targetCount + 4, assignments.length)), areaSquareFeet);
+  const selected = selectDiverseCrops(candidateCrops, preferences, siteContext, Math.min(12, Math.max(targetCount + 4, assignments.length)), areaSquareFeet);
   const merged = selected.slice(0, Math.max(targetCount, Math.min(8, selected.length))).map((crop) => {
     const existing = assignmentMap.get(crop.key);
     return {
       cropKey: crop.key,
       areaRatio: existing?.areaRatio ?? 0.08,
       estimatedPlantCount: existing?.estimatedPlantCount ?? (crop.defaultCount || 12),
-      reason: existing?.reason || "Selected by deterministic popularity, season, labor, water, budget, household, and goal scoring.",
+      reason: existing?.reason || "Selected by deterministic popularity, local climate, season, labor, water, budget, household, and goal scoring.",
     };
   });
 
@@ -711,16 +743,14 @@ function ensureCropAssignments(
 
 function preferredStructureKeys(hasLivestock: boolean) {
   return hasLivestock
-    ? ["coop", "greenhouse", "shed", "storage", "barn", "compost"]
-    : ["greenhouse", "shed", "storage", "compost", "barn", "coop"];
+    ? ["coop", "shed", "storage", "barn", "compost"]
+    : ["shed", "storage", "compost", "barn", "coop"];
 }
 
 function structureAreaRatio(structureKey: string) {
   switch (structureKey) {
     case "barn":
       return 0.055;
-    case "greenhouse":
-      return 0.045;
     case "coop":
     case "shed":
     case "storage":
@@ -1018,8 +1048,6 @@ function structureSlotWeight(structureKey: string) {
   switch (structureKey) {
     case "barn":
       return 1.55;
-    case "greenhouse":
-      return 1.05;
     case "shed":
     case "storage":
       return 0.85;
@@ -1148,8 +1176,6 @@ function structureFootprint(cell: PlotCell, structureKey: string) {
 
 function structureFootprintCap(structureKey: string) {
   switch (structureKey) {
-    case "greenhouse":
-      return { width: 22, depth: 16 };
     case "barn":
       return { width: 26, depth: 20 };
     case "coop":
@@ -1422,14 +1448,142 @@ function polygonCentroid(points: LocalPoint[]): LocalPoint {
   return [x / (6 * area), y / (6 * area)];
 }
 
-function selectCandidateCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPreferences) {
+function buildSiteGrowingContext(geo: GeoPoint[], preferences: FarmAiDraftPreferences): SiteGrowingContext {
+  const centroid = geoCentroid(geo);
+  const latitude = centroid?.latitude ?? 38.5449;
+  const longitude = centroid?.longitude ?? -121.7405;
+  const hemisphere = latitude !== null && latitude < 0 ? "south" : "north";
+  const climate = classifyClimate(latitude, longitude);
+  const { winterLow, summerHigh, rainfall, region } = estimateAnnualClimate(latitude, longitude, climate);
+  const seasonWindow = estimateSeasonWindow(preferences.season, winterLow, summerHigh);
+
+  return {
+    latitude,
+    longitude,
+    hemisphere,
+    region,
+    climate,
+    season: preferences.season,
+    seasonLabel: seasonalLabel(preferences.season, hemisphere),
+    estimatedSeasonLowC: seasonWindow.low,
+    estimatedSeasonHighC: seasonWindow.high,
+    estimatedWinterLowC: winterLow,
+    estimatedSummerHighC: summerHigh,
+    estimatedAnnualRainfallMm: rainfall,
+    frostRisk: winterLow <= -8 ? "high" : winterLow <= 2 ? "medium" : "low",
+    heatRisk: summerHigh >= 37 ? "high" : summerHigh >= 32 ? "medium" : "low",
+    livestockHeatStress: summerHigh >= 35 ? "high" : summerHigh >= 30 ? "medium" : "low",
+  };
+}
+
+function geoCentroid(points: GeoPoint[]) {
+  const valid = points.filter((point) =>
+    Number.isFinite(point[0]) &&
+    Number.isFinite(point[1]) &&
+    point[0] >= -180 &&
+    point[0] <= 180 &&
+    point[1] >= -90 &&
+    point[1] <= 90,
+  );
+  if (!valid.length) return null;
+  return {
+    longitude: valid.reduce((sum, point) => sum + point[0], 0) / valid.length,
+    latitude: valid.reduce((sum, point) => sum + point[1], 0) / valid.length,
+  };
+}
+
+function classifyClimate(latitude: number | null, longitude: number | null): SiteGrowingContext["climate"] {
+  if (latitude === null || longitude === null) return "temperate";
+  const absLat = Math.abs(latitude);
+  if (absLat < 23.5) return "tropical";
+  if (isCaliforniaMediterranean(latitude, longitude)) return "mediterranean";
+  if (longitude >= -125 && longitude <= -100 && latitude >= 25 && latitude <= 45) return "arid";
+  if (absLat >= 50) return "cold";
+  if (longitude >= -100 && longitude <= -65 && latitude >= 24 && latitude <= 47) return "humid";
+  return "temperate";
+}
+
+function estimateAnnualClimate(
+  latitude: number | null,
+  longitude: number | null,
+  climate: SiteGrowingContext["climate"],
+) {
+  if (latitude !== null && longitude !== null && isCaliforniaMediterranean(latitude, longitude)) {
+    return {
+      winterLow: 2,
+      summerHigh: 36,
+      rainfall: 470,
+      region: "California Mediterranean/Central Valley",
+    };
+  }
+
+  switch (climate) {
+    case "tropical":
+      return { winterLow: 18, summerHigh: 34, rainfall: 1400, region: "Tropical/subtropical" };
+    case "arid":
+      return { winterLow: 0, summerHigh: 38, rainfall: 300, region: "Dry western interior" };
+    case "humid":
+      return { winterLow: -2, summerHigh: 33, rainfall: 1100, region: "Humid temperate" };
+    case "cold":
+      return { winterLow: -14, summerHigh: 27, rainfall: 650, region: "Cold northern" };
+    case "mediterranean":
+      return { winterLow: 3, summerHigh: 34, rainfall: 520, region: "Mediterranean" };
+    default: {
+      const absLat = Math.abs(latitude ?? 38);
+      return {
+        winterLow: Math.round(14 - absLat * 0.38),
+        summerHigh: Math.round(34 - Math.max(0, absLat - 32) * 0.18),
+        rainfall: 750,
+        region: latitude === null || longitude === null ? "Unknown mapped site" : "Temperate",
+      };
+    }
+  }
+}
+
+function estimateSeasonWindow(
+  season: FarmAiDraftPreferences["season"],
+  winterLow: number,
+  summerHigh: number,
+) {
+  switch (season) {
+    case "summer":
+      return { low: Math.round(summerHigh - 16), high: summerHigh };
+    case "fall":
+      return { low: Math.round(winterLow + 8), high: Math.round(summerHigh - 6) };
+    case "winter":
+      return { low: winterLow, high: Math.round(winterLow + 13) };
+    case "year-round":
+      return { low: Math.round(winterLow + 4), high: Math.round(summerHigh - 3) };
+    default:
+      return { low: Math.round(winterLow + 6), high: Math.round(summerHigh - 8) };
+  }
+}
+
+function isCaliforniaMediterranean(latitude: number, longitude: number) {
+  return longitude >= -124.5 && longitude <= -114 && latitude >= 32 && latitude <= 42.5;
+}
+
+function seasonalLabel(season: FarmAiDraftPreferences["season"], hemisphere: SiteGrowingContext["hemisphere"]) {
+  if (season === "year-round") return "Year-round rotation";
+  return `${hemisphere === "south" ? "Southern" : "Northern"} hemisphere ${season}`;
+}
+
+function seasonForDate(date: Date): FarmAiDraftPreferences["season"] {
+  const month = date.getMonth();
+  if (month <= 1 || month === 11) return "winter";
+  if (month <= 4) return "spring";
+  if (month <= 7) return "summer";
+  return "fall";
+}
+
+function selectCandidateCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPreferences, siteContext: SiteGrowingContext) {
   const excluded = new Set(preferences.excludedCropKeys);
   const preferred = new Set(preferences.preferredCropKeys);
   const scored = crops
     .filter((crop) => !excluded.has(crop.key))
     .map((crop) => ({
       crop,
-      score: cropScore(crop, preferences, preferred.has(crop.key)),
+      score: cropScore(crop, preferences, siteContext, preferred.has(crop.key)),
       family: cropFamily(crop),
     }))
     .sort((a, b) => b.score - a.score || a.crop.name.localeCompare(b.crop.name));
@@ -1437,12 +1591,12 @@ function selectCandidateCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPref
   return diversifyScoredCrops(scored, 42).map((item) => item.crop);
 }
 
-function selectDiverseCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPreferences, limit: number, areaSquareFeet: number) {
+function selectDiverseCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPreferences, siteContext: SiteGrowingContext, limit: number, areaSquareFeet: number) {
   const preferred = new Set(preferences.preferredCropKeys);
   const scored = crops
     .map((crop) => ({
       crop,
-      score: cropScore(crop, preferences, preferred.has(crop.key), areaSquareFeet),
+      score: cropScore(crop, preferences, siteContext, preferred.has(crop.key), areaSquareFeet),
       family: cropFamily(crop),
     }))
     .sort((a, b) => b.score - a.score || a.crop.name.localeCompare(b.crop.name));
@@ -1475,11 +1629,12 @@ function diversifyScoredCrops(scored: ScoredCrop[], limit: number) {
   return selected;
 }
 
-function cropScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences, preferred: boolean, areaSquareFeet = 2500) {
+function cropScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences, siteContext: SiteGrowingContext, preferred: boolean, areaSquareFeet = 2500) {
   let score = preferred ? 100 : 0;
   const text = `${crop.name} ${crop.cropCategory} ${crop.lightRequirement} ${crop.howToGrow} ${crop.tips}`.toLowerCase();
   score += popularCropScore(crop);
   score += categoryBaselineScore(crop);
+  score += cropSiteFitScore(crop, preferences, siteContext);
   if (isNicheCrop(crop)) score -= 36;
   if (isTreeOrOrchardCrop(crop) && areaSquareFeet < 7000) score -= 42;
   if (isTreeOrOrchardCrop(crop) && preferences.budgetCents < 150_000) score -= 20;
@@ -1504,6 +1659,54 @@ function cropScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences, prefe
   if (preferences.budgetCents <= 75_000 && crop.idealSpaceSqft && crop.idealSpaceSqft > 60) score -= 8;
   if (crop.idealSpaceSqft && crop.idealSpaceSqft <= 25) score += 10;
   if (crop.harvestCycles && crop.harvestCycles > 1) score += 8;
+  return score;
+}
+
+function cropSiteFitScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences, siteContext: SiteGrowingContext) {
+  let score = 0;
+  const text = cropText(crop);
+  const minTemp = crop.temperatureMinC;
+  const maxTemp = crop.temperatureMaxC;
+  const seasonLow = siteContext.estimatedSeasonLowC;
+  const seasonHigh = siteContext.estimatedSeasonHighC;
+  const winterLow = siteContext.estimatedWinterLowC;
+  const summerHigh = siteContext.estimatedSummerHighC;
+  const warmSeason = /\b(tomato|pepper|eggplant|okra|corn|cucumber|squash|pumpkin|melon|watermelon|basil|bean|beans)\b/.test(text);
+  const coolSeason = /\b(lettuce|spinach|arugula|pea|peas|kale|cabbage|broccoli|cauliflower|chard|carrot|radish|beet|cilantro|bok choy)\b/.test(text);
+  const tropical = minTemp !== undefined && minTemp >= 12 && /\b(banana|mango|guava|avocado|citrus|lemon|lime|orange|grapefruit|aloe|ginger)\b/.test(text);
+
+  if (minTemp !== undefined) {
+    if (preferences.season !== "year-round") {
+      if (seasonHigh < minTemp) score -= Math.min(70, (minTemp - seasonHigh) * 7);
+      if (seasonLow < minTemp && warmSeason) score -= Math.min(45, (minTemp - seasonLow) * 2.5);
+    }
+    if ((isTreeOrOrchardCrop(crop) || tropical) && winterLow + 5 < minTemp) {
+      score -= Math.min(75, (minTemp - winterLow) * 4);
+    }
+  }
+
+  if (maxTemp !== undefined) {
+    if (preferences.season !== "year-round" && seasonLow > maxTemp) score -= Math.min(70, (seasonLow - maxTemp) * 7);
+    if (preferences.season === "summer" && seasonHigh > maxTemp + 3) score -= Math.min(45, (seasonHigh - maxTemp) * 3);
+    if (coolSeason && summerHigh > maxTemp + 8 && preferences.season === "summer") score -= 28;
+  }
+
+  if (preferences.season === "winter" && warmSeason) score -= 48;
+  if (preferences.season === "summer" && coolSeason && siteContext.heatRisk !== "low") score -= 34;
+  if (preferences.season === "spring" && warmSeason && minTemp !== undefined && seasonLow + 4 < minTemp) score -= 16;
+  if (preferences.season === "fall" && warmSeason && minTemp !== undefined && seasonLow + 2 < minTemp) score -= 18;
+
+  if (preferences.season === "winter" && coolSeason) score += siteContext.frostRisk === "high" ? 6 : 18;
+  if ((preferences.season === "spring" || preferences.season === "fall") && coolSeason) score += 14;
+  if (preferences.season === "summer" && warmSeason) score += siteContext.heatRisk === "high" && maxTemp !== undefined && summerHigh > maxTemp ? 4 : 18;
+
+  if (siteContext.climate === "mediterranean" && /\b(tomato|pepper|eggplant|basil|squash|cucumber|fig|grape|olive|almond|rosemary|sage|thyme)\b/.test(text)) score += 10;
+  if (siteContext.climate === "arid" && (crop.waterConsumptionMl || 0) >= 900) score -= 18;
+  if (siteContext.climate === "arid" && (crop.waterConsumptionMl || 0) <= 350) score += 12;
+  if (crop.rainfallMaxMl && siteContext.estimatedAnnualRainfallMm > crop.rainfallMaxMl + 250) score -= 10;
+  if (preferences.waterPriority === "low-water" && siteContext.climate === "arid" && (crop.waterConsumptionMl || 0) > 650) score -= 18;
+  if (tropical && siteContext.frostRisk !== "low") score -= 34;
+
   return score;
 }
 
@@ -1578,11 +1781,12 @@ function cropText(crop: AiDraftCrop) {
 function selectLivestockForSite(
   livestock: AiDraftLivestock[],
   preferences: FarmAiDraftPreferences,
+  siteContext: SiteGrowingContext,
   areaSquareFeet: number,
   preferredKey?: string,
 ) {
   const candidates = livestock
-    .map((animal) => ({ animal, score: livestockScore(animal, preferences, areaSquareFeet, preferredKey) }))
+    .map((animal) => ({ animal, score: livestockScore(animal, preferences, siteContext, areaSquareFeet, preferredKey) }))
     .filter(({ score }) => score > -80)
     .sort((first, second) => second.score - first.score);
 
@@ -1592,6 +1796,7 @@ function selectLivestockForSite(
 function livestockScore(
   animal: AiDraftLivestock,
   preferences: FarmAiDraftPreferences,
+  siteContext: SiteGrowingContext,
   areaSquareFeet: number,
   preferredKey?: string,
 ) {
@@ -1647,6 +1852,42 @@ function livestockScore(
   if (preferences.irrigation === "none" && waterDemand >= 2) score -= 8;
   if (preferences.season === "summer" && /\b(pig|cow|duck)\b/.test(text)) score -= 6;
   if (preferences.season === "winter" && /\b(duck|quail|rabbit|chicken)\b/.test(text)) score += 5;
+  score += livestockSiteFitScore(animal, preferences, siteContext);
+
+  return score;
+}
+
+function livestockSiteFitScore(
+  animal: AiDraftLivestock,
+  preferences: FarmAiDraftPreferences,
+  siteContext: SiteGrowingContext,
+) {
+  let score = 0;
+  const text = livestockText(animal);
+  const hotSeason = preferences.season === "summer" || preferences.season === "year-round";
+  const drySite = siteContext.climate === "arid" || siteContext.climate === "mediterranean";
+
+  if (siteContext.livestockHeatStress === "high") {
+    if (/\b(rabbit|rabbits)\b/.test(text)) score -= hotSeason ? 46 : 28;
+    if (/\b(pig|hog|cow|cattle|duck)\b/.test(text)) score -= hotSeason ? 24 : 12;
+    if (/\b(quail|chicken|hen)\b/.test(text)) score += 8;
+    if (/\b(goat|sheep)\b/.test(text)) score += drySite ? 10 : 4;
+  }
+
+  if (drySite) {
+    if (/\b(duck|pig|hog|cow|cattle)\b/.test(text)) score -= preferences.waterPriority === "low-water" ? 28 : 14;
+    if (/\b(goat|sheep|quail|chicken|hen)\b/.test(text)) score += 8;
+  }
+
+  if (siteContext.frostRisk === "high" && preferences.season === "winter") {
+    if (/\b(duck|sheep|goat)\b/.test(text)) score += 8;
+    if (/\b(quail|rabbit)\b/.test(text)) score -= 10;
+  }
+
+  if (siteContext.climate === "humid") {
+    if (/\b(duck)\b/.test(text)) score += 8;
+    if (/\b(sheep|goat)\b/.test(text)) score -= 4;
+  }
 
   return score;
 }
@@ -1756,6 +1997,7 @@ function scorePlan(
 function createCatalogFallbackIntent(input: {
   areaSquareFeet: number;
   preferences: FarmAiDraftPreferences;
+  siteContext: SiteGrowingContext;
   candidateCrops: AiDraftCrop[];
   livestock: AiDraftLivestock[];
   structures: AiDraftStructure[];
@@ -1763,12 +2005,12 @@ function createCatalogFallbackIntent(input: {
   const cropCount = input.areaSquareFeet < 2500 ? 5 : input.areaSquareFeet < 7000 ? 7 : 9;
   const selectedCrops = input.candidateCrops.slice(0, Math.max(3, cropCount));
   const selectedLivestockAnimal = input.preferences.includeLivestock && input.areaSquareFeet >= 650
-    ? selectLivestockForSite(input.livestock, input.preferences, input.areaSquareFeet)
+    ? selectLivestockForSite(input.livestock, input.preferences, input.siteContext, input.areaSquareFeet)
     : null;
   const selectedLivestock = selectedLivestockAnimal ? [selectedLivestockAnimal] : [];
   const structureKeys = new Set(input.structures.map((structure) => structure.key));
   const selectedStructures = input.preferences.includeStructures && input.areaSquareFeet >= 450
-    ? ["greenhouse", "shed", "coop"].filter((key) => structureKeys.has(key)).slice(0, selectedLivestock.length ? 2 : 1)
+    ? ["shed", "coop", "storage", "barn"].filter((key) => structureKeys.has(key)).slice(0, selectedLivestock.length ? 2 : 1)
     : [];
   const cropRatio = selectedCrops.length ? 0.72 / selectedCrops.length : 0.12;
 
@@ -1776,24 +2018,24 @@ function createCatalogFallbackIntent(input: {
     planName: "Catalog Optimized Homestead Plan",
     summary: {
       description: "A catalog-scored fallback plan generated while the LLM planner is unavailable.",
-      highlights: ["Crop choices use the local plant catalog", "Layout remains deterministic and boundary-aware", "Structures are compact and grid cells follow the boundary"],
+      highlights: ["Crop choices use local climate and seasonal temperature scoring", "Layout remains deterministic and boundary-aware", "Structures are compact and grid cells follow the boundary"],
       maintenanceLevel: input.preferences.weeklyHours <= 5 ? "low" : "medium",
     },
     cropAssignments: selectedCrops.map((crop) => ({
       cropKey: crop.key,
       areaRatio: cropRatio,
       estimatedPlantCount: crop.defaultCount || 12,
-      reason: "Selected from the catalog using goal, water, labor, and space scoring.",
+      reason: "Selected from the catalog using local climate, season, goal, water, labor, and space scoring.",
     })),
     livestockAssignments: selectedLivestock.map((animal) => ({
       livestockKey: animal.key,
       count: livestockCountForSite(animal, input.preferences, input.areaSquareFeet),
       areaRatio: livestockAreaRatioForSite(animal, input.areaSquareFeet),
-      reason: "Selected by catalog size-fit scoring for land area, budget, labor, experience, water, season, and household constraints.",
+      reason: "Selected by catalog size-fit and climate scoring for land area, budget, labor, experience, water, season, and household constraints.",
     })),
     structures: selectedStructures.map((structureKey) => ({
       structureKey,
-      areaRatio: structureKey === "greenhouse" ? 0.06 : 0.035,
+      areaRatio: structureAreaRatio(structureKey),
       reason: "Included as compact support infrastructure for the homestead.",
     })),
     budget: {

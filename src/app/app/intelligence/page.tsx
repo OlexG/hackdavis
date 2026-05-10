@@ -28,7 +28,7 @@ export default async function IntelligencePage() {
         planName={planName}
         generatedAt={data.savedReport?.generatedAt}
         hasReport={Boolean(data.savedReport)}
-        hasGeminiKey={data.hasGeminiKey}
+        hasBackupModelKey={data.hasBackupModelKey}
         isDemoReport={isDemoReport}
         isStale={isStale}
       />
@@ -46,14 +46,14 @@ function IntelligenceHeroBanner({
   planName,
   generatedAt,
   hasReport,
-  hasGeminiKey,
+  hasBackupModelKey,
   isDemoReport,
   isStale,
 }: {
   planName?: string;
   generatedAt?: string;
   hasReport: boolean;
-  hasGeminiKey: boolean;
+  hasBackupModelKey: boolean;
   isDemoReport: boolean;
   isStale: boolean;
 }) {
@@ -99,7 +99,7 @@ function IntelligenceHeroBanner({
               Farm Intelligence
             </h1>
             <p className="truncate text-xs text-[#5e4a26]">
-              {planName ? `Gemini forecasts for ${planName}.` : "Gemini forecasts for your farm plan."}
+              {planName ? `Backup model forecasts for ${planName}.` : "Backup model forecasts for your farm plan."}
             </p>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <span className={`rounded-none border-2 px-2 py-0.5 font-mono text-[10px] font-black uppercase tracking-[0.1em] ${statusTone}`}>
@@ -111,7 +111,7 @@ function IntelligenceHeroBanner({
             </div>
           </div>
         </div>
-        <IntelligenceGenerateButton hasGeminiKey={hasGeminiKey} hasReport={hasReport} />
+        <IntelligenceGenerateButton hasBackupModelKey={hasBackupModelKey} hasReport={hasReport} />
       </div>
     </div>
   );

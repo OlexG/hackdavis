@@ -116,7 +116,7 @@ export function MagicGenerateOverlay({
         </div>
 
         <p className="font-mono text-[10px] font-black uppercase tracking-[0.18em] text-[#7a6843]">
-          Gemini · Almanac
+          Backup Model · Almanac
         </p>
         <h2 className="mt-1 font-mono text-2xl font-black uppercase leading-tight tracking-[0.12em] text-[#34432b] drop-shadow-[2px_2px_0_#fffdf5]">
           {title}

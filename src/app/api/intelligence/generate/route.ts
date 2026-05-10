@@ -22,5 +22,5 @@ function formatApiError(error: unknown, fallback: string) {
 }
 
 function isSetupError(error: unknown) {
-  return error instanceof Error && error.message.includes("GEMINI_API_KEY");
+  return error instanceof Error && error.message.includes("OPENAI_API_KEY");
 }
