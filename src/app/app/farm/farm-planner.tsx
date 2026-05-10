@@ -61,7 +61,12 @@ export function FarmPlanner() {
   const rendererRef = useRef<FarmV2Renderer | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const idCounterRef = useRef(0);
-  const finishDraftRef = useRef<((points?: LocalPoint[]) => void) | null>(null);
+  const activePlanRef = useRef<SavedFarmV2Plan | null>(null);
+  const modeRef = useRef<InteractionMode>("select");
+  const drawTypeRef = useRef<DrawType>("cropArea");
+  const draftRef = useRef<LocalPoint[]>([]);
+  const finishCurrentDraftRef = useRef<() => void>(() => {});
+  const finishDraftFromPointsRef = useRef<(points: LocalPoint[]) => void>(() => {});
   const pointerRef = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
   const [plans, setPlans] = useState<SavedFarmV2Plan[]>([]);
   const [activePlan, setActivePlan] = useState<SavedFarmV2Plan | null>(null);
@@ -77,6 +82,13 @@ export function FarmPlanner() {
   const [mouse, setMouse] = useState<LocalPoint | null>(null);
   const [playing, setPlaying] = useState(false);
   const [commitName, setCommitName] = useState("");
+
+  useEffect(() => {
+    activePlanRef.current = activePlan;
+    modeRef.current = mode;
+    drawTypeRef.current = drawType;
+    draftRef.current = draft;
+  });
 
   useEffect(() => {
     let ignore = false;
@@ -107,7 +119,7 @@ export function FarmPlanner() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !activePlan) return;
-    const renderer = createFarmV2Renderer(canvas, () => activePlan, () => ({ draft, mouse }));
+    const renderer = createFarmV2Renderer(canvas, () => activePlan, () => ({ draft, mouse, drawType: drawTypeRef.current }));
     rendererRef.current = renderer;
     return () => {
       renderer.destroy();
@@ -144,21 +156,22 @@ export function FarmPlanner() {
 
       if (isTyping) return;
 
-      if (event.key === "Enter" && mode === "draw") {
+      if (event.key === "Enter" && modeRef.current === "draw") {
         event.preventDefault();
-        finishDraftRef.current?.();
+        finishCurrentDraftRef.current();
       }
 
-      if (event.key === "Escape" && mode === "draw") {
+      if (event.key === "Escape") {
         event.preventDefault();
+        draftRef.current = [];
         setDraft([]);
         setMouse(null);
       }
     };
 
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [mode]);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
 
   function updatePlan(updater: (plan: SavedFarmV2Plan) => SavedFarmV2Plan, save = true) {
     setActivePlan((current) => {
@@ -321,52 +334,29 @@ export function FarmPlanner() {
 
   function onCanvasClick(event: React.MouseEvent<HTMLCanvasElement>) {
     if (!activePlan || pointerRef.current?.moved) return;
+    if (event.detail > 1) return;
     const renderer = rendererRef.current;
     if (!renderer) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const world = snapPoint(renderer.unproject(event.clientX - rect.left, event.clientY - rect.top));
     if (!pointInPolygon(world, activePlan.boundary.local)) return;
     if (mode === "draw") {
-      const firstPoint = draft[0];
-      if (drawType !== "path" && draft.length >= 3 && firstPoint && distance(world, firstPoint) <= 2.5) {
-        finishDraft(draft);
+      const currentDraft = draftRef.current;
+      const firstPoint = currentDraft[0];
+      if (drawType !== "path" && currentDraft.length >= 3 && firstPoint && distance(world, firstPoint) <= 7) {
+        finishDraftFromPointsRef.current(currentDraft);
         return;
       }
-      setDraft((current) => [...current, world]);
+      setDraft((current) => {
+        const next = [...current, world];
+        draftRef.current = next;
+        return next;
+      });
       return;
     }
     const hit = renderer.hitTestAll(world)[0];
     updatePlan((plan) => ({ ...plan, selectedId: hit?.id ?? null }), false);
   }
-
-  function finishDraft(points: LocalPoint[] = draft) {
-    if (!activePlan) return;
-    const draftPoints = Array.isArray(points?.[0]) ? points : draft;
-    const nextId = (prefix: string) => {
-      idCounterRef.current += 1;
-      return `user-${prefix}-${idCounterRef.current}`;
-    };
-    if (drawType === "path") {
-      if (draftPoints.length < 2) return;
-      addObject({ id: nextId("path"), label: "New Path", type: "path", points: draftPoints, attrs: { status: "Open", material: "Packed gravel" } });
-      return;
-    }
-    if (draftPoints.length < 3) return;
-    if (drawType === "cropArea") {
-      addObject({ id: nextId("crop-area"), label: "New Crop Area", type: "cropArea", polygon: draftPoints, height: 0.38, attrs: { status: "Parent crop area" } });
-    } else if (drawType === "cropField") {
-      const parent = activePlan.objects.find((object) => object.type === "cropArea" && pointInPolygon(polygonCentroid(draftPoints), object.polygon));
-      addObject({ id: nextId("crop-field"), label: "Unpopulated Crop Field", type: "cropField", parentId: parent?.id ?? null, polygon: draftPoints, height: 0.76, attrs: { status: parent ? "Needs crop details" : "Needs parent crop area", cropKey: null, cropName: "", count: 0, visual: "generic", growth: 0.2, rows: 5 } });
-    } else if (drawType === "livestock") {
-      addObject({ id: nextId("livestock"), label: "New Paddock", type: "livestock", polygon: draftPoints, height: 0.55, attrs: { species: "Goat", breed: "Mixed", count: 4, status: "Planned" } });
-    } else if (drawType === "structure") {
-      addObject({ id: nextId("structure"), label: "New Structure", type: "structure", polygon: draftPoints, height: 5.2, attrs: { kind: "Storage Unit", height: 5.2, material: "Timber", status: "Planned" } });
-    }
-  }
-
-  useEffect(() => {
-    finishDraftRef.current = finishDraft;
-  });
 
   function addObject(object: FarmV2Object) {
     updatePlan((plan) => ({
@@ -374,9 +364,46 @@ export function FarmPlanner() {
       objects: [...plan.objects, object],
       selectedId: object.id,
     }));
+    draftRef.current = [];
     setDraft([]);
     setMode("select");
   }
+
+  function finishDraftFromPoints(points: LocalPoint[]) {
+    const plan = activePlanRef.current;
+    if (!plan) return;
+    const type = drawTypeRef.current;
+    const draftPoints = points.slice();
+    const nextId = (prefix: string) => {
+      idCounterRef.current += 1;
+      return `user-${prefix}-${idCounterRef.current}`;
+    };
+    if (type === "path") {
+      if (draftPoints.length < 2) return;
+      addObject({ id: nextId("path"), label: "New Path", type: "path", points: draftPoints, attrs: { status: "Open", material: "Packed gravel" } });
+      return;
+    }
+    if (draftPoints.length < 3) return;
+    if (type === "cropArea") {
+      addObject({ id: nextId("crop-area"), label: "New Crop Area", type: "cropArea", polygon: draftPoints, height: 0.38, attrs: { status: "Parent crop area" } });
+    } else if (type === "cropField") {
+      const parent = plan.objects.find((object) => object.type === "cropArea" && pointInPolygon(polygonCentroid(draftPoints), object.polygon));
+      addObject({ id: nextId("crop-field"), label: "Unpopulated Crop Field", type: "cropField", parentId: parent?.id ?? null, polygon: draftPoints, height: 0.76, attrs: { status: parent ? "Needs crop details" : "Needs parent crop area", cropKey: null, cropName: "", count: 0, visual: "generic", growth: 0.2, rows: 5 } });
+    } else if (type === "livestock") {
+      addObject({ id: nextId("livestock"), label: "New Paddock", type: "livestock", polygon: draftPoints, height: 0.55, attrs: { species: "Goat", breed: "Mixed", count: 4, status: "Planned" } });
+    } else if (type === "structure") {
+      addObject({ id: nextId("structure"), label: "New Structure", type: "structure", polygon: draftPoints, height: 5.2, attrs: { kind: "Storage Unit", height: 5.2, material: "Timber", status: "Planned" } });
+    }
+  }
+
+  function finishCurrentDraft() {
+    finishDraftFromPointsRef.current(draftRef.current);
+  }
+
+  useEffect(() => {
+    finishCurrentDraftRef.current = finishCurrentDraft;
+    finishDraftFromPointsRef.current = finishDraftFromPoints;
+  });
 
   function selectedObject() {
     return activePlan?.objects.find((object) => object.id === activePlan.selectedId) ?? null;
@@ -398,10 +425,15 @@ export function FarmPlanner() {
           <Segmented options={["select", "draw"]} value={mode} labels={{ select: "Select", draw: "Draw" }} onChange={(value) => setMode(value as InteractionMode)} />
           <Segmented options={["cropArea", "cropField", "livestock", "structure", "path"]} value={drawType} labels={typeLabels} onChange={(value) => {
             setDrawType(value as DrawType);
+            draftRef.current = [];
             setDraft([]);
           }} />
-          <button type="button" onClick={() => finishDraft()}>{drawType === "path" ? "Enter" : "Close"}</button>
-          <button type="button" onClick={() => setDraft([])}>Clear</button>
+          <button type="button" onClick={() => finishCurrentDraft()}>{drawType === "path" ? "Enter" : "Close"}</button>
+          <button type="button" onClick={() => {
+            draftRef.current = [];
+            setDraft([]);
+            setMouse(null);
+          }}>Clear</button>
         </div>
         <div className="farmv2-toolbar farmv2-toolbar-right">
           {error ? <span className="farmv2-error">{error}</span> : null}
@@ -424,6 +456,10 @@ export function FarmPlanner() {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onPointerLeave={() => {
+            setMouse(null);
+            pointerRef.current = null;
+          }}
           onClick={onCanvasClick}
           onWheel={(event) => {
             event.preventDefault();
@@ -707,7 +743,7 @@ function Segmented({ options, value, labels, onChange }: { options: string[]; va
 function createFarmV2Renderer(
   canvas: HTMLCanvasElement,
   getPlan: () => SavedFarmV2Plan,
-  getDraft: () => { draft: LocalPoint[]; mouse: LocalPoint | null },
+  getDraft: () => { draft: LocalPoint[]; mouse: LocalPoint | null; drawType: DrawType },
 ): FarmV2Renderer {
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canvas unavailable");
@@ -767,7 +803,7 @@ function createFarmV2Renderer(
     const min = Math.min(logicalWidth / Math.max(1, width * 1.25), logicalHeight / Math.max(1, height * 1.25));
     return { min: clamp(min, 0.12, 1.2), max: 12 };
   };
-  const drawPolygon = (polygon: LocalPoint[], fill: string, stroke = "rgba(255,255,255,.2)", height = 0) => {
+  const tracePolygon = (polygon: LocalPoint[], height: number) => {
     context.beginPath();
     polygon.forEach((point, index) => {
       const projected = project(point, height);
@@ -775,11 +811,99 @@ function createFarmV2Renderer(
       else context.lineTo(projected.x, projected.y);
     });
     context.closePath();
+  };
+  const drawPolygon = (polygon: LocalPoint[], fill: string, stroke = "rgba(255,255,255,.2)", height = 0) => {
+    tracePolygon(polygon, height);
     context.fillStyle = fill;
     context.fill();
-    context.strokeStyle = stroke;
-    context.lineWidth = 1.5;
+    if (stroke && stroke !== "transparent") {
+      context.strokeStyle = stroke;
+      context.lineWidth = 1.5;
+      context.stroke();
+    }
+  };
+  const shadeColor = (hex: string, amount: number) => {
+    if (hex.startsWith("rgba") || hex.startsWith("rgb")) return hex;
+    const value = hex.replace("#", "");
+    const expanded = value.length === 3 ? value.split("").map((c) => c + c).join("") : value;
+    const r = parseInt(expanded.slice(0, 2), 16);
+    const g = parseInt(expanded.slice(2, 4), 16);
+    const b = parseInt(expanded.slice(4, 6), 16);
+    const adjust = (channel: number) => Math.max(0, Math.min(255, Math.round(channel + amount * 255)));
+    return `rgb(${adjust(r)}, ${adjust(g)}, ${adjust(b)})`;
+  };
+  const drawExtruded = (polygon: LocalPoint[], height: number, topFill: string, sideFill: string, stroke: string | null) => {
+    if (height <= 0.05) {
+      drawPolygon(polygon, topFill, stroke ?? "rgba(0,0,0,.3)", 0);
+      return;
+    }
+    polygon.forEach((point, index) => {
+      const next = polygon[(index + 1) % polygon.length];
+      const p1 = project(point, 0);
+      const p2 = project(next, 0);
+      const p3 = project(next, height);
+      const p4 = project(point, height);
+      const lighting = (next[0] - point[0]) - (next[1] - point[1]) > 0 ? 0.06 : -0.08;
+      context.fillStyle = shadeColor(sideFill, lighting);
+      context.beginPath();
+      context.moveTo(p1.x, p1.y);
+      context.lineTo(p2.x, p2.y);
+      context.lineTo(p3.x, p3.y);
+      context.lineTo(p4.x, p4.y);
+      context.closePath();
+      context.fill();
+      if (stroke) {
+        context.strokeStyle = stroke;
+        context.lineWidth = 1;
+        context.stroke();
+      }
+    });
+    drawPolygon(polygon, topFill, stroke ?? "rgba(0,0,0,.35)", height);
+  };
+  const drawFence = (polygon: LocalPoint[], color: string, height: number) => {
+    polygon.forEach((point, index) => {
+      const next = polygon[(index + 1) % polygon.length];
+      const baseA = project(point, 0);
+      const baseB = project(next, 0);
+      const topA = project(point, height);
+      const topB = project(next, height);
+      context.strokeStyle = color;
+      context.lineWidth = 1.5;
+      context.beginPath();
+      context.moveTo(topA.x, topA.y);
+      context.lineTo(topB.x, topB.y);
+      context.stroke();
+      const segments = 6;
+      for (let s = 0; s <= segments; s += 1) {
+        const t = s / segments;
+        const sx = baseA.x + (baseB.x - baseA.x) * t;
+        const sy = baseA.y + (baseB.y - baseA.y) * t;
+        const tx = topA.x + (topB.x - topA.x) * t;
+        const ty = topA.y + (topB.y - topA.y) * t;
+        context.beginPath();
+        context.moveTo(sx, sy);
+        context.lineTo(tx, ty);
+        context.stroke();
+      }
+    });
+  };
+  const drawRoofRidge = (polygon: LocalPoint[], height: number, isGreenhouse: boolean) => {
+    if (polygon.length < 4) return;
+    const c = polygonCentroid(polygon);
+    const a: LocalPoint = [(polygon[0][0] + polygon[1][0]) / 2, (polygon[0][1] + polygon[1][1]) / 2];
+    const b: LocalPoint = [(polygon[2][0] + polygon[3][0]) / 2, (polygon[2][1] + polygon[3][1]) / 2];
+    const p1 = project(a, height + 0.55);
+    const p2 = project(b, height + 0.55);
+    const pc = project(c, height + 1.1);
+    context.save();
+    context.strokeStyle = isGreenhouse ? "rgba(255,255,255,.5)" : "rgba(28,32,35,.5)";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(p1.x, p1.y);
+    context.lineTo(pc.x, pc.y);
+    context.lineTo(p2.x, p2.y);
     context.stroke();
+    context.restore();
   };
   const render = () => {
     const plan = getPlan();
@@ -790,8 +914,11 @@ function createFarmV2Renderer(
     gradient.addColorStop(1, "#101511");
     context.fillStyle = gradient;
     context.fillRect(0, 0, logicalWidth, logicalHeight);
-    drawPolygon(plan.boundary.local, plan.view === "satellite" ? "#5c7c4c" : "#496b47", "#d4b16b", 0);
+    drawPolygon(plan.boundary.local, plan.view === "satellite" ? "#5c7c4c" : "#496b47", "#203029", 0);
+    drawFence(plan.boundary.local, "#d4b16b", 0.3);
     plan.objects.forEach((object) => {
+      const isSelected = object.id === plan.selectedId;
+      const stroke = isSelected ? "#f8e08a" : "rgba(0,0,0,.35)";
       if (object.type === "path") {
         context.beginPath();
         object.points.forEach((point, index) => {
@@ -799,34 +926,75 @@ function createFarmV2Renderer(
           if (index === 0) context.moveTo(projected.x, projected.y);
           else context.lineTo(projected.x, projected.y);
         });
-        context.strokeStyle = object.id === plan.selectedId ? "#f8e08a" : "#c59d5b";
-        context.lineWidth = object.id === plan.selectedId ? 5 : 4;
+        context.strokeStyle = isSelected ? "#f8e08a" : "#c59d5b";
+        context.lineWidth = isSelected ? 5 : 4;
         context.stroke();
-      } else {
-        const color = object.type === "cropArea" ? "#8b6a43" : object.type === "cropField" ? "#5f9f55" : object.type === "livestock" ? "#a7b85b" : object.attrs.kind === "Greenhouse" ? "rgba(137,204,198,.7)" : "#9a6848";
-        drawPolygon(object.polygon, color, object.id === plan.selectedId ? "#f8e08a" : "rgba(0,0,0,.35)", object.height);
+      } else if (object.type === "cropArea") {
+        drawExtruded(object.polygon, object.height, "#8b6a43", "#5f4a2b", stroke);
+      } else if (object.type === "cropField") {
+        drawExtruded(object.polygon, object.height, "#5f9f55", "#3f6f3a", stroke);
+      } else if (object.type === "livestock") {
+        drawExtruded(object.polygon, object.height, "#a7b85b", "#7a8744", stroke);
+        drawFence(object.polygon, "#c9a865", object.height + 0.25);
+      } else if (object.type === "structure") {
+        const isGreenhouse = object.attrs.kind === "Greenhouse";
+        const topFill = isGreenhouse ? "rgba(137,204,198,.7)" : "#58697a";
+        const sideFill = isGreenhouse ? "rgba(90,138,134,.6)" : "#9a6848";
+        drawExtruded(object.polygon, object.height, topFill, sideFill, stroke);
+        drawRoofRidge(object.polygon, object.height, isGreenhouse);
       }
       const labelPoint = "polygon" in object ? polygonCentroid(object.polygon) : object.points[Math.floor(object.points.length / 2)];
       const p = project(labelPoint, "height" in object ? object.height + 0.2 : 0.8);
-      context.fillStyle = "rgba(10,14,12,.74)";
-      context.fillRect(p.x - 42, p.y - 18, 84, 18);
+      context.fillStyle = "rgba(10,14,12,.78)";
+      context.fillRect(p.x - 44, p.y - 18, 88, 18);
       context.fillStyle = "#edf4e7";
-      context.font = "11px system-ui";
+      context.font = "11px ui-monospace, monospace";
       context.textAlign = "center";
       context.fillText(object.label.slice(0, 18), p.x, p.y - 5);
     });
-    const { draft, mouse } = getDraft();
+    const { draft, mouse, drawType } = getDraft();
     if (draft.length || mouse) {
       const points = mouse ? [...draft, mouse] : draft;
+      const isPath = drawType === "path";
+      context.save();
       context.beginPath();
       points.forEach((point, index) => {
         const p = project(point, 0.5);
         if (index === 0) context.moveTo(p.x, p.y);
         else context.lineTo(p.x, p.y);
       });
+      if (!isPath && draft.length >= 3) {
+        context.closePath();
+        context.fillStyle = "rgba(240,195,90,.18)";
+        context.fill();
+      }
       context.strokeStyle = "#f0c35a";
-      context.lineWidth = 2;
+      context.lineWidth = 2.5;
       context.stroke();
+      context.restore();
+      draft.forEach((point) => {
+        const p = project(point, 0.6);
+        context.fillStyle = "#f0c35a";
+        context.beginPath();
+        context.moveTo(p.x, p.y - 5);
+        context.lineTo(p.x + 5, p.y);
+        context.lineTo(p.x, p.y + 5);
+        context.lineTo(p.x - 5, p.y);
+        context.closePath();
+        context.fill();
+      });
+      if (mouse) {
+        const p = project(mouse, 0.6);
+        context.strokeStyle = "rgba(255,245,184,.95)";
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(p.x, p.y - 7);
+        context.lineTo(p.x + 7, p.y);
+        context.lineTo(p.x, p.y + 7);
+        context.lineTo(p.x - 7, p.y);
+        context.closePath();
+        context.stroke();
+      }
     }
     raf = window.requestAnimationFrame(render);
   };
