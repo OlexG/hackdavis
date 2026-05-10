@@ -12,6 +12,13 @@ def ensure_indexes(db: Database) -> None:
     db.crops.create_index([("crop_name", ASCENDING)])
     db.crops.create_index([("crop_family", ASCENDING)])
     db.crops.create_index([("crop_id", ASCENDING)], unique=True)
+    db.plants.create_index([("crop_id", ASCENDING)], unique=True)
+    db.plants.create_index([("common_name", ASCENDING)])
+    db.plants.create_index([("crop_category", ASCENDING)])
+    db.livestock.create_index([("livestock_id", ASCENDING)], unique=True)
+    db.livestock.create_index([("name", ASCENDING)])
+    db.animals.create_index([("animal_id", ASCENDING)])
+    db.animals.create_index([("name", ASCENDING)])
 
     db.crop_families.create_index([("crop_family", ASCENDING)], unique=True)
     db.crop_rotation_rules.create_index([("crop_family", ASCENDING)])
@@ -41,4 +48,3 @@ def ensure_indexes(db: Database) -> None:
     db.optimization_results.create_index([("farm_id", ASCENDING), ("run_id", ASCENDING)], unique=True)
     db.optimization_results.create_index([("created_at", ASCENDING)])
     db.raw_source_documents.create_index([("source", ASCENDING), ("pulled_at", ASCENDING)])
-

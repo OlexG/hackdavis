@@ -76,6 +76,16 @@ curl http://localhost:8000/v1/runs/RUN_ID/allocation
 curl http://localhost:8000/v1/runs/RUN_ID/features
 ```
 
+Rank all plant and animal options for the Farmv2 GUI:
+
+```bash
+curl -X POST http://localhost:8000/v1/options/score \
+  -H 'Content-Type: application/json' \
+  -d '{"farm_id":"farm_001","season_year":2026,"farm_area_acres":12.5,"scenario_count":200,"risk_tolerance":0.5}'
+```
+
+This reads the `plants` and `livestock`/`animals` MongoDB collections, applies current seeded weather, water, labor, soil, and market assumptions, scores each option from 0-100, and returns `ranked_options`, `plant_options`, and `animal_options` sorted best first.
+
 ## MongoDB Collections
 
 The initialization and seed path supports these collections:
@@ -83,6 +93,9 @@ The initialization and seed path supports these collections:
 - `farms`
 - `fields`
 - `crops`
+- `plants`
+- `livestock`
+- `animals`
 - `crop_families`
 - `crop_rotation_rules`
 - `field_crop_history`
@@ -161,4 +174,3 @@ sudo firewall-cmd --reload
 ```
 
 Then deploy this directory to `/opt/farm-optim` and run the Docker commands above.
-

@@ -28,6 +28,32 @@ type SavedFarmV2Plan = Omit<FarmV2Plan, "_id" | "farmId" | "userId" | "createdAt
   commits: Array<Omit<FarmV2Plan["commits"][number], "timestamp"> & { timestamp: string }>;
 };
 
+type StatOptionScore = {
+  option_id: string;
+  category: "plant" | "animal";
+  name: string;
+  score: number;
+  rank: number;
+  expected_profit_usd: number;
+  expected_profit_usd_per_acre: number;
+  p10_profit_usd: number;
+  probability_of_loss: number;
+  capacity_units: number;
+  ideal_space_square_feet: number;
+  score_breakdown: Record<string, number>;
+  assumptions: Record<string, unknown>;
+  reasons: string[];
+  warnings: string[];
+};
+
+type StatOptionScores = {
+  generated_at: string;
+  ranked_options: StatOptionScore[];
+  plant_options: StatOptionScore[];
+  animal_options: StatOptionScore[];
+  context: Record<string, unknown>;
+};
+
 type DrawType = "cropArea" | "cropField" | "livestock" | "structure" | "path";
 
 type InteractionMode = "select" | "draw";
@@ -78,13 +104,15 @@ export function FarmPlanner() {
   const hitCycleRef = useRef<{ key: string; index: number; world: LocalPoint } | null>(null);
   const [satellite, setSatellite] = useState<{ image: HTMLImageElement; localWidth: number; localHeight: number } | null>(null);
   const satelliteRef = useRef(satellite);
-  satelliteRef.current = satellite;
   const [plans, setPlans] = useState<SavedFarmV2Plan[]>([]);
   const [activePlan, setActivePlan] = useState<SavedFarmV2Plan | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isScoringOptions, setIsScoringOptions] = useState(false);
   const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [optionScoreError, setOptionScoreError] = useState<string | null>(null);
+  const [optionScores, setOptionScores] = useState<StatOptionScores | null>(null);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [boundaryGeo, setBoundaryGeo] = useState<GeoPoint[]>([]);
   const [setupReady, setSetupReady] = useState(false);
@@ -101,6 +129,10 @@ export function FarmPlanner() {
     drawTypeRef.current = drawType;
     draftRef.current = draft;
   });
+
+  useEffect(() => {
+    satelliteRef.current = satellite;
+  }, [satellite]);
 
   useEffect(() => {
     let ignore = false;
@@ -167,8 +199,8 @@ export function FarmPlanner() {
     }
     const geo = activePlan.boundary.geo;
     if (!geo || geo.length < 3) {
-      setSatellite(null);
-      return;
+      const timer = window.setTimeout(() => setSatellite(null), 0);
+      return () => window.clearTimeout(timer);
     }
     const lngs = geo.map((point) => point[0]);
     const lats = geo.map((point) => point[1]);
@@ -179,8 +211,8 @@ export function FarmPlanner() {
     const lngSpan = maxLng - minLng;
     const latSpan = maxLat - minLat;
     if (lngSpan <= 0 || latSpan <= 0) {
-      setSatellite(null);
-      return;
+      const timer = window.setTimeout(() => setSatellite(null), 0);
+      return () => window.clearTimeout(timer);
     }
     const midLat = ((minLat + maxLat) / 2) * (Math.PI / 180);
     const feetPerDegLat = 364000;
@@ -219,6 +251,55 @@ export function FarmPlanner() {
     }, 1200);
     return () => window.clearInterval(timer);
   }, [playing, activePlan]);
+
+  useEffect(() => {
+    if (!activePlan || activePlan.boundary.areaSquareFeet <= 0) {
+      const timer = window.setTimeout(() => setOptionScores(null), 0);
+      return () => window.clearTimeout(timer);
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setIsScoringOptions(true);
+      setOptionScoreError(null);
+      fetch("/api/stat-model/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        signal: controller.signal,
+        body: JSON.stringify({
+          plan: {
+            boundary: activePlan.boundary,
+            objects: activePlan.objects,
+            units: activePlan.units,
+          },
+          scenarioCount: 200,
+          riskTolerance: 0.5,
+        }),
+      })
+        .then(async (response) => {
+          const data = (await response.json()) as StatOptionScores | { error?: string };
+          if (!response.ok) throw new Error("error" in data ? data.error ?? "Unable to score options" : "Unable to score options");
+          return data as StatOptionScores;
+        })
+        .then((scores) => {
+          setOptionScores(scores);
+        })
+        .catch((scoreError: unknown) => {
+          if (controller.signal.aborted) return;
+          setOptionScoreError(formatError(scoreError));
+          setOptionScores(null);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setIsScoringOptions(false);
+        });
+    }, 1200);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activePlan?.boundary.areaSquareFeet, activePlan?.objects, activePlan?.units]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -555,6 +636,15 @@ export function FarmPlanner() {
           })}>Rotate</button>
           <button type="button" onClick={() => updatePlan((plan) => ({ ...plan, camera: { zoom: rendererRef.current?.getZoomLimits().min ?? 1, panX: 0, panY: -18, rotation: 0 } }))}>Reset</button>
           <button type="button" className="farmv2-row-end" onClick={() => setOnboardingOpen(true)}>Settings</button>
+          <span className={`farmv2-model-status${optionScoreError ? " error" : ""}`}>
+            {isScoringOptions
+              ? "Scoring options..."
+              : optionScores
+                ? `Ranked ${optionScores.ranked_options.length} options`
+                : optionScoreError
+                  ? "Ranking unavailable"
+                  : "Ranking pending"}
+          </span>
           {error ? <span className="farmv2-error">{error}</span> : null}
         </div>
       </header>
@@ -598,7 +688,7 @@ export function FarmPlanner() {
             </strong>
           </div>
         ) : null}
-        <ObjectPanel plan={activePlan} object={selected} draftCount={draft.length} setPlan={updatePlan} />
+        <ObjectPanel plan={activePlan} object={selected} draftCount={draft.length} setPlan={updatePlan} optionScores={optionScores} />
       </main>
 
       <footer className="farmv2-timeline">
@@ -756,11 +846,13 @@ function ObjectPanel({
   object,
   draftCount,
   setPlan,
+  optionScores,
 }: {
   plan: SavedFarmV2Plan | null;
   object: FarmV2Object | null;
   draftCount: number;
   setPlan: (updater: (plan: SavedFarmV2Plan) => SavedFarmV2Plan, save?: boolean) => void;
+  optionScores: StatOptionScores | null;
 }) {
   if (!plan) {
     return <aside className="farmv2-panel"><strong>No plan loaded</strong></aside>;
@@ -799,8 +891,8 @@ function ObjectPanel({
         {"points" in object ? <Detail label="Length" value={formatLength(pathLength(object.points), plan.units)} /> : null}
         <Detail label="Status" value={String(object.attrs.status ?? "Planned")} />
         {object.type === "cropArea" ? <CropAreaDetails plan={plan} object={object} /> : null}
-        {object.type === "cropField" ? <CropFieldEditor object={object} updateObject={updateObject} /> : null}
-        {object.type === "livestock" ? <LivestockEditor object={object} updateObject={updateObject} /> : null}
+        {object.type === "cropField" ? <CropFieldEditor object={object} updateObject={updateObject} optionScores={optionScores} /> : null}
+        {object.type === "livestock" ? <LivestockEditor object={object} updateObject={updateObject} optionScores={optionScores} /> : null}
         {object.type === "structure" ? <StructureEditor object={object} updateObject={updateObject} /> : null}
         <button type="button" className="farmv2-danger" onClick={() => setPlan((current) => {
           const deleteIds = new Set([object.id]);
@@ -822,7 +914,45 @@ function CropAreaDetails({ plan, object }: { plan: SavedFarmV2Plan; object: Extr
   return <Detail label="Child crop fields" value={children.length ? children.map((child) => child.label).join(", ") : "No crop fields yet"} />;
 }
 
-function CropFieldEditor({ object, updateObject }: { object: Extract<FarmV2Object, { type: "cropField" }>; updateObject: (id: string, updater: (object: FarmV2Object) => FarmV2Object) => void }) {
+function rankedCatalogItems<T>(items: T[], scores: StatOptionScore[], aliases: (item: T) => string[]) {
+  return [...items].sort((left, right) => {
+    const leftScore = optionScoreFor(scores, aliases(left))?.score ?? -1;
+    const rightScore = optionScoreFor(scores, aliases(right))?.score ?? -1;
+    if (leftScore !== rightScore) return rightScore - leftScore;
+    return aliases(left)[0].localeCompare(aliases(right)[0]);
+  });
+}
+
+function optionScoreFor(scores: StatOptionScore[], aliases: Array<string | null | undefined>) {
+  const normalizedAliases = new Set(aliases.flatMap((alias) => alias ? normalizedOptionAliases(alias) : []));
+  return scores.find((score) => {
+    const scoreAliases = normalizedOptionAliases(score.option_id).concat(normalizedOptionAliases(score.name));
+    return scoreAliases.some((alias) => normalizedAliases.has(alias));
+  }) ?? null;
+}
+
+function normalizedOptionAliases(value: string) {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const singular = normalized.endsWith("s") ? normalized.slice(0, -1) : normalized;
+  return Array.from(new Set([normalized, singular].filter(Boolean)));
+}
+
+function optionLabel(name: string, score: StatOptionScore | null) {
+  return score ? `${name} · ${Math.round(score.score)}` : name;
+}
+
+function CropFieldEditor({
+  object,
+  updateObject,
+  optionScores,
+}: {
+  object: Extract<FarmV2Object, { type: "cropField" }>;
+  updateObject: (id: string, updater: (object: FarmV2Object) => FarmV2Object) => void;
+  optionScores: StatOptionScores | null;
+}) {
+  const crops = rankedCatalogItems(farmV2Catalog.crops, optionScores?.plant_options ?? [], (crop) => [crop.key, crop.name]);
+  const selectedScore = optionScoreFor(optionScores?.plant_options ?? [], [object.attrs.cropKey ?? "", object.attrs.cropName ?? ""]);
+
   return (
     <>
       <label className="farmv2-detail-item"><span>Crop</span><select value={object.attrs.cropKey ?? ""} onChange={(event) => {
@@ -842,26 +972,47 @@ function CropFieldEditor({ object, updateObject }: { object: Extract<FarmV2Objec
         } : current);
       }}>
         <option value="">Unassigned</option>
-        {farmV2Catalog.crops.map((crop) => <option key={crop.key} value={crop.key}>{crop.name}</option>)}
+        {crops.map((crop) => {
+          const score = optionScoreFor(optionScores?.plant_options ?? [], [crop.key, crop.name]);
+          return <option key={crop.key} value={crop.key}>{optionLabel(crop.name, score)}</option>;
+        })}
       </select></label>
       <label className="farmv2-detail-item"><span>Count</span><input type="number" min="0" value={object.attrs.count ?? 0} onChange={(event) => updateObject(object.id, (current) => current.type === "cropField" ? { ...current, attrs: { ...current.attrs, count: Math.max(0, Number(event.target.value) || 0) } } : current)} /></label>
+      <Detail label="Model score" value={selectedScore ? `${Math.round(selectedScore.score)}/100 · rank ${selectedScore.rank}` : "Unscored"} />
+      <Detail label="Why" value={selectedScore?.reasons[0] ?? "Select a crop"} />
       <Detail label="Parent" value={object.parentId ?? "None"} />
     </>
   );
 }
 
-function LivestockEditor({ object, updateObject }: { object: Extract<FarmV2Object, { type: "livestock" }>; updateObject: (id: string, updater: (object: FarmV2Object) => FarmV2Object) => void }) {
+function LivestockEditor({
+  object,
+  updateObject,
+  optionScores,
+}: {
+  object: Extract<FarmV2Object, { type: "livestock" }>;
+  updateObject: (id: string, updater: (object: FarmV2Object) => FarmV2Object) => void;
+  optionScores: StatOptionScores | null;
+}) {
+  const livestock = rankedCatalogItems(farmV2Catalog.livestock, optionScores?.animal_options ?? [], (item) => [item.key, item.name]);
   const animal = farmV2Catalog.livestock.find((item) => item.name === object.attrs.species) ?? farmV2Catalog.livestock[0];
+  const selectedScore = optionScoreFor(optionScores?.animal_options ?? [], [object.attrs.species, animal.key, animal.name]);
+
   return (
     <>
       <label className="farmv2-detail-item"><span>Species</span><select value={object.attrs.species} onChange={(event) => {
         const next = farmV2Catalog.livestock.find((item) => item.name === event.target.value) ?? farmV2Catalog.livestock[0];
         updateObject(object.id, (current) => current.type === "livestock" ? { ...current, label: `${next.name} Paddock`, attrs: { ...current.attrs, species: next.name, breed: next.breed, count: next.defaultCount } } : current);
-      }}>{farmV2Catalog.livestock.map((item) => <option key={item.key} value={item.name}>{item.name}</option>)}</select></label>
+      }}>{livestock.map((item) => {
+        const score = optionScoreFor(optionScores?.animal_options ?? [], [item.key, item.name]);
+        return <option key={item.key} value={item.name}>{optionLabel(item.name, score)}</option>;
+      })}</select></label>
       <label className="farmv2-detail-item"><span>Breed</span><select value={object.attrs.breed} onChange={(event) => {
         updateObject(object.id, (current) => current.type === "livestock" ? { ...current, attrs: { ...current.attrs, breed: event.target.value } } : current);
       }}>{animal.breeds.map((breed) => <option key={breed} value={breed}>{breed}</option>)}</select></label>
       <label className="farmv2-detail-item"><span>Headcount</span><input type="number" min="0" value={object.attrs.count ?? 0} onChange={(event) => updateObject(object.id, (current) => current.type === "livestock" ? { ...current, attrs: { ...current.attrs, count: Math.max(0, Number(event.target.value) || 0) } } : current)} /></label>
+      <Detail label="Model score" value={selectedScore ? `${Math.round(selectedScore.score)}/100 · rank ${selectedScore.rank}` : "Unscored"} />
+      <Detail label="Why" value={selectedScore?.reasons[0] ?? "Select a species"} />
     </>
   );
 }
@@ -1794,6 +1945,7 @@ function FarmV2Styles() {
       .farmv2-row > button{height:30px;padding:0 10px;font-size:10px;min-width:auto}
       .farmv2-panel-header input,.farmv2-detail-item select,.farmv2-detail-item input,.farmv2-commit-form input{border:2px solid #c9b88a;border-radius:0;background:#fffdf5;color:#365833;box-shadow:inset 0 2px 0 rgba(255,255,255,.65);font-weight:800;outline:none}.farmv2-panel-header input:focus,.farmv2-detail-item select:focus,.farmv2-detail-item input:focus,.farmv2-commit-form input:focus{border-color:#8b6f3e;background:#fff8dc}
       .farmv2-timeline input[type=range]{accent-color:#8b6f3e}.farmv2-marker-row button{color:#5e4a26;border-color:#c9b88a;background:#fffdf5;box-shadow:0 2px 0 #b29c66}.farmv2-commit-form input::placeholder{color:#9a8a66}
+      .farmv2-model-status{display:inline-flex;align-items:center;min-height:28px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:2px solid #c9b88a;background:#fffdf5;color:#365833;padding:0 8px;font-family:var(--font-geist-mono),ui-monospace,monospace;font-size:10px;font-weight:900;letter-spacing:0;text-transform:uppercase}.farmv2-model-status.error{border-color:#9b3b2f;color:#8b3d22;background:#fff1ea}
       .farmv2-map-tools button{background:#fffdf5;color:#5e4a26}.farmv2-choice-grid button{border-color:#3b2a14;background:#fffdf5;color:#2d2313;box-shadow:0 3px 0 #3b2a14}.farmv2-choice-grid button strong{font-family:var(--font-geist-mono),ui-monospace,monospace;font-size:13px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:#34432b}.farmv2-choice-grid button span{color:#746850;font-family:var(--font-geist-sans),ui-sans-serif,system-ui,sans-serif;font-size:13px;font-weight:700;letter-spacing:0;text-transform:none}
       .farmv2-danger{border-color:#9b3b2f!important;background:#fff1ea!important;color:#8b3d22!important;box-shadow:0 2px 0 #6f2a22!important}.farmv2-danger:hover{background:#ffd7cf!important;color:#5a1d16!important}
       @media(max-width:940px){.farmv2-topbar{flex-wrap:wrap}.farmv2-brand{width:100%}.farmv2-toolbar-right{margin-left:0}.farmv2-panel{top:auto;right:12px;bottom:12px;max-height:45%}.farmv2-onboarding-card{grid-template-columns:1fr}.farmv2-wizard-copy{border-right:0;border-bottom:1px solid var(--border)}}@media(max-width:660px){.farmv2-toolbar{flex-wrap:wrap}.farmv2-topbar{max-height:45vh;overflow:auto}.farmv2-timeline{grid-template-columns:1fr}.farmv2-marker-row,.farmv2-commit-form{grid-column:1;grid-row:auto}}

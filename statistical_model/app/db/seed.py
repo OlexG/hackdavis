@@ -1,4 +1,6 @@
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 from pymongo.database import Database
 
@@ -108,6 +110,7 @@ def seed_database(db: Database) -> None:
         crop("broccoli", "Broccoli", "brassicaceae", "cartons_per_acre", "carton", 740, 570, 900, 13.5, 10.5, 17.5, 3, 10, 18, 11),
     ]
     upsert_many(db.crops, crops)
+    seed_option_catalogs(db, now)
 
     rotation_rules = [
         {"_id": "rot_solanaceae", "crop_family": "solanaceae", "lookback_years": 3, "max_same_family_count": 0, "source": seed_source(now), "updated_at": now},
@@ -345,3 +348,53 @@ def fert(nutrient: str, product: str, price: float, unit: str, now: datetime) ->
 def upsert_many(collection, docs: list[dict]) -> None:
     for doc in docs:
         collection.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+
+
+def seed_option_catalogs(db: Database, now: datetime) -> None:
+    data_dir = Path(__file__).resolve().parents[2] / "data"
+    plant_path = data_dir / "plants-data.json"
+    livestock_path = data_dir / "livestock-data.json"
+
+    if plant_path.exists():
+        plants = []
+        for raw in json.loads(plant_path.read_text()):
+            crop_id = raw.get("crop_id")
+            if not crop_id:
+                continue
+            plants.append({
+                "_id": crop_id,
+                **raw,
+                "units": {
+                    "ideal_space": "square_feet",
+                    "water_consumption": "milliliters_per_plant_or_unit",
+                    "rainfall_max": "millimeters_per_season",
+                    "temperature": "celsius",
+                    "soil_depth": "centimeters",
+                    "carbon_saved": "grams",
+                },
+                "source": {"name": "local_plants_catalog", "confidence": "demo"},
+                "updated_at": now,
+            })
+        upsert_many(db.plants, plants)
+
+    if livestock_path.exists():
+        livestock = []
+        animals = []
+        for raw in json.loads(livestock_path.read_text()):
+            livestock_id = raw.get("livestock_id")
+            if not livestock_id:
+                continue
+            doc = {
+                "_id": livestock_id,
+                **raw,
+                "units": {
+                    "ideal_space": "square_feet_per_head",
+                    "meat_yield": "kilograms_per_head",
+                },
+                "source": {"name": "local_livestock_catalog", "confidence": "demo"},
+                "updated_at": now,
+            }
+            livestock.append(doc)
+            animals.append({**doc, "_id": f"animal_{livestock_id}", "animal_id": livestock_id})
+        upsert_many(db.livestock, livestock)
+        upsert_many(db.animals, animals)

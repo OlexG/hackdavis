@@ -3,7 +3,9 @@ from fastapi import FastAPI, HTTPException
 from app.core.config import get_settings
 from app.db.indexes import ensure_indexes
 from app.db.mongo import get_db
+from app.models.option_scoring import score_all_options
 from app.optimization.optimizer import run_optimization
+from app.schemas.options import OptionScoreRequest, OptionScoreResponse
 from app.schemas.run import RunRequest, RunResponse
 
 app = FastAPI(
@@ -66,6 +68,24 @@ def create_run(request: RunRequest) -> RunResponse:
     )
 
 
+@app.post("/v1/options/score", response_model=OptionScoreResponse)
+def score_options(request: OptionScoreRequest) -> dict:
+    try:
+        return score_all_options(
+            db=get_db(),
+            farm_id=request.farm_id,
+            season_year=request.season_year,
+            scenario_count=request.scenario_count,
+            random_seed=request.random_seed,
+            risk_tolerance=request.risk_tolerance,
+            farm_area_acres=request.farm_area_acres,
+            location=request.location,
+            current_plan=request.current_plan,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/v1/runs/{run_id}")
 def get_run(run_id: str) -> dict:
     db = get_db()
@@ -96,4 +116,3 @@ def get_allocation(run_id: str) -> dict:
 def get_features(run_id: str, limit: int = 100) -> dict:
     docs = list(get_db().feature_snapshots.find({"run_id": run_id}, {"_id": 0}).limit(min(limit, 500)))
     return {"run_id": run_id, "features": docs}
-
