@@ -946,36 +946,26 @@ async function ensureFarmForUser({
 }) {
   const db = await getMongoDb();
 
-  await db.collection("farms").createIndex({ userId: 1 }, { unique: true });
-  await db.collection("farms").createIndex({ userUuid: 1 });
-  await db.collection("farms").createIndex({ location: "2dsphere" });
-
   const shopName = details.shopName || displayName;
   const pickupCoords = details.pickupCoords;
 
-  // Build location from pickup coordinates if available.
-  const location = pickupCoords
-    ? { type: "Point" as const, coordinates: [pickupCoords.lng, pickupCoords.lat] as [number, number] }
-    : undefined;
-
-  const coordinates = pickupCoords
-    ? { latitude: pickupCoords.lat, longitude: pickupCoords.lng, x: 50, y: 50 }
-    : undefined;
+  // Build location from pickup coordinates if available, otherwise use a
+  // default so the farm appears in marketplace queries that filter on location.
+  const defaultCoords = { lat: 38.5449, lng: -121.7405 }; // Davis, CA center
+  const coords = pickupCoords ?? defaultCoords;
+  const location = { type: "Point" as const, coordinates: [coords.lng, coords.lat] as [number, number] };
+  const coordinates = { latitude: coords.lat, longitude: coords.lng, x: 50, y: 50 };
 
   const updateFields: Record<string, unknown> = {
     userId,
     userUuid,
     name: shopName,
+    location,
+    coordinates,
     units: "feet" as const,
     bounds: { width: 100, height: 100 },
     updatedAt: now,
   };
-
-  // Only set location fields if we have coordinates.
-  if (location) {
-    updateFields.location = location;
-    updateFields.coordinates = coordinates;
-  }
 
   if (details.pickupLocation) {
     updateFields.neighborhood = details.pickupLocation;
@@ -985,13 +975,17 @@ async function ensureFarmForUser({
     updateFields.response = details.hours;
   }
 
+  // Use userUuid + isShopFarm flag to find/create the shop-specific farm doc.
+  // Users may have other farm docs from the farm planner, so we don't use a
+  // unique index on userId.
   await db.collection<Farm>("farms").updateOne(
-    { userId },
+    { userUuid, isShopFarm: true },
     {
       $set: updateFields,
       $setOnInsert: {
         _id: new ObjectId(),
-        slug: userUuid,
+        slug: `shop-${userUuid}`,
+        isShopFarm: true,
         rating: 5,
         reviews: 0,
         ratings: { quality: 5, fairness: 5, pickup: 5 },

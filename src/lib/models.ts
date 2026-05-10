@@ -281,6 +281,7 @@ export type Farm = {
     icon: string;
     color: string;
   }>;
+  isShopFarm?: boolean;
   sortOrder?: number;
   units: "meters" | "feet";
   bounds: ObjectSize;
