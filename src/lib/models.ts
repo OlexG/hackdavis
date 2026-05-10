@@ -64,9 +64,11 @@ export type CatalogItem = {
 
 export type User = {
   _id: ObjectId;
+  uuid: string;
   email: string;
   username?: string;
   passwordHash: string;
+  pushTokens?: string[];
   role: "user" | "admin";
   createdAt: Date;
   updatedAt: Date;
@@ -126,6 +128,7 @@ export type InventoryItem = {
 
 export type ShopDisplaySlot = {
   inventoryItemId: ObjectId;
+  listingId: string;
   position: number;
   displayAmount: number;
   displayUnit: string;
@@ -134,6 +137,26 @@ export type ShopDisplaySlot = {
   visible: boolean;
   imageId?: ObjectId;
   imageMimeType?: string;
+};
+
+export type ShopOffering = {
+  _id: ObjectId;
+  listingId: string;
+  userId: ObjectId;
+  userUuid: string;
+  inventoryItemId: ObjectId;
+  name: string;
+  category: InventoryCategory;
+  amount: number;
+  unit: string;
+  priceCents: number;
+  signText: string;
+  visible: boolean;
+  position: number;
+  imageId?: ObjectId;
+  imageMimeType?: string;
+  createdAt: Date;
+  updatedAt: Date;
 };
 
 export type ShopHoursSchedule = {
@@ -203,12 +226,224 @@ export type FarmReview = {
   updatedAt: Date;
 };
 
-export type Farm = {
+export type SocialOfferStatus = "sent" | "accepted" | "declined" | "cancelled";
+
+export type SocialOffer = {
+  _id: ObjectId;
+  farmUserId: ObjectId;
+  senderUserId: ObjectId;
+  senderName: string;
+  inventoryItemId?: ObjectId;
+  itemName: string;
+  quantity: string;
+  priceCents?: number;
+  message: string;
+  status: SocialOfferStatus;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type PushDeviceToken = {
   _id: ObjectId;
   userId: ObjectId;
+  token: string;
+  platform?: string;
+  deviceName?: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type Farm = {
+  _id: ObjectId;
+  userId?: ObjectId;
+  userUuid?: string;
+  slug?: string;
   name: string;
+  shortName?: string;
+  distance?: string;
+  neighborhood?: string;
+  response?: string;
+  rating?: number;
+  reviews?: number;
+  ratings?: {
+    quality: number;
+    fairness: number;
+    pickup: number;
+  };
+  offerings?: Array<{
+    slug: string;
+    name: string;
+    category: string;
+    amount: number;
+    unit: string;
+    priceCents: number;
+    signText: string;
+    icon: string;
+    color: string;
+  }>;
+  sortOrder?: number;
   units: "meters" | "feet";
   bounds: ObjectSize;
+  location?: {
+    type: "Point";
+    coordinates: [number, number];
+  };
+  coordinates?: {
+    latitude: number;
+    longitude: number;
+    x?: number;
+    y?: number;
+  };
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type OfferNotification = {
+  _id: ObjectId;
+  type: "offer";
+  status: "pending" | "accepted" | "declined";
+  listingId: string;
+  offeringName: string;
+  farmId?: ObjectId;
+  farmName?: string;
+  recipientUserUuid: string;
+  actorUserUuid: string;
+  actorName: string;
+  mode: "cash" | "barter";
+  cashOfferCents?: number;
+  barterListingIds?: string[];
+  note?: string;
+  pushEvents?: {
+    offerMadeAt?: Date;
+    offerAcceptedAt?: Date;
+  };
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type LocalPoint = [number, number];
+
+export type GeoPoint = [number, number];
+
+export type FarmV2ObjectType = "cropArea" | "cropField" | "livestock" | "structure" | "path";
+
+export type FarmV2BaseObject = {
+  id: string;
+  label: string;
+  type: FarmV2ObjectType;
+  attrs: Record<string, string | number | boolean | null | undefined>;
+};
+
+export type FarmV2CropAreaObject = FarmV2BaseObject & {
+  type: "cropArea";
+  polygon: LocalPoint[];
+  height: number;
+};
+
+export type FarmV2CropFieldObject = FarmV2BaseObject & {
+  type: "cropField";
+  parentId: string | null;
+  polygon: LocalPoint[];
+  height: number;
+  attrs: {
+    status: string;
+    planted?: string;
+    soil?: string;
+    rows?: number;
+    cropKey?: string | null;
+    cropName?: string;
+    count?: number;
+    visual?: string;
+    growth?: number;
+  };
+};
+
+export type FarmV2LivestockObject = FarmV2BaseObject & {
+  type: "livestock";
+  polygon: LocalPoint[];
+  height: number;
+  attrs: {
+    species: string;
+    breed: string;
+    count: number;
+    status: string;
+  };
+};
+
+export type FarmV2StructureObject = FarmV2BaseObject & {
+  type: "structure";
+  polygon: LocalPoint[];
+  height: number;
+  attrs: {
+    kind: string;
+    height?: number;
+    material: string;
+    status: string;
+  };
+};
+
+export type FarmV2PathObject = FarmV2BaseObject & {
+  type: "path";
+  points: LocalPoint[];
+  attrs: {
+    status: string;
+    material: string;
+  };
+};
+
+export type FarmV2Object =
+  | FarmV2CropAreaObject
+  | FarmV2CropFieldObject
+  | FarmV2LivestockObject
+  | FarmV2StructureObject
+  | FarmV2PathObject;
+
+export type FarmV2Commit = {
+  id: string;
+  timestamp: Date;
+  name: string;
+  autoName: string;
+  objects: FarmV2Object[];
+};
+
+export type FarmV2Plan = {
+  _id: ObjectId;
+  farmId: ObjectId;
+  userId: ObjectId;
+  schema: "farmv2";
+  version: 8;
+  name: string;
+  status: "draft" | "active" | "archived";
+  units: "ft" | "m";
+  view: "grid" | "satellite";
+  selectedId?: string | null;
+  camera: {
+    zoom: number;
+    panX: number;
+    panY: number;
+    rotation: number;
+  };
+  boundary: {
+    source: "map" | "demo";
+    geo: GeoPoint[] | null;
+    local: LocalPoint[];
+    areaSquareFeet: number;
+  };
+  objects: FarmV2Object[];
+  commits: FarmV2Commit[];
+  commitIndex: number;
+  summary: {
+    description: string;
+    highlights: string[];
+    maintenanceLevel: "low" | "medium" | "high";
+  };
+  generation: {
+    mode: "manual" | "deterministic-draft";
+    strategy: string;
+    prompt: string;
+    constraints: Record<string, unknown>;
+    score: number;
+  };
   createdAt: Date;
   updatedAt: Date;
 };

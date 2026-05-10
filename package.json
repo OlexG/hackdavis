@@ -13,6 +13,7 @@
     "farm:publish": "npm run farm:build && rm -rf public/farm-manager && mkdir -p public/farm-manager && cp -R farmManager/dist public/farm-manager/dist",
     "db:seed": "node scripts/seed.mjs",
     "db:seed:marketplace": "node scripts/seed-marketplace.mjs",
+    "db:consolidate": "node scripts/consolidate-mongo.mjs",
     "db:seed:plants": "node scripts/seed-plants.mjs"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "leaflet": "^1.9.4",
+    "maplibre-gl": "^5.24.0",
     "mongodb": "^7.2.0",
     "next": "16.2.6",
     "react": "19.2.4",

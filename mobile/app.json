@@ -14,7 +14,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.sunpatch.market"
+      "bundleIdentifier": "com.sunpatch.market",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Sunpatch uses the camera so you can photograph produce for your shopfront.",
+        "NSPhotoLibraryUsageDescription": "Sunpatch uses your photo library so you can choose produce photos for your shopfront."
+      }
     },
     "android": {
       "edgeToEdgeEnabled": true,
@@ -27,6 +31,16 @@
     "web": {
       "bundler": "metro",
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-notifications",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Sunpatch uses the camera so you can photograph produce for your shopfront.",
+          "photosPermission": "Sunpatch uses your photo library so you can choose produce photos for your shopfront."
+        }
+      ]
+    ]
   }
 }

@@ -119,16 +119,16 @@ function iconForOutput(output: InventoryPlanOutput) {
   const name = `${output.name} ${output.source}`.toLowerCase();
 
   if (name.includes("tomato")) {
-    return "/inventory-icons/tomato.png";
+    return "/inventory-icons/plants/tomato.png";
   }
 
   if (name.includes("lettuce")) {
-    return "/inventory-icons/lettuce.png";
+    return "/inventory-icons/plants/lettuce.png";
   }
 
   if (name.includes("egg") || output.category === "livestock") {
-    return "/inventory-icons/egg.png";
+    return "/inventory-icons/animals/chickens.png";
   }
 
-  return output.category === "produce" ? "/inventory-icons/pea-pod.png" : "/inventory-icons/corn.png";
+  return output.category === "produce" ? "/inventory-icons/plants/peas.png" : "/inventory-icons/plants/corn.png";
 }

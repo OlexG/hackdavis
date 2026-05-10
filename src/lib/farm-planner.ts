@@ -146,7 +146,7 @@ const fallbackQuad: GeometryPoint[] = [
   { x: 12, y: 82 },
 ];
 
-const iconPath = "/inventory-icons/";
+const iconPath = "/inventory-icons/plants/";
 
 const palette: Record<PlanTileType, string> = {
   tomato: "#6e9f45",
@@ -1149,21 +1149,23 @@ function iconFor(tileType: PlanTileType) {
     tomato: "tomato.png",
     lettuce: "lettuce.png",
     corn: "corn.png",
-    potato: "potato.png",
-    strawberry: "strawberry.png",
-    pea: "pea-pod.png",
+    potato: "potatoes.png",
+    strawberry: "strawberries.png",
+    pea: "peas.png",
     mushroom: "mushroom.png",
-    herb: "lettuce.png",
-    pollinator: "strawberry.png",
-    chicken: "egg.png",
-    goat: "hammer.png",
-    storage: "hammer.png",
-    greenhouse: "hammer.png",
-    compost: "hammer.png",
-    path: "hammer.png",
+    herb: "basil.png",
+    pollinator: "sunflower.png",
+    chicken: "/inventory-icons/animals/chickens.png",
+    goat: "/inventory-icons/animals/goats.png",
+    storage: "/inventory-icons/materials/hammer.png",
+    greenhouse: "/inventory-icons/materials/hammer.png",
+    compost: "/inventory-icons/materials/hammer.png",
+    path: "/inventory-icons/materials/hammer.png",
   };
 
-  return `${iconPath}${icons[tileType] ?? "seed-packet.png"}`;
+  const icon = icons[tileType];
+  if (icon && icon.startsWith("/")) return icon;
+  return `${iconPath}${icon ?? "seed-packet.png"}`;
 }
 
 function adjustWaterNeed(waterNeed: PlanTile["waterNeed"], weatherProfile: FarmPlannerInput["weatherProfile"]) {

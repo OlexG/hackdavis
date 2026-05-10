@@ -6,12 +6,19 @@ import { PixelGlyph, PixelIcon } from "../_components/icons";
 import { PublicShopfrontPreview } from "../shop/shop-board";
 import { FarmsLeafletMap } from "./farms-leaflet-map";
 import type { ShopDisplaySlotView } from "@/lib/shop";
-import type { SocialFarmCard, SocialFarmReview, SocialSnapshot } from "@/lib/social";
+import type { SocialFarmCard, SocialFarmReview, SocialOfferView, SocialSnapshot } from "@/lib/social";
 
 type ReviewDraft = {
   reviewerName: string;
   rating: number;
   comment: string;
+};
+
+type OfferDraft = {
+  inventoryItemId: string;
+  quantity: string;
+  price: string;
+  message: string;
 };
 
 type SocialView = "list" | "map";
@@ -20,6 +27,7 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [view, setView] = useState<SocialView>("list");
   const [farms, setFarms] = useState(snapshot.farms);
+  const [selectedOfferSlot, setSelectedOfferSlot] = useState<ShopDisplaySlotView | null>(null);
   const selectedFarm = selectedUserId
     ? farms.find((farm) => farm.userId === selectedUserId)
     : undefined;
@@ -80,7 +88,10 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <button
             type="button"
-            onClick={() => setSelectedUserId(null)}
+            onClick={() => {
+              setSelectedUserId(null);
+              setSelectedOfferSlot(null);
+            }}
             className="flex h-9 items-center gap-2 rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] px-3 font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#5e4a26] shadow-[0_2px_0_#3b2a14] transition hover:bg-[#fff3cf] active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14]"
           >
             <PixelGlyph name="basket" className="size-4" />
@@ -96,7 +107,16 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
           </div>
         </div>
 
-        <PublicShopfrontPreview snapshot={selectedFarm.snapshot} />
+        <PublicShopfrontPreview
+          snapshot={selectedFarm.snapshot}
+          selectedSlotId={selectedOfferSlot?.inventoryItemId}
+          onSlotSelect={setSelectedOfferSlot}
+        />
+        <OfferPanel
+          key={selectedOfferSlot?.inventoryItemId ?? "no-offer-slot"}
+          farm={selectedFarm}
+          selectedSlot={selectedOfferSlot}
+        />
         <ReviewPanel
           farm={selectedFarm}
           onReviewPosted={(review, created) => addReview(selectedFarm.userId, review, created)}
@@ -145,7 +165,10 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
                 key={farm.userId}
                 farm={farm}
                 selected={false}
-                onSelect={() => setSelectedUserId(farm.userId)}
+                onSelect={() => {
+                  setSelectedUserId(farm.userId);
+                  setSelectedOfferSlot(null);
+                }}
               />
             ))}
           </div>
@@ -153,7 +176,10 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
           <FarmsMapView
             farms={farmsWithCoords}
             allFarmsCount={farms.length}
-            onSelect={(userId) => setSelectedUserId(userId)}
+            onSelect={(userId) => {
+              setSelectedUserId(userId);
+              setSelectedOfferSlot(null);
+            }}
           />
         )}
       </section>
@@ -228,6 +254,123 @@ function FarmCard({
         </span>
       </div>
     </button>
+  );
+}
+
+function OfferPanel({ farm, selectedSlot }: { farm: SocialFarmCard; selectedSlot: ShopDisplaySlotView | null }) {
+  const [draft, setDraft] = useState<OfferDraft>({
+    inventoryItemId: selectedSlot?.inventoryItemId ?? "",
+    quantity: selectedSlot ? `${selectedSlot.displayAmount} ${selectedSlot.displayUnit}` : "",
+    price: selectedSlot ? (selectedSlot.priceCents / 100).toFixed(2) : "",
+    message: selectedSlot ? `Hi, I would like to make an offer for ${selectedSlot.item.name}.` : "",
+  });
+  const [status, setStatus] = useState<"idle" | "saving" | "sent" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  async function submitOffer() {
+    setStatus("saving");
+    setError(null);
+
+    try {
+      const response = await fetch("/api/social/offers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          farmUserId: farm.userId,
+          inventoryItemId: selectedSlot?.inventoryItemId,
+          itemName: selectedSlot?.item.name ?? farm.farmName,
+          quantity: draft.quantity,
+          priceCents: draft.price ? Math.round(Number(draft.price) * 100) : undefined,
+          message: draft.message,
+        }),
+      });
+      const data = (await response.json()) as { offer?: SocialOfferView; notificationSent?: boolean; error?: string };
+
+      if (!response.ok || !data.offer) {
+        throw new Error(data.error ?? "Unable to send offer");
+      }
+
+      setStatus("sent");
+      setDraft((current) => ({ ...current, message: "", quantity: "", price: "" }));
+    } catch (offerError) {
+      setStatus("error");
+      setError(offerError instanceof Error ? offerError.message : "Unable to send offer");
+    }
+  }
+
+  return (
+    <section
+      style={{ ["--pixel-frame-bg" as string]: "#fbf6e8" }}
+      className="pixel-frame overflow-hidden rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] shadow-[0_4px_0_#3b2a14]"
+    >
+      <div className="pixel-gradient-sell flex flex-wrap items-center gap-2 border-b-2 border-[#3b2a14] px-3 py-2">
+        <PixelGlyph name="wagon" className="size-5 text-[#245c65]" />
+        <h2 className="font-mono text-sm font-black uppercase tracking-[0.14em] text-[#245c65]">
+          Send an offer
+        </h2>
+        <span className="ml-auto rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] px-2 py-0.5 font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#245c65] shadow-[0_1px_0_#3b2a14]">
+          Notifies seller
+        </span>
+      </div>
+
+      <div className="grid gap-2 bg-[#fcf6e4] p-3">
+        {!selectedSlot ? (
+          <p className="rounded-none border-2 border-dashed border-[#c9b88a] bg-[#fffdf5] p-3 text-sm font-semibold text-[#7a6843]">
+            Click a produce card in the shopfront above to start an offer.
+          </p>
+        ) : (
+          <>
+            <div className="grid gap-2 sm:grid-cols-[1fr_140px_120px]">
+              <div className="min-w-0 rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] px-2 py-2">
+                <div className="truncate text-sm font-black text-[#2d311f]">{selectedSlot.item.name}</div>
+                <div className="font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#7a6843]">
+                  Selected from shopfront
+                </div>
+              </div>
+              <input
+                value={draft.quantity}
+                onChange={(event) => setDraft((current) => ({ ...current, quantity: event.target.value }))}
+                placeholder="Quantity"
+                className="h-10 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
+              />
+              <input
+                value={draft.price}
+                onChange={(event) => setDraft((current) => ({ ...current, price: event.target.value }))}
+                inputMode="decimal"
+                placeholder="$"
+                className="h-10 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
+              />
+            </div>
+            <textarea
+              value={draft.message}
+              onChange={(event) => setDraft((current) => ({ ...current, message: event.target.value }))}
+              placeholder="Write a note for the seller"
+              rows={3}
+              className="min-h-20 resize-y rounded-none border-2 border-[#c9b88a] bg-white px-2 py-2 text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
+            />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className={`font-mono text-[10px] font-black uppercase tracking-[0.1em] ${
+                status === "error" ? "text-[#a8761c]" : "text-[#7a6843]"
+              }`}>
+                {status === "saving"
+                  ? "Sending offer"
+                  : status === "sent"
+                    ? "Offer sent"
+                    : error ?? "The seller gets a mobile notification when possible"}
+              </p>
+              <button
+                type="button"
+                onClick={submitOffer}
+                disabled={status === "saving"}
+                className="rounded-none border-2 border-[#3b2a14] bg-[#7da854] px-3 py-1.5 font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#fffdf5] shadow-[0_2px_0_#3b2a14] transition hover:bg-[#9bc278] active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14] disabled:opacity-60"
+              >
+                {status === "saving" ? "Sending" : "Send offer"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
   );
 }
 

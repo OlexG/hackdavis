@@ -11,8 +11,10 @@ import type {
   ShopDisplay,
   ShopDisplayDetails,
   ShopDisplaySlot,
+  SocialOffer,
   User,
 } from "@/lib/models";
+import { sendOfferNotification } from "@/lib/notifications";
 import type { InventoryViewItem } from "@/lib/inventory";
 import type { ShopDisplaySlotView, ShopSnapshot } from "@/lib/shop";
 
@@ -57,6 +59,36 @@ export type CreateFarmReviewResult = {
   review: SocialFarmReview;
   created: boolean;
 };
+
+export type SocialOfferView = {
+  id: string;
+  farmUserId: string;
+  senderUserId: string;
+  senderName: string;
+  inventoryItemId?: string;
+  itemName: string;
+  quantity: string;
+  priceCents?: number;
+  message: string;
+  status: SocialOffer["status"];
+  createdAt: string;
+};
+
+export type CreateSocialOfferInput = {
+  farmUserId: string;
+  inventoryItemId?: string;
+  itemName: string;
+  quantity: string;
+  priceCents?: number;
+  message: string;
+};
+
+export type CreateSocialOfferResult = {
+  offer: SocialOfferView;
+  notificationSent: boolean;
+};
+
+export type SocialOfferBox = "inbox" | "sent";
 
 export async function getSocialSnapshot(): Promise<SocialSnapshot> {
   try {
@@ -125,6 +157,7 @@ export async function getSocialSnapshot(): Promise<SocialSnapshot> {
           snapshot: {
             userEmail: user.email,
             displayName,
+            isPublished: Boolean(display),
             theme: display.theme,
             layoutMode: display.layoutMode,
             details: normalizePublicDetails(display.details, displayName),
@@ -223,6 +256,132 @@ export async function createFarmReview(input: CreateFarmReviewInput): Promise<Cr
   };
 }
 
+export async function createSocialOffer(input: CreateSocialOfferInput): Promise<CreateSocialOfferResult> {
+  if (!ObjectId.isValid(input.farmUserId)) {
+    throw new SocialOfferError("Choose a valid farm for the offer");
+  }
+
+  const db = await getMongoDb();
+  const currentUser = await requireUserSession();
+  const farmUserId = new ObjectId(input.farmUserId);
+
+  if (farmUserId.equals(currentUser.userId)) {
+    throw new SocialOfferError("You cannot send an offer to your own farm");
+  }
+
+  const quantity = normalizeReviewText(input.quantity, 48);
+  const message = normalizeReviewText(input.message, 220);
+  const requestedItemName = normalizeReviewText(input.itemName, 80);
+  const priceCents =
+    typeof input.priceCents === "number" && Number.isFinite(input.priceCents) && input.priceCents >= 0
+      ? Math.round(input.priceCents)
+      : undefined;
+
+  if (!quantity) {
+    throw new SocialOfferError("Add a quantity for the offer");
+  }
+  if (!message || message.length < 8) {
+    throw new SocialOfferError("Write a short offer note");
+  }
+
+  const [targetUser, display, profile] = await Promise.all([
+    db.collection<User>("users").findOne({ _id: farmUserId }),
+    db.collection<ShopDisplay>("shop_displays").findOne({ userId: farmUserId }),
+    db.collection<Profile>("profiles").findOne({ userId: currentUser.userId }),
+  ]);
+
+  if (!targetUser || !display) {
+    throw new SocialOfferError("That public farm was not found");
+  }
+
+  const inventoryItemId =
+    input.inventoryItemId && ObjectId.isValid(input.inventoryItemId)
+      ? new ObjectId(input.inventoryItemId)
+      : undefined;
+  let itemName = requestedItemName;
+
+  if (inventoryItemId) {
+    const item = await db.collection<InventoryItem>("inventory_items").findOne({
+      _id: inventoryItemId,
+      userId: farmUserId,
+      category: { $in: [...sellableCategories] },
+    });
+
+    if (!item) {
+      throw new SocialOfferError("That shop item is no longer available");
+    }
+
+    const visibleSlot = display.slots.some(
+      (slot) => slot.visible && slot.inventoryItemId.equals(inventoryItemId),
+    );
+
+    if (!visibleSlot) {
+      throw new SocialOfferError("That shop item is not currently listed");
+    }
+
+    itemName = item.name;
+  }
+
+  if (!itemName) {
+    throw new SocialOfferError("Choose an item for the offer");
+  }
+
+  const now = new Date();
+  const offer: SocialOffer = {
+    _id: new ObjectId(),
+    farmUserId,
+    senderUserId: currentUser.userId,
+    senderName: profile?.displayName || currentUser.displayName || currentUser.email,
+    ...(inventoryItemId ? { inventoryItemId } : {}),
+    itemName,
+    quantity,
+    ...(priceCents !== undefined ? { priceCents } : {}),
+    message,
+    status: "sent",
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await Promise.all([
+    db.collection<SocialOffer>("social_offers").createIndex({ farmUserId: 1, createdAt: -1 }),
+    db.collection<SocialOffer>("social_offers").createIndex({ senderUserId: 1, createdAt: -1 }),
+  ]);
+  await db.collection<SocialOffer>("social_offers").insertOne(offer);
+
+  const notification = await sendOfferNotification({
+    recipientUserId: farmUserId,
+    senderName: offer.senderName,
+    itemName: offer.itemName,
+    offerId: offer._id.toString(),
+  });
+
+  return {
+    offer: toSocialOfferView(offer),
+    notificationSent: notification.sent > 0,
+  };
+}
+
+export async function getSocialOffers(box: SocialOfferBox = "inbox") {
+  const db = await getMongoDb();
+  const currentUser = await requireUserSession();
+  const selector = box === "sent"
+    ? { senderUserId: currentUser.userId }
+    : { farmUserId: currentUser.userId };
+
+  const offers = await db
+    .collection<SocialOffer>("social_offers")
+    .find(selector)
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .toArray();
+
+  return {
+    offers: offers.map(toSocialOfferView),
+    box,
+    lastUpdated: offers[0]?.updatedAt.toISOString() ?? new Date().toISOString(),
+  };
+}
+
 export class SocialReviewError extends Error {
   constructor(message: string) {
     super(message);
@@ -230,14 +389,28 @@ export class SocialReviewError extends Error {
   }
 }
 
-function byUserId<T extends { userId: ObjectId }>(items: T[]) {
-  return new Map(items.map((item) => [item.userId.toString(), item]));
+export class SocialOfferError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SocialOfferError";
+  }
 }
 
-function groupByUserId<T extends { userId: ObjectId }>(items: T[]) {
+function byUserId<T extends { userId?: ObjectId }>(items: T[]) {
+  return new Map(
+    items
+      .filter((item): item is T & { userId: ObjectId } => item.userId instanceof ObjectId)
+      .map((item) => [item.userId.toString(), item]),
+  );
+}
+
+function groupByUserId<T extends { userId?: ObjectId }>(items: T[]) {
   const groups = new Map<string, T[]>();
 
   for (const item of items) {
+    if (!(item.userId instanceof ObjectId)) {
+      continue;
+    }
     const key = item.userId.toString();
     groups.set(key, [...(groups.get(key) ?? []), item]);
   }
@@ -271,6 +444,7 @@ function buildPublicShopSlots(items: InventoryViewItem[], savedSlots: ShopDispla
     slots.push({
       id: `slot-${item.id}`,
       inventoryItemId: item.id,
+      listingId: savedSlot.listingId ?? item.id,
       position: slots.length,
       displayAmount: savedSlot.displayAmount,
       displayUnit: savedSlot.displayUnit,
@@ -331,6 +505,22 @@ function toSocialReview(review: FarmReview | WithId<FarmReview>): SocialFarmRevi
     comment: review.comment,
     tags: review.tags,
     createdAt: review.createdAt.toISOString(),
+  };
+}
+
+function toSocialOfferView(offer: SocialOffer): SocialOfferView {
+  return {
+    id: offer._id.toString(),
+    farmUserId: offer.farmUserId.toString(),
+    senderUserId: offer.senderUserId.toString(),
+    senderName: offer.senderName,
+    inventoryItemId: offer.inventoryItemId?.toString(),
+    itemName: offer.itemName,
+    quantity: offer.quantity,
+    priceCents: offer.priceCents,
+    message: offer.message,
+    status: offer.status,
+    createdAt: offer.createdAt.toISOString(),
   };
 }
 

@@ -1,8 +1,7 @@
 import "server-only";
 
-import type { ObjectId } from "mongodb";
-
 import { getMongoDb } from "@/lib/mongodb";
+import type { Farm, ShopOffering } from "@/lib/models";
 
 export type MarketCategory =
   | "harvest"
@@ -31,6 +30,8 @@ export type MarketIcon =
 
 export type MarketOffering = {
   id: string;
+  listingId?: string;
+  userUuid?: string;
   name: string;
   category: MarketCategory;
   amount: number;
@@ -63,47 +64,6 @@ export type MarketFarm = {
   };
   ratings: MarketRatingProfile;
   offerings: MarketOffering[];
-};
-
-type FarmDocument = {
-  _id: ObjectId;
-  slug: string;
-  name: string;
-  shortName: string;
-  distance: string;
-  neighborhood: string;
-  response: string;
-  rating: number;
-  reviews: number;
-  // GeoJSON Point: coordinates is [longitude, latitude] per the spec.
-  // 2dsphere-indexable so Mongo can do $near / $geoWithin queries.
-  location: {
-    type: "Point";
-    coordinates: [number, number];
-  };
-  // Legacy lat/lng helpers + the screen-space x/y the mobile UI uses for
-  // the cartoon view. Kept alongside `location` for backwards compatibility.
-  coordinates: {
-    x: number;
-    y: number;
-    latitude: number;
-    longitude: number;
-  };
-  ratings: MarketRatingProfile;
-  offerings: Array<{
-    slug: string;
-    name: string;
-    category: MarketCategory;
-    amount: number;
-    unit: string;
-    priceCents: number;
-    signText: string;
-    icon: MarketIcon;
-    color: string;
-  }>;
-  sortOrder?: number;
-  createdAt: Date;
-  updatedAt: Date;
 };
 
 export type MarketplaceSnapshot = {
@@ -317,15 +277,26 @@ const davisCenter = { latitude: 38.5449, longitude: -121.7405 };
 export async function getMarketplaceSnapshot(): Promise<MarketplaceSnapshot> {
   try {
     const db = await getMongoDb();
-    const docs = await db
-      .collection<FarmDocument>("Farms")
-      .find({})
-      .sort({ sortOrder: 1, name: 1 })
+    const farmDocs = await db
+      .collection<Farm>("farms")
+      .find({ location: { $exists: true } })
+      .sort({ sortOrder: 1, updatedAt: -1, name: 1 })
       .toArray();
+    const userUuidList = farmDocs
+      .map((farm) => farm.userUuid)
+      .filter((uuid): uuid is string => typeof uuid === "string" && uuid.length > 0);
+    const offerings = userUuidList.length
+      ? await db
+          .collection<ShopOffering>("shop_offerings")
+          .find({ userUuid: { $in: userUuidList }, visible: true })
+          .sort({ position: 1, updatedAt: -1 })
+          .toArray()
+      : [];
+    const offeringsByUserUuid = groupOfferingsByUserUuid(offerings);
 
-    const farms = docs.map(toMarketFarm);
+    const farms = farmDocs.map((farm) => toMarketFarm(farm, offeringsByUserUuid.get(farm.userUuid ?? "") ?? []));
     console.log(
-      `[marketplace] returned ${farms.length} farms from Mongo (${dbNameFor(db)}.Farms)`,
+      `[marketplace] returned ${farms.length} farms from Mongo (${dbNameFor(db)}.farms)`,
     );
     return {
       source: "mongodb",
@@ -344,50 +315,135 @@ export async function getMarketplaceSnapshot(): Promise<MarketplaceSnapshot> {
   }
 }
 
+function groupOfferingsByUserUuid(offerings: ShopOffering[]) {
+  const grouped = new Map<string, ShopOffering[]>();
+  for (const offering of offerings) {
+    const current = grouped.get(offering.userUuid) ?? [];
+    current.push(offering);
+    grouped.set(offering.userUuid, current);
+  }
+  return grouped;
+}
+
 function dbNameFor(db: Awaited<ReturnType<typeof getMongoDb>>): string {
   // The mongo Db type exposes its name on `databaseName`.
   return (db as unknown as { databaseName?: string }).databaseName ?? "?";
 }
 
-function toMarketFarm(doc: FarmDocument): MarketFarm {
+function toMarketFarm(doc: Farm, userOfferings: ShopOffering[] = []): MarketFarm {
+  const latitude = doc.coordinates?.latitude ?? doc.location?.coordinates[1] ?? davisCenter.latitude;
+  const longitude = doc.coordinates?.longitude ?? doc.location?.coordinates[0] ?? davisCenter.longitude;
   // Backfill `location` for any legacy docs that pre-date the GeoJSON column.
   const location =
     doc.location ??
     ({
       type: "Point",
-      coordinates: [doc.coordinates.longitude, doc.coordinates.latitude],
+      coordinates: [longitude, latitude],
     } satisfies MarketFarm["location"]);
   // Backfill `coordinates.latitude/longitude` from `location` when only the
   // GeoJSON column is present, so the mobile UI keeps working either way.
   const coordinates = doc.coordinates ?? {
     x: 50,
     y: 50,
-    latitude: location.coordinates[1],
-    longitude: location.coordinates[0],
+    latitude,
+    longitude,
   };
+  const embeddedOfferings = doc.offerings ?? [];
+  const liveOfferings = userOfferings.map(toOfferingFromShopOffering);
+  const shortName = doc.shortName ?? initialsFor(doc.name);
 
   return {
-    id: doc.slug,
+    id: doc.slug ?? doc._id.toString(),
     name: doc.name,
-    shortName: doc.shortName,
-    distance: doc.distance,
-    neighborhood: doc.neighborhood,
-    response: doc.response,
-    rating: doc.rating,
-    reviews: doc.reviews,
+    shortName,
+    distance: doc.distance ?? "Nearby",
+    neighborhood: doc.neighborhood ?? "Community farm",
+    response: doc.response ?? "Offer notifications enabled",
+    rating: doc.rating ?? 5,
+    reviews: doc.reviews ?? 0,
     location,
-    coordinates,
-    ratings: doc.ratings,
-    offerings: doc.offerings.map((offering) => ({
+    coordinates: {
+      x: coordinates.x ?? 50,
+      y: coordinates.y ?? 50,
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+    },
+    ratings: doc.ratings ?? { quality: 5, fairness: 5, pickup: 5 },
+    offerings: [
+      ...embeddedOfferings.map((offering) => ({
       id: offering.slug,
+      userUuid: doc.userUuid,
       name: offering.name,
-      category: offering.category,
+      category: toMarketCategory(offering.category),
       amount: offering.amount,
       unit: offering.unit,
       priceCents: offering.priceCents,
       signText: offering.signText,
-      icon: offering.icon,
+      icon: iconForOfferingNameOrValue(offering.name, offering.icon),
       color: offering.color,
-    })),
+      })),
+      ...liveOfferings,
+    ],
   };
+}
+
+function initialsFor(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "SP";
+}
+
+function toOfferingFromShopOffering(offering: ShopOffering): MarketOffering {
+  return {
+    id: offering.listingId,
+    listingId: offering.listingId,
+    userUuid: offering.userUuid,
+    name: offering.name,
+    category: toMarketCategory(offering.category),
+    amount: offering.amount,
+    unit: offering.unit,
+    priceCents: offering.priceCents,
+    signText: offering.signText,
+    icon: iconForOfferingNameOrValue(offering.name),
+    color: "#4e9f5d",
+  };
+}
+
+function toMarketCategory(category: unknown): MarketCategory {
+  if (category === "harvest" || category === "preserves" || category === "livestock") {
+    return category;
+  }
+  if (category === "seeds" || category === "starts") {
+    return "starts";
+  }
+  return "harvest";
+}
+
+function iconForOfferingNameOrValue(name: string, value?: unknown): MarketIcon {
+  if (
+    value === "corn" ||
+    value === "egg" ||
+    value === "hammer" ||
+    value === "lettuce" ||
+    value === "mushroom" ||
+    value === "pea" ||
+    value === "potato" ||
+    value === "strawberry" ||
+    value === "tomato"
+  ) {
+    return value;
+  }
+
+  const normalized = name.toLowerCase();
+  if (normalized.includes("tomato")) return "tomato";
+  if (normalized.includes("corn")) return "corn";
+  if (normalized.includes("potato")) return "potato";
+  if (normalized.includes("straw") || normalized.includes("berry")) return "strawberry";
+  if (normalized.includes("pea")) return "pea";
+  if (normalized.includes("egg")) return "egg";
+  if (normalized.includes("mushroom") || normalized.includes("compost")) return "mushroom";
+  return "lettuce";
 }

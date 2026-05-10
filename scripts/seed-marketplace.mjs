@@ -222,13 +222,13 @@ const farms = [
 
 async function seed() {
   const client = new MongoClient(uri);
-  const collection = client.db(dbName).collection("Farms");
+  const collection = client.db(dbName).collection("farms");
 
   try {
     await client.connect();
 
     // Unique slug + a 2dsphere index on location so we can do $near later.
-    await collection.createIndex({ slug: 1 }, { unique: true });
+    await collection.createIndex({ slug: 1 }, { unique: true, sparse: true });
     await collection.createIndex({ location: "2dsphere" });
 
     for (const farm of farms) {
@@ -244,7 +244,7 @@ async function seed() {
 
     const total = await collection.countDocuments({});
     console.log(
-      `Upserted ${farms.length} farms into ${dbName}.Farms (total docs in collection: ${total})`,
+      `Upserted ${farms.length} farms into ${dbName}.farms (total docs in collection: ${total})`,
     );
   } finally {
     await client.close();

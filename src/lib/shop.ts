@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { GridFSBucket, ObjectId } from "mongodb";
 import { Readable } from "node:stream";
 import { AuthenticationError, requireUserSession } from "@/lib/auth";
@@ -10,6 +11,7 @@ import type {
   ShopDisplay,
   ShopDisplayDetails,
   ShopDisplaySlot,
+  ShopOffering,
   ShopHoursSchedule,
   ShopPaymentDetails,
   ShopPaymentMethod,
@@ -43,6 +45,7 @@ const detailLimits = {
 export type ShopDisplaySlotView = {
   id: string;
   inventoryItemId: string;
+  listingId: string;
   position: number;
   displayAmount: number;
   displayUnit: string;
@@ -57,6 +60,7 @@ export type ShopDisplaySlotView = {
 export type ShopSnapshot = {
   userEmail: string;
   displayName: string;
+  isPublished: boolean;
   theme: ShopDisplay["theme"];
   layoutMode: ShopDisplay["layoutMode"];
   details: ShopDisplayDetails;
@@ -109,6 +113,7 @@ export type ShopDisplaySavePayload = {
 
 export type ShopDisplaySaveSlot = {
   inventoryItemId: string;
+  listingId?: string;
   position?: number;
   displayAmount?: number;
   displayUnit?: string;
@@ -134,16 +139,23 @@ export async function getShopSnapshot(): Promise<ShopSnapshot> {
     ]);
 
     const sellableItems = inventoryItems.map(toInventoryViewItem);
+    const offerings = await ensureShopOfferingsForItems({
+      inventoryItems,
+      display,
+      userId: currentUser.userId,
+      userUuid: currentUser.uuid,
+    });
 
     const displayName = typeof profile?.displayName === "string" ? profile.displayName : currentUser.displayName;
     return {
       userEmail: currentUser.email,
       displayName,
+      isPublished: Boolean(display),
       theme: "farm-stand",
       layoutMode: "shelves",
       details: normalizeDetails(display?.details, displayName),
       sellableItems,
-      slots: buildShopSlots(sellableItems, display?.slots),
+      slots: buildShopSlots(sellableItems, display?.slots, offerings),
       lastUpdated: newestTimestamp(sellableItems, display?.updatedAt),
     };
   } catch (error) {
@@ -177,6 +189,13 @@ export async function saveShopDisplay({ slots, details }: ShopDisplaySavePayload
   const displayName = typeof profile?.displayName === "string" ? profile.displayName : currentUser.displayName;
   const normalizedDetails = normalizeDetails(details, displayName);
   const now = new Date();
+  await syncShopOfferings({
+    userId: currentUser.userId,
+    userUuid: currentUser.uuid,
+    slots: normalizedSlots,
+    sellableById,
+    now,
+  });
 
   await db.collection("shop_displays").createIndex({ userId: 1 }, { unique: true });
   await db.collection<ShopDisplay>("shop_displays").findOneAndUpdate(
@@ -207,6 +226,7 @@ async function getFallbackShopSnapshot() {
   return {
     userEmail: inventory.userEmail,
     displayName: inventory.displayName,
+    isPublished: false,
     theme: "farm-stand" as const,
     layoutMode: "shelves" as const,
     details: normalizeDetails(undefined, inventory.displayName),
@@ -216,20 +236,26 @@ async function getFallbackShopSnapshot() {
   };
 }
 
-function buildShopSlots(items: InventoryViewItem[], savedSlots: ShopDisplaySlot[] = []) {
+function buildShopSlots(
+  items: InventoryViewItem[],
+  savedSlots: ShopDisplaySlot[] = [],
+  offerings: ShopOffering[] = [],
+) {
   const itemById = new Map(items.map((item) => [item.id, item]));
+  const offeringByItemId = new Map(offerings.map((offering) => [offering.inventoryItemId.toString(), offering]));
   const seen = new Set<string>();
   const slots: ShopDisplaySlotView[] = [];
 
   for (const savedSlot of savedSlots.sort((left, right) => left.position - right.position)) {
     const item = itemById.get(savedSlot.inventoryItemId.toString());
+    const offering = offeringByItemId.get(savedSlot.inventoryItemId.toString());
 
     if (!item || seen.has(item.id)) {
       continue;
     }
 
     seen.add(item.id);
-    slots.push(toShopSlotView(item, savedSlot, slots.length));
+    slots.push(toShopSlotView(item, offering ?? savedSlot, slots.length));
   }
 
   for (const item of items) {
@@ -237,21 +263,32 @@ function buildShopSlots(items: InventoryViewItem[], savedSlots: ShopDisplaySlot[
       continue;
     }
 
-    slots.push(toShopSlotView(item, undefined, slots.length));
+    slots.push(toShopSlotView(item, offeringByItemId.get(item.id), slots.length));
   }
 
   return slots.map((slot, index) => ({ ...slot, position: index }));
 }
 
-function toShopSlotView(item: InventoryViewItem, savedSlot: ShopDisplaySlot | undefined, position: number) {
+function toShopSlotView(item: InventoryViewItem, savedSlot: (ShopDisplaySlot | ShopOffering) | undefined, position: number) {
   const imageId = savedSlot?.imageId?.toString();
+  const displayAmount = savedSlot
+    ? "displayAmount" in savedSlot
+      ? savedSlot.displayAmount
+      : savedSlot.amount
+    : item.quantity.amount;
+  const displayUnit = savedSlot
+    ? "displayUnit" in savedSlot
+      ? savedSlot.displayUnit
+      : savedSlot.unit
+    : item.quantity.unit;
 
   return {
     id: `slot-${item.id}`,
     inventoryItemId: item.id,
+    listingId: savedSlot?.listingId ?? randomUUID(),
     position,
-    displayAmount: clampAmount(savedSlot?.displayAmount ?? item.quantity.amount, item.quantity.amount),
-    displayUnit: savedSlot?.displayUnit || item.quantity.unit,
+    displayAmount: clampAmount(displayAmount, item.quantity.amount),
+    displayUnit: displayUnit || item.quantity.unit,
     priceCents: normalizePrice(savedSlot?.priceCents ?? suggestedPriceCents(item)),
     signText: savedSlot?.signText?.trim() || suggestedSignText(item),
     visible: savedSlot?.visible ?? true,
@@ -457,10 +494,12 @@ function normalizeSaveSlot(
   const imageId = typeof slot.imageId === "string" && ObjectId.isValid(slot.imageId)
     ? new ObjectId(slot.imageId)
     : undefined;
+  const listingId = normalizeListingId(slot.listingId) ?? randomUUID();
   const visible = slot.visible ?? false;
 
   return {
     inventoryItemId: new ObjectId(slot.inventoryItemId),
+    listingId,
     position: Number.isFinite(slot.position) ? Number(slot.position) : index,
     displayAmount: clampAmount(slot.displayAmount ?? item.quantity.amount, item.quantity.amount),
     displayUnit: typeof slot.displayUnit === "string" && slot.displayUnit.trim()
@@ -502,6 +541,138 @@ function toInventoryViewItem(item: InventoryItem): InventoryViewItem {
 
 function isSellableInventoryItem(item: InventoryViewItem) {
   return sellableCategories.includes(item.category as (typeof sellableCategories)[number]);
+}
+
+async function ensureShopOfferingsForItems({
+  inventoryItems,
+  display,
+  userId,
+  userUuid,
+}: {
+  inventoryItems: InventoryItem[];
+  display: ShopDisplay | null;
+  userId: ObjectId;
+  userUuid: string;
+}) {
+  const db = await getMongoDb();
+  const now = new Date();
+  const offerings = db.collection<ShopOffering>("shop_offerings");
+
+  await Promise.all([
+    offerings.createIndex({ listingId: 1 }, { unique: true }),
+    offerings.createIndex({ userUuid: 1, position: 1 }),
+    offerings.createIndex({ userId: 1, inventoryItemId: 1 }, { unique: true }),
+  ]);
+
+  const existing = await offerings
+    .find({ userId, inventoryItemId: { $in: inventoryItems.map((item) => item._id) } })
+    .toArray();
+  const existingByItemId = new Map(existing.map((offering) => [offering.inventoryItemId.toString(), offering]));
+  const displayByItemId = new Map((display?.slots ?? []).map((slot) => [slot.inventoryItemId.toString(), slot]));
+
+  for (const [index, item] of inventoryItems.entries()) {
+    const existingOffering = existingByItemId.get(item._id.toString());
+    const displaySlot = displayByItemId.get(item._id.toString());
+
+    if (existingOffering) {
+      if (existingOffering.userUuid !== userUuid) {
+        await offerings.updateOne(
+          { _id: existingOffering._id },
+          { $set: { userUuid, updatedAt: now } },
+        );
+      }
+      continue;
+    }
+
+    const listingId = normalizeListingId(displaySlot?.listingId) ?? randomUUID();
+    await offerings.insertOne({
+      _id: new ObjectId(),
+      listingId,
+      userId,
+      userUuid,
+      inventoryItemId: item._id,
+      name: item.name,
+      category: item.category,
+      amount: clampAmount(displaySlot?.displayAmount ?? item.quantity.amount, item.quantity.amount),
+      unit: displaySlot?.displayUnit || item.quantity.unit,
+      priceCents: normalizePrice(displaySlot?.priceCents ?? suggestedPriceCents(toInventoryViewItem(item))),
+      signText: displaySlot?.signText || suggestedSignText(toInventoryViewItem(item)),
+      visible: displaySlot?.visible ?? true,
+      position: displaySlot?.position ?? index,
+      ...(displaySlot?.imageId ? { imageId: displaySlot.imageId } : {}),
+      ...(displaySlot?.imageMimeType ? { imageMimeType: displaySlot.imageMimeType } : {}),
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  return offerings
+    .find({ userId, inventoryItemId: { $in: inventoryItems.map((item) => item._id) } })
+    .sort({ position: 1, updatedAt: -1 })
+    .toArray();
+}
+
+async function syncShopOfferings({
+  userId,
+  userUuid,
+  slots,
+  sellableById,
+  now,
+}: {
+  userId: ObjectId;
+  userUuid: string;
+  slots: ShopDisplaySlot[];
+  sellableById: Map<string, InventoryItem>;
+  now: Date;
+}) {
+  const db = await getMongoDb();
+  const offerings = db.collection<ShopOffering>("shop_offerings");
+
+  await Promise.all([
+    offerings.createIndex({ listingId: 1 }, { unique: true }),
+    offerings.createIndex({ userUuid: 1, position: 1 }),
+    offerings.createIndex({ userId: 1, inventoryItemId: 1 }, { unique: true }),
+  ]);
+
+  await Promise.all(slots.map((slot) => {
+    const item = sellableById.get(slot.inventoryItemId.toString());
+    if (!item) {
+      return Promise.resolve();
+    }
+
+    return offerings.updateOne(
+      { userId, inventoryItemId: item._id },
+      {
+        $set: {
+          listingId: slot.listingId,
+          userId,
+          userUuid,
+          inventoryItemId: item._id,
+          name: item.name,
+          category: item.category,
+          amount: slot.displayAmount,
+          unit: slot.displayUnit,
+          priceCents: slot.priceCents,
+          signText: slot.signText,
+          visible: slot.visible,
+          position: slot.position,
+          ...(slot.imageId ? { imageId: slot.imageId } : {}),
+          updatedAt: now,
+        },
+        $setOnInsert: {
+          _id: new ObjectId(),
+          createdAt: now,
+        },
+      },
+      { upsert: true },
+    );
+  }));
+}
+
+function normalizeListingId(value: unknown) {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, 80)
+    : null;
 }
 
 function clampAmount(value: number, available: number) {
@@ -577,17 +748,20 @@ function isShopDisplaySlot(slot: ShopDisplaySlot | null): slot is ShopDisplaySlo
 export type UploadedShopImage = {
   imageId: string;
   imageUrl: string;
+  listingId: string;
   contentType: string;
   size: number;
 };
 
 export async function uploadShopImage({
   inventoryItemId,
+  listingId,
   fileName,
   mimeType,
   bytes,
 }: {
   inventoryItemId: string;
+  listingId?: string;
   fileName: string;
   mimeType: string;
   bytes: Uint8Array;
@@ -616,13 +790,43 @@ export async function uploadShopImage({
     throw new ShopValidationError("Inventory item not found for current user");
   }
 
+  const now = new Date();
+  const normalizedListingId = normalizeListingId(listingId) ?? randomUUID();
+  await db.collection<ShopOffering>("shop_offerings").updateOne(
+    { userId: currentUser.userId, inventoryItemId: item._id },
+    {
+      $set: {
+        listingId: normalizedListingId,
+        userId: currentUser.userId,
+        userUuid: currentUser.uuid,
+        inventoryItemId: item._id,
+        name: item.name,
+        category: item.category,
+        amount: item.quantity.amount,
+        unit: item.quantity.unit,
+        visible: true,
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        _id: new ObjectId(),
+        priceCents: suggestedPriceCents(toInventoryViewItem(item)),
+        signText: suggestedSignText(toInventoryViewItem(item)),
+        position: 0,
+        createdAt: now,
+      },
+    },
+    { upsert: true },
+  );
+
   const bucket = new GridFSBucket(db, { bucketName: shopImagesBucket });
   const uploadStream = bucket.openUploadStream(fileName || "shop-image", {
     metadata: {
       userId: currentUser.userId,
+      userUuid: currentUser.uuid,
+      listingId: normalizedListingId,
       inventoryItemId: item._id,
       contentType: mimeType,
-      uploadedAt: new Date(),
+      uploadedAt: now,
     },
   });
 
@@ -633,9 +837,42 @@ export async function uploadShopImage({
   });
 
   const imageId = uploadStream.id.toString();
+  await Promise.all([
+    db.collection(`${shopImagesBucket}.files`).updateOne(
+      { _id: uploadStream.id },
+      { $set: { listingId: normalizedListingId, "metadata.listingId": normalizedListingId } },
+    ),
+    db.collection(`${shopImagesBucket}.chunks`).updateMany(
+      { files_id: uploadStream.id },
+      { $set: { listingId: normalizedListingId } },
+    ),
+    db.collection<ShopOffering>("shop_offerings").updateOne(
+      { userId: currentUser.userId, inventoryItemId: item._id },
+      {
+        $set: {
+          imageId: uploadStream.id,
+          imageMimeType: mimeType,
+          updatedAt: new Date(),
+        },
+      },
+    ),
+    db.collection<ShopDisplay>("shop_displays").updateOne(
+      { userId: currentUser.userId, "slots.inventoryItemId": item._id },
+      {
+        $set: {
+          "slots.$.listingId": normalizedListingId,
+          "slots.$.imageId": uploadStream.id,
+          "slots.$.imageMimeType": mimeType,
+          updatedAt: new Date(),
+        },
+      },
+    ),
+  ]);
+
   return {
     imageId,
     imageUrl: `/api/shop/image/${imageId}`,
+    listingId: normalizedListingId,
     contentType: mimeType,
     size: bytes.byteLength,
   };

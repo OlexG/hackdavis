@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { ObjectId, type Collection } from "mongodb";
 
@@ -78,11 +79,13 @@ export async function createUserWithProfile(input: {
   await Promise.all([
     users.createIndex({ email: 1 }, { unique: true }),
     users.createIndex({ username: 1 }, { unique: true, sparse: true }),
+    users.createIndex({ uuid: 1 }, { unique: true, sparse: true }),
     profiles.createIndex({ userId: 1 }, { unique: true }),
   ]);
 
   const userResult = await users.insertOne({
     _id: userId,
+    uuid: randomUUID(),
     email: normalizedEmail,
     username,
     passwordHash,

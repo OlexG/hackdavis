@@ -1225,7 +1225,7 @@ async function seed() {
       catalogBySlug.set(item.slug, result);
     }
 
-    const farmResult = await db.collection("farms").findOneAndUpdate(
+    await db.collection("farms").findOneAndUpdate(
       { userId: user._id, name: "Test Backyard Farm" },
       {
         $set: {
@@ -1246,11 +1246,6 @@ async function seed() {
       { upsert: true, returnDocument: "after" },
     );
 
-    const farm = farmResult;
-    const tomatoes = catalogBySlug.get("tomatoes");
-    const lettuce = catalogBySlug.get("lettuce");
-    const chickens = catalogBySlug.get("chickens");
-
     for (const item of inventoryItems) {
       await db.collection("inventory_items").findOneAndUpdate(
         { userId: user._id, name: item.name },
@@ -1267,96 +1262,6 @@ async function seed() {
         { upsert: true, returnDocument: "after" },
       );
     }
-
-    await db.collection("plans").findOneAndUpdate(
-      { farmId: farm._id, userId: user._id, name: "Balanced Test Plan" },
-      {
-        $set: {
-          farmId: farm._id,
-          userId: user._id,
-          name: "Balanced Test Plan",
-          status: "draft",
-          version: 1,
-          simulation: {
-            startDate: new Date("2026-05-09T00:00:00.000Z"),
-            currentDate: new Date("2026-06-01T08:00:00.000Z"),
-            day: 23,
-            timeOfDay: "08:00",
-            season: "spring",
-            speed: 1,
-            paused: true,
-          },
-          objects: [
-            {
-              instanceId: "tomatoes_01",
-              type: "crop",
-              slug: "tomatoes",
-              sourceId: tomatoes._id,
-              displayName: "Tomato Bed",
-              status: "planned",
-              plantedAtDay: 0,
-              position: { x: 0, y: 0, z: 0 },
-              rotation: { x: 0, y: 0, z: 0 },
-              size: tomatoes.defaultSize,
-              renderOverrides: {},
-              notes: "Seeded tomato crop for simulation testing.",
-            },
-            {
-              instanceId: "lettuce_01",
-              type: "crop",
-              slug: "lettuce",
-              sourceId: lettuce._id,
-              displayName: "Lettuce Bed",
-              status: "planned",
-              plantedAtDay: 10,
-              position: { x: 2, y: 0, z: 0 },
-              rotation: { x: 0, y: 0, z: 0 },
-              size: lettuce.defaultSize,
-              renderOverrides: {},
-            },
-            {
-              instanceId: "chickens_01",
-              type: "livestock",
-              slug: "chickens",
-              sourceId: chickens._id,
-              displayName: "Chicken Coop",
-              status: "planned",
-              addedAtDay: 0,
-              ageDaysAtStart: 60,
-              position: { x: 7, y: 0, z: 4 },
-              rotation: { x: 0, y: 90, z: 0 },
-              size: chickens.defaultSize,
-              renderOverrides: {},
-              notes: "Adults during the seeded simulation date.",
-            },
-          ],
-          summary: {
-            description: "A compact starter farm with crop beds separated from the chicken area.",
-            highlights: [
-              "Tomatoes and lettuce have lifecycle stages for time simulation.",
-              "Chickens switch between daytime wandering and nighttime coop behavior.",
-              "Objects include planted/added days for deterministic simulation playback.",
-            ],
-            maintenanceLevel: "low",
-          },
-          generation: {
-            strategy: "balanced",
-            prompt: "Create a small balanced 3D farm with tomatoes, lettuce, and chickens.",
-            constraints: {
-              maxWidthMeters: 24,
-              maxDepthMeters: 18,
-              separateLivestockFromCrops: true,
-            },
-            score: 0.84,
-          },
-          updatedAt: now,
-        },
-        $setOnInsert: {
-          createdAt: now,
-        },
-      },
-      { upsert: true, returnDocument: "after" },
-    );
 
     for (const neighborFarm of neighborFarms) {
       await seedNeighborFarm(db, neighborFarm, passwordHash);

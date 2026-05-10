@@ -1,8 +1,9 @@
 import { ObjectId } from "mongodb";
 import { AuthenticationError, requireUserSession } from "@/lib/auth";
+import { summarizeFarmV2ForIntelligence } from "@/lib/farm-v2";
 import { getInventorySnapshot, type InventorySnapshot } from "@/lib/inventory";
 import { getMongoDb } from "@/lib/mongodb";
-import type { CatalogItem, InventoryItem, Plan } from "@/lib/models";
+import type { CatalogItem, FarmV2Plan, InventoryItem } from "@/lib/models";
 
 const forecastYears = 5;
 const healthMetricNames = ["soil", "water", "pestRisk", "labor", "reliability", "storage"] as const;
@@ -145,7 +146,7 @@ type IntelligencePromptContext = {
   snapshot: InventorySnapshot;
   planId?: ObjectId;
   userId?: ObjectId;
-  latestPlan?: Plan;
+  latestPlan?: FarmV2Plan;
   inventoryItems?: InventoryItem[];
   catalogItems?: CatalogItem[];
 };
@@ -158,8 +159,8 @@ export async function getFarmIntelligencePageData(): Promise<FarmIntelligencePag
     const db = await getMongoDb();
     const currentUser = await requireUserSession();
 
-    const latestPlan = await db.collection<Plan>("plans").findOne(
-      { userId: currentUser.userId },
+    const latestPlan = await db.collection<FarmV2Plan>("plans").findOne(
+      { userId: currentUser.userId, schema: "farmv2" },
       { sort: { createdAt: -1 } },
     );
 
@@ -167,22 +168,14 @@ export async function getFarmIntelligencePageData(): Promise<FarmIntelligencePag
       return { snapshot, hasGeminiKey, canPersist: false };
     }
 
-    const sourceIds = latestPlan.objects
-      .map((object) => object.sourceId)
-      .filter((sourceId): sourceId is ObjectId => sourceId instanceof ObjectId);
-    const [savedReport, catalogItems] = await Promise.all([
-      db.collection<FarmIntelligenceDocument>("farm_intelligence_reports").findOne({
-        userId: currentUser.userId,
-        planId: latestPlan._id,
-      }),
-      sourceIds.length
-        ? db.collection<CatalogItem>("catalog_items").find({ _id: { $in: sourceIds } }).toArray()
-        : Promise.resolve([]),
-    ]);
+    const savedReport = await db.collection<FarmIntelligenceDocument>("farm_intelligence_reports").findOne({
+      userId: currentUser.userId,
+      planId: latestPlan._id,
+    });
 
     return {
       snapshot,
-      economics: buildPlanEconomicsProjection(latestPlan, catalogItems),
+      economics: buildPlanEconomicsProjection(latestPlan),
       hasGeminiKey,
       canPersist: true,
       savedReport: savedReport ? serializeSavedReport(savedReport) : undefined,
@@ -248,7 +241,7 @@ async function getIntelligencePromptContext(): Promise<IntelligencePromptContext
     const currentUser = await requireUserSession();
 
     const [latestPlan, inventoryItems] = await Promise.all([
-      db.collection<Plan>("plans").findOne({ userId: currentUser.userId }, { sort: { createdAt: -1 } }),
+      db.collection<FarmV2Plan>("plans").findOne({ userId: currentUser.userId, schema: "farmv2" }, { sort: { createdAt: -1 } }),
       db
         .collection<InventoryItem>("inventory_items")
         .find({ userId: currentUser.userId })
@@ -256,23 +249,13 @@ async function getIntelligencePromptContext(): Promise<IntelligencePromptContext
         .toArray(),
     ]);
 
-    const sourceIds = latestPlan?.objects
-      .map((object) => object.sourceId)
-      .filter((sourceId): sourceId is ObjectId => sourceId instanceof ObjectId) ?? [];
-    const catalogItems = sourceIds.length
-      ? await db
-          .collection<CatalogItem>("catalog_items")
-          .find({ _id: { $in: sourceIds } })
-          .toArray()
-      : [];
-
     return {
       snapshot,
       userId: currentUser.userId,
       planId: latestPlan?._id as ObjectId | undefined,
       latestPlan: latestPlan ?? undefined,
       inventoryItems,
-      catalogItems,
+      catalogItems: [],
     };
   } catch (error) {
     if (error instanceof AuthenticationError) {
@@ -283,44 +266,22 @@ async function getIntelligencePromptContext(): Promise<IntelligencePromptContext
   }
 }
 
-function buildPlanEconomicsProjection(plan: Plan, catalogItems: CatalogItem[]): PlanEconomicsProjection {
-  const catalogById = new Map(catalogItems.map((item) => [item._id.toString(), item]));
-  const baseYear = new Date(plan.simulation.currentDate).getUTCFullYear();
-  const yearlyCostBreakdown = plan.analytics?.costBreakdown.yearly;
-  const analyticsAnnualCost = typeof yearlyCostBreakdown?.total === "number" ? yearlyCostBreakdown.total : undefined;
-  const baseAnnualCost = Math.max(
-    0,
-    analyticsAnnualCost ??
-      plan.objects.reduce((total, object) => total + (object.recurringCost?.yearly ?? sumMoney(object.costBreakdown)), 0),
-  );
-  const baseProductionValue = Math.max(
-    0,
-    plan.analytics?.revenue.yearly ??
-      plan.objects.reduce((total, object) => total + (object.revenue?.yearly ?? 0), 0),
-  );
-  const baseProductionUnits = Math.max(
-    0,
-    plan.objects.reduce((total, object) => total + estimateProductionUnits(object, catalogById), 0),
-  );
-  const cropRevenue = plan.objects
-    .filter((object) => object.type === "crop")
-    .reduce((total, object) => total + (object.revenue?.yearly ?? 0), 0);
-  const livestockRevenue = plan.objects
-    .filter((object) => object.type === "livestock")
-    .reduce((total, object) => total + (object.revenue?.yearly ?? 0), 0);
-  const cropShare = baseProductionValue ? cropRevenue / baseProductionValue : 0.75;
-  const livestockShare = baseProductionValue ? livestockRevenue / baseProductionValue : 0.15;
+function buildPlanEconomicsProjection(plan: FarmV2Plan): PlanEconomicsProjection {
+  const baseYear = new Date(plan.updatedAt).getUTCFullYear();
+  const cropFields = plan.objects.filter((object) => object.type === "cropField");
+  const livestock = plan.objects.filter((object) => object.type === "livestock");
+  const structures = plan.objects.filter((object) => object.type === "structure");
+  const cropArea = cropFields.reduce((total, object) => total + ("polygon" in object ? Math.max(1, object.polygon.length * 24) : 0), 0);
+  const baseAnnualCost = cropFields.length * 38 + livestock.reduce((total, object) => total + Number(object.attrs.count) * 140, 0) + structures.length * 180;
+  const baseProductionValue = cropFields.length * 180 + livestock.reduce((total, object) => total + Number(object.attrs.count) * 55, 0);
+  const baseProductionUnits = cropArea + livestock.reduce((total, object) => total + Number(object.attrs.count) * 52, 0);
+  const cropShare = baseProductionValue ? (cropFields.length * 180) / baseProductionValue : 0.75;
+  const livestockShare = baseProductionValue ? (livestock.reduce((total, object) => total + Number(object.attrs.count) * 55, 0)) / baseProductionValue : 0.15;
   const otherShare = Math.max(0, 1 - cropShare - livestockShare);
-  const establishmentCost = sumMoney({
-    infrastructure: yearlyCostBreakdown?.infrastructure,
-    seeds: yearlyCostBreakdown?.seeds,
-    starts: yearlyCostBreakdown?.starts,
-  });
-  const topOutputs = plan.objects
-    .filter((object) => (object.revenue?.yearly ?? 0) > 0)
-    .sort((left, right) => (right.revenue?.yearly ?? 0) - (left.revenue?.yearly ?? 0))
+  const establishmentCost = structures.length * 180 + cropFields.length * 12;
+  const topOutputs = [...cropFields, ...livestock]
     .slice(0, 4)
-    .map((object) => object.displayName);
+    .map((object) => object.label);
 
   const monthlyPoints = Array.from({ length: 12 }, (_, monthIndex) => {
     const year = baseYear;
@@ -350,37 +311,10 @@ function buildPlanEconomicsProjection(plan: Plan, catalogItems: CatalogItem[]): 
     planName: plan.name,
     baseYear,
     monthlyPoints,
-    costSummary: `Monthly cost uses the plan's $${Math.round(baseAnnualCost).toLocaleString("en-US")} annual operating model, then weights seed, amendment, feed, utility, and reserve pressure by season. Current modeled year total: $${Math.round(annualCost).toLocaleString("en-US")}.`,
-    productionSummary: `Monthly production distributes $${Math.round(annualProduction).toLocaleString("en-US")} of current-plan output by crop harvest windows, livestock steadiness, and stored/preserved value.`,
+    costSummary: `Farmv2 cost projection estimates $${Math.round(baseAnnualCost).toLocaleString("en-US")} annual operating pressure from crop fields, livestock headcount, and structures. Current modeled year total: $${Math.round(annualCost).toLocaleString("en-US")}.`,
+    productionSummary: `Farmv2 production distributes $${Math.round(annualProduction).toLocaleString("en-US")} of planning value by crop seasonality, livestock steadiness, and infrastructure support.`,
     topOutputs: topOutputs.length ? topOutputs : ["Current plan outputs"],
   };
-}
-
-function estimateProductionUnits(object: Plan["objects"][number], catalogById: Map<string, CatalogItem>) {
-  if (object.type === "crop") {
-    const catalogItem = object.sourceId ? catalogById.get(object.sourceId.toString()) : undefined;
-    const yieldPerSquareFoot =
-      object.crop?.producedMetrics.yieldPerSquareFoot ??
-      catalogItem?.cropProfile?.yieldPerSquareFoot ??
-      0;
-    const failureRate =
-      object.crop?.producedMetrics.cropFailureRate ??
-      catalogItem?.cropProfile?.failureRate ??
-      0;
-
-    return (object.areaSquareFeet ?? 0) * yieldPerSquareFoot * Math.max(0, 1 - failureRate);
-  }
-
-  if (object.type === "livestock") {
-    const catalogItem = object.sourceId ? catalogById.get(object.sourceId.toString()) : undefined;
-    const headCount = object.livestock?.headCount ?? 1;
-    const eggsDozen = ((catalogItem?.livestockProfile?.eggsPerHeadWeek ?? 0) * headCount * 52) / 12;
-    const milkGallons = (catalogItem?.livestockProfile?.milkGallonsPerHeadWeek ?? 0) * headCount * 52;
-
-    return eggsDozen + milkGallons;
-  }
-
-  return 0;
 }
 
 function costMonthMultiplier(index: number) {
@@ -453,13 +387,6 @@ function replacementReserveForMonth(establishmentCost: number, index: number) {
   return reserveMonths.has(index) ? establishmentCost * 0.025 : 0;
 }
 
-function sumMoney(value: Record<string, unknown> | undefined): number {
-  return Object.values(value ?? {}).reduce<number>(
-    (total, entry) => total + (typeof entry === "number" && Number.isFinite(entry) ? entry : 0),
-    0,
-  );
-}
-
 async function generateFarmIntelligenceReport({
   apiKey,
   context,
@@ -470,7 +397,7 @@ async function generateFarmIntelligenceReport({
   const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
   const planName = context.latestPlan?.name ?? context.snapshot.plan?.name ?? "Demo farm plan";
   const currentDate =
-    context.latestPlan?.simulation.currentDate.toISOString() ??
+    context.latestPlan?.updatedAt.toISOString() ??
     context.snapshot.plan?.currentDate ??
     new Date().toISOString();
   const currentYear = new Date(currentDate).getUTCFullYear();
@@ -537,8 +464,8 @@ function buildGeminiPrompt(context: IntelligencePromptContext, currentYear: numb
     `Current year: ${currentYear}`,
     `Plan snapshot: ${JSON.stringify({
       name: snapshot.plan?.name ?? plan?.name,
-      season: snapshot.plan?.season ?? plan?.simulation.season,
-      currentDate: snapshot.plan?.currentDate ?? plan?.simulation.currentDate,
+      season: snapshot.plan?.season ?? "spring",
+      currentDate: snapshot.plan?.currentDate ?? plan?.updatedAt,
       outputs,
     })}`,
     `Full plan context: ${JSON.stringify(plan ? summarizePlan(plan) : null)}`,
@@ -553,89 +480,11 @@ function buildGeminiPrompt(context: IntelligencePromptContext, currentYear: numb
   ].join("\n");
 }
 
-function summarizePlan(plan: Plan) {
+function summarizePlan(plan: FarmV2Plan) {
   return {
     id: plan._id.toString(),
-    name: plan.name,
-    status: plan.status,
-    version: plan.version,
-    simulation: {
-      startDate: plan.simulation.startDate.toISOString(),
-      currentDate: plan.simulation.currentDate.toISOString(),
-      day: plan.simulation.day,
-      season: plan.simulation.season,
-    },
-    baseGeometry: plan.baseGeometry
-      ? {
-          locationLabel: plan.baseGeometry.locationLabel,
-          areaSquareMeters: plan.baseGeometry.areaSquareMeters,
-          centroid: plan.baseGeometry.centroid,
-        }
-      : undefined,
-    partitions: plan.partitions?.map((partition) => ({
-      label: partition.label,
-      type: partition.type,
-      assignmentName: partition.assignmentName,
-      areaSquareMeters: partition.areaSquareMeters,
-      sunExposure: partition.sunExposure,
-      waterNeed: partition.waterNeed,
-      soilStrategy: partition.soilStrategy,
-      notes: partition.notes,
-    })),
-    tiles: plan.tiles?.length
-      ? {
-          count: plan.tiles.length,
-          areaSquareFeet: plan.tiles.reduce((sum, tile) => sum + tile.areaSquareFeet, 0),
-          types: summarizePlanTiles(plan.tiles),
-        }
-      : undefined,
-    objects: plan.objects.map((object) => ({
-      instanceId: object.instanceId,
-      type: object.type,
-      slug: object.slug,
-      displayName: object.displayName,
-      status: object.status,
-      plantedAtDay: object.plantedAtDay,
-      addedAtDay: object.addedAtDay,
-      ageDaysAtStart: object.ageDaysAtStart,
-      notes: object.notes,
-    })),
-    summary: plan.summary,
-    generation: {
-      strategy: plan.generation.strategy,
-      constraints: plan.generation.constraints,
-      score: plan.generation.score,
-    },
+    ...summarizeFarmV2ForIntelligence(plan),
   };
-}
-
-function summarizePlanTiles(tiles: NonNullable<Plan["tiles"]>) {
-  const groups = new Map<string, {
-    tileType: string;
-    assignmentName: string;
-    count: number;
-    sunExposure: string;
-    waterNeed: string;
-  }>();
-
-  tiles.forEach((tile) => {
-    const current = groups.get(tile.tileType);
-
-    if (current) {
-      current.count += 1;
-      return;
-    }
-
-    groups.set(tile.tileType, {
-      tileType: tile.tileType,
-      assignmentName: tile.assignmentName,
-      count: 1,
-      sunExposure: tile.sunExposure,
-      waterNeed: tile.waterNeed,
-    });
-  });
-
-  return [...groups.values()].sort((left, right) => right.count - left.count);
 }
 
 function summarizeInventory(items: InventoryItem[]) {

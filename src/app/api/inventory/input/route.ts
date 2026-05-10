@@ -1,8 +1,9 @@
 import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
 import { AuthenticationError, requireUserSession } from "@/lib/auth";
+import { farmv2ToInventoryInputs } from "@/lib/farm-v2";
 import { getMongoDb } from "@/lib/mongodb";
-import type { InventoryCategory, InventoryItem, InventoryStatus, Plan } from "@/lib/models";
+import type { FarmV2Plan, InventoryCategory, InventoryItem, InventoryStatus } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 
@@ -39,8 +40,8 @@ export async function GET() {
     const { userId } = await requireUserSession();
     const db = await getMongoDb();
     const plans = await db
-      .collection<Plan>("plans")
-      .find({ userId })
+      .collection<FarmV2Plan>("plans")
+      .find({ userId, schema: "farmv2" })
       .sort({ createdAt: -1 })
       .limit(12)
       .toArray();
@@ -49,8 +50,8 @@ export async function GET() {
       plans: plans.map((plan) => ({
         id: plan._id.toString(),
         name: plan.name,
-        season: plan.simulation.season,
-        currentDate: plan.simulation.currentDate.toISOString(),
+        season: "spring",
+        currentDate: plan.updatedAt.toISOString(),
         objectsCount: plan.objects.length,
         summary: plan.summary.description,
       })),
@@ -69,7 +70,7 @@ export async function POST(request: Request) {
 
     const { userId } = await requireUserSession();
     const db = await getMongoDb();
-    const plan = await db.collection<Plan>("plans").findOne({ _id: new ObjectId(input.planId), userId });
+    const plan = await db.collection<FarmV2Plan>("plans").findOne({ _id: new ObjectId(input.planId), userId, schema: "farmv2" });
 
     if (!plan) {
       return NextResponse.json({ error: "Selected plan was not found" }, { status: 404 });
@@ -132,7 +133,7 @@ export async function POST(request: Request) {
   }
 }
 
-async function previewNeedItems({ plan, prompt }: { plan: Plan; prompt: string }) {
+async function previewNeedItems({ plan, prompt }: { plan: FarmV2Plan; prompt: string }) {
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
@@ -148,9 +149,10 @@ async function generateNeedItems({
   prompt,
 }: {
   apiKey: string;
-  plan: Plan;
+  plan: FarmV2Plan;
   prompt: string;
 }) {
+  const adapterItems = farmv2ToInventoryInputs(plan);
   const response = await fetch(
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
     {
@@ -180,10 +182,10 @@ async function generateNeedItems({
                   `User request: ${prompt}`,
                   "",
                   `Plan name: ${plan.name}`,
-                  `Plan season: ${plan.simulation.season}`,
                   `Plan summary: ${plan.summary.description}`,
+                  `Farmv2 adapter inputs: ${adapterItems.map((item) => `${item.name} (${item.category}) for ${item.location}`).join(", ")}`,
                   `Plan objects: ${plan.objects
-                    .map((object) => `${object.displayName} (${object.type}, ${object.slug})`)
+                    .map((object) => `${object.label} (${object.type})`)
                     .join(", ")}`,
                 ].join("\n"),
               },
@@ -313,7 +315,7 @@ function isGeneratedNeedItem(item: GeneratedNeedItem | null): item is GeneratedN
   return item !== null;
 }
 
-function toInventoryPreviewItem(item: GeneratedNeedItem, plan: Plan, index: number) {
+function toInventoryPreviewItem(item: GeneratedNeedItem, plan: FarmV2Plan, index: number) {
   const now = new Date().toISOString();
 
   return {

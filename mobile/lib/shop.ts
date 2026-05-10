@@ -1,0 +1,102 @@
+import { apiFetch } from "./api";
+
+export type InventoryCategory =
+  | "harvest"
+  | "seeds"
+  | "starts"
+  | "feed"
+  | "amendments"
+  | "tools"
+  | "preserves"
+  | "livestock";
+
+export type InventoryViewItem = {
+  id: string;
+  name: string;
+  category: InventoryCategory;
+  status: string;
+  quantity: {
+    amount: number;
+    unit: string;
+  };
+  reorderAt?: number;
+  location: string;
+  source: string;
+  notes: string;
+  color: string;
+  useBy?: string;
+  acquiredAt: string;
+  updatedAt: string;
+};
+
+export type ShopDisplaySlotView = {
+  id: string;
+  inventoryItemId: string;
+  listingId: string;
+  position: number;
+  displayAmount: number;
+  displayUnit: string;
+  priceCents: number;
+  signText: string;
+  visible: boolean;
+  imageId?: string;
+  imageUrl?: string;
+  item: InventoryViewItem;
+};
+
+export type ShopSnapshot = {
+  userEmail: string;
+  displayName: string;
+  isPublished: boolean;
+  theme: "farm-stand";
+  layoutMode: "shelves";
+  details: {
+    shopName: string;
+    hours: string;
+    pickupLocation: string;
+    pickupCoords?: { lat: number; lng: number };
+    pickupInstructions: string;
+    paymentOptions: string;
+    contact: string;
+    availabilityNote: string;
+  };
+  sellableItems: InventoryViewItem[];
+  slots: ShopDisplaySlotView[];
+  lastUpdated: string;
+};
+
+export async function fetchShopSnapshot() {
+  return apiFetch<ShopSnapshot>("/api/shop/display");
+}
+
+export type UploadedShopImage = {
+  imageId: string;
+  imageUrl: string;
+  listingId: string;
+  contentType: string;
+  size: number;
+};
+
+export async function uploadShopImage(input: {
+  inventoryItemId: string;
+  uri: string;
+  fileName: string;
+  mimeType: string;
+  listingId?: string;
+}) {
+  const formData = new FormData();
+  formData.append("inventoryItemId", input.inventoryItemId);
+  if (input.listingId) {
+    formData.append("listingId", input.listingId);
+  }
+  formData.append("file", {
+    uri: input.uri,
+    name: input.fileName,
+    type: input.mimeType,
+  } as unknown as Blob);
+
+  return apiFetch<UploadedShopImage>("/api/shop/display/image", {
+    method: "POST",
+    body: formData,
+  });
+}

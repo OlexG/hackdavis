@@ -136,7 +136,7 @@ export function AppShell({ children, currentUser }: { children: ReactNode; curre
           </div>
         </aside>
 
-        <section className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        <section id="app-main" className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
           <div className="p-6">{children}</div>
         </section>
       </div>

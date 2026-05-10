@@ -36,6 +36,7 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
   const [isDirtyState, setIsDirtyState] = useState(false);
+  const [isPublished, setIsPublished] = useState(initialSnapshot.isPublished);
   const hasUserEdited = useRef(false);
   const saveTokenRef = useRef(0);
 
@@ -73,6 +74,7 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
 
       hasUserEdited.current = false;
       setIsDirtyState(false);
+      setIsPublished(true);
       setSaveStatus("saved");
     } catch (error) {
       setSaveStatus("error");
@@ -163,20 +165,24 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
 
     try {
       const formData = new FormData();
+      const slot = findSlot(itemId);
       formData.set("inventoryItemId", itemId);
+      if (slot?.listingId) {
+        formData.set("listingId", slot.listingId);
+      }
       formData.set("file", file);
 
       const response = await fetch("/api/shop/display/image", {
         method: "POST",
         body: formData,
       });
-      const data = (await response.json()) as { imageId?: string; imageUrl?: string; error?: string };
+      const data = (await response.json()) as { imageId?: string; imageUrl?: string; listingId?: string; error?: string };
 
       if (!response.ok || !data.imageId || !data.imageUrl) {
         throw new Error(data.error ?? "Unable to upload image");
       }
 
-      updateSlot(itemId, { imageId: data.imageId, imageUrl: data.imageUrl });
+      updateSlot(itemId, { imageId: data.imageId, imageUrl: data.imageUrl, listingId: data.listingId ?? slot?.listingId });
       flashAction("Photo saved.");
     } catch (error) {
       setSaveStatus("error");
@@ -201,6 +207,7 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
         actionMessage={actionMessage}
         draggedItemId={draggedItemId}
         uploadingItemId={uploadingItemId}
+        isPublished={isPublished}
         isDirty={isDirtyState}
         onSave={saveChanges}
         onDragStart={handleDragStart}
@@ -226,7 +233,15 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
   );
 }
 
-export function PublicShopfrontPreview({ snapshot }: { snapshot: ShopSnapshot }) {
+export function PublicShopfrontPreview({
+  snapshot,
+  onSlotSelect,
+  selectedSlotId,
+}: {
+  snapshot: ShopSnapshot;
+  onSlotSelect?: (slot: ShopDisplaySlotView) => void;
+  selectedSlotId?: string;
+}) {
   const visibleSlots = snapshot.slots
     .filter((slot) => slot.visible)
     .sort((left, right) => left.position - right.position);
@@ -246,6 +261,7 @@ export function PublicShopfrontPreview({ snapshot }: { snapshot: ShopSnapshot })
       actionMessage={null}
       draggedItemId={null}
       uploadingItemId={null}
+      isPublished={snapshot.isPublished}
       isDirty={false}
       onSave={noopAsync}
       onDragStart={noop}
@@ -254,6 +270,8 @@ export function PublicShopfrontPreview({ snapshot }: { snapshot: ShopSnapshot })
       onUpdate={noop}
       onUpload={noopAsync}
       onHide={noop}
+      onSlotSelect={onSlotSelect}
+      selectedSlotId={selectedSlotId}
     />
   );
 }
@@ -301,6 +319,7 @@ function FarmStandPanel({
   actionMessage,
   draggedItemId,
   uploadingItemId,
+  isPublished,
   isDirty,
   onSave,
   onDragStart,
@@ -309,6 +328,8 @@ function FarmStandPanel({
   onUpdate,
   onUpload,
   onHide,
+  onSlotSelect,
+  selectedSlotId,
 }: {
   displayName: string;
   details: ShopDetails;
@@ -320,6 +341,7 @@ function FarmStandPanel({
   actionMessage: string | null;
   draggedItemId: string | null;
   uploadingItemId: string | null;
+  isPublished: boolean;
   isDirty: boolean;
   onSave: () => Promise<void>;
   onDragStart: (itemId: string) => void;
@@ -328,9 +350,19 @@ function FarmStandPanel({
   onUpdate: (itemId: string, patch: Partial<ShopDisplaySlotView>) => void;
   onUpload: (itemId: string, file: File) => Promise<void>;
   onHide: (itemId: string) => void;
+  onSlotSelect?: (slot: ShopDisplaySlotView) => void;
+  selectedSlotId?: string;
 }) {
   const isEditing = mode === "edit";
   const shopName = details.shopName || displayName;
+  const canSave = isDirty || !isPublished;
+  const saveLabel = saveStatus === "saving"
+    ? "Saving..."
+    : !isPublished
+      ? "Publish shop"
+      : isDirty
+        ? "Save changes"
+        : "Saved";
 
   return (
     <section
@@ -364,7 +396,7 @@ function FarmStandPanel({
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            {isEditing ? <StatusBadge status={saveStatus} error={saveError} dirty={isDirty} /> : null}
+            {isEditing ? <StatusBadge status={saveStatus} error={saveError} dirty={isDirty} published={isPublished} /> : null}
             <span className="rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] px-2.5 py-1 font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#5e4a26] shadow-[0_2px_0_#3b2a14]">
               {visibleSlots.length} on shelf · {Math.round(totalDisplayed * 10) / 10} units
             </span>
@@ -372,14 +404,14 @@ function FarmStandPanel({
               <button
                 type="button"
                 onClick={() => onSave()}
-                disabled={!isDirty || saveStatus === "saving"}
+                disabled={!canSave || saveStatus === "saving"}
                 className={`rounded-none border-2 px-3 py-1 font-mono text-[11px] font-black uppercase tracking-[0.1em] shadow-[0_2px_0_#3b2a14] transition active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14] ${
-                  isDirty && saveStatus !== "saving"
+                  canSave && saveStatus !== "saving"
                     ? "border-[#3b2a14] bg-[#7da854] text-[#fffdf5] hover:bg-[#9bc278]"
                     : "cursor-not-allowed border-[#a8916a] bg-[#f1e4c2] text-[#7a6843] opacity-70"
                 }`}
               >
-                {saveStatus === "saving" ? "Saving…" : isDirty ? "Save changes" : "Saved"}
+                {saveLabel}
               </button>
             ) : null}
           </div>
@@ -418,6 +450,8 @@ function FarmStandPanel({
                 onUpdate={onUpdate}
                 onUpload={onUpload}
                 onHide={() => onHide(slot.inventoryItemId)}
+                onSelect={onSlotSelect ? () => onSlotSelect(slot) : undefined}
+                selected={selectedSlotId === slot.inventoryItemId}
               />
             ))}
           </div>
@@ -463,10 +497,12 @@ function ShopDetailsEditor({
 
   return (
     <div className="grid gap-2 bg-[#fffaf0] p-3">
-      <div className="grid gap-2 lg:grid-cols-2">
-        <SimpleDetailEditor field={shopNameField} details={details} onChange={onChange} />
-        <SimpleDetailEditor field={contactField} details={details} onChange={onChange} />
-      </div>
+      <ShopIdentityCard
+        shopNameField={shopNameField}
+        contactField={contactField}
+        details={details}
+        onChange={onChange}
+      />
 
       <div style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }} className={cardClass}>
         <HoursSelector
@@ -531,6 +567,79 @@ function SimpleDetailEditor({
           className="h-9 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
         />
       )}
+    </label>
+  );
+}
+
+function ShopIdentityCard({
+  shopNameField,
+  contactField,
+  details,
+  onChange,
+}: {
+  shopNameField: SimpleDetailField;
+  contactField: SimpleDetailField;
+  details: ShopDetails;
+  onChange: (patch: Partial<ShopDetails>) => void;
+}) {
+  return (
+    <section
+      style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
+      className="pixel-frame border-2 border-[#c9b88a] bg-[#fffdf5] shadow-[0_2px_0_#b29c66]"
+    >
+      <header className="flex items-center gap-2 border-b-2 border-[#c9b88a] bg-[#fff3cf] px-3 py-1.5">
+        <span className="grid size-6 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#ffe89a] text-[#5e4a26] shadow-[0_1px_0_#3b2a14]">
+          <PixelGlyph name="leaf" className="size-3.5" />
+        </span>
+        <h3 className="font-mono text-[10px] font-black uppercase tracking-[0.16em] text-[#5e4a26]">
+          Shop identity
+        </h3>
+      </header>
+      <div className="grid gap-2 px-3 py-2.5 sm:grid-cols-[2fr_1.4fr] sm:gap-3">
+        <IdentityField
+          label={shopNameField.label}
+          glyph={shopNameField.glyph}
+          value={details.shopName}
+          placeholder="e.g. Oleks farm"
+          onChange={(value) => onChange({ shopName: value })}
+        />
+        <IdentityField
+          label={contactField.label}
+          glyph={contactField.glyph}
+          value={details.contact}
+          placeholder="phone, email, or @handle"
+          onChange={(value) => onChange({ contact: value })}
+        />
+      </div>
+    </section>
+  );
+}
+
+function IdentityField({
+  label,
+  glyph,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  glyph: DetailGlyph;
+  value: string;
+  placeholder?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="grid min-w-0 gap-1">
+      <span className="flex items-center gap-1.5 font-mono text-[10px] font-black uppercase tracking-[0.12em] text-[#7a6843]">
+        <PixelGlyph name={glyph} className="size-3.5" />
+        {label}
+      </span>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="h-9 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-sm font-bold text-[#365833] outline-none transition placeholder:font-normal placeholder:text-[#b29c66] focus:border-[#9bb979] focus:bg-[#fffdf5]"
+      />
     </label>
   );
 }
@@ -883,6 +992,8 @@ function ShopShelfCard({
   onUpdate,
   onUpload,
   onHide,
+  onSelect,
+  selected = false,
 }: {
   slot: ShopDisplaySlotView;
   mode: ShopViewMode;
@@ -893,6 +1004,8 @@ function ShopShelfCard({
   onUpdate: (itemId: string, patch: Partial<ShopDisplaySlotView>) => void;
   onUpload: (itemId: string, file: File) => Promise<void>;
   onHide: () => void;
+  onSelect?: () => void;
+  selected?: boolean;
 }) {
   const isEditing = mode === "edit";
   const freshness = getFreshnessLabel(slot);
@@ -902,6 +1015,19 @@ function ShopShelfCard({
   return (
     <article
       draggable={isEditing}
+      role={!isEditing && onSelect ? "button" : undefined}
+      tabIndex={!isEditing && onSelect ? 0 : undefined}
+      aria-pressed={!isEditing && onSelect ? selected : undefined}
+      onClick={() => {
+        if (!isEditing) onSelect?.();
+      }}
+      onKeyDown={(event) => {
+        if (isEditing || !onSelect) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
       onDragStart={() => isEditing && onDragStart(slot.inventoryItemId)}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
@@ -914,6 +1040,8 @@ function ShopShelfCard({
       style={{ ["--pixel-frame-bg" as string]: "#fcf6e4" }}
       className={`pixel-frame grid gap-2 rounded-none border-2 border-[#a8916a] bg-[#fffdf5] p-2.5 shadow-[0_3px_0_#8b6f3e] ${
         isEditing ? "cursor-grab transition hover:-translate-y-0.5 active:cursor-grabbing" : ""
+      } ${!isEditing && onSelect ? "cursor-pointer transition hover:-translate-y-0.5 hover:border-[#3b2a14]" : ""} ${
+        selected ? "border-[#3b2a14] shadow-[0_4px_0_#3b2a14] outline outline-2 outline-offset-2 outline-[#7da854]" : ""
       }`}
     >
       <ImageSlot
@@ -1160,21 +1288,33 @@ function ImageSlot({
   );
 }
 
-function StatusBadge({ status, error, dirty }: { status: SaveStatus; error: string | null; dirty: boolean }) {
+function StatusBadge({
+  status,
+  error,
+  dirty,
+  published,
+}: {
+  status: SaveStatus;
+  error: string | null;
+  dirty: boolean;
+  published: boolean;
+}) {
   const text = status === "saving"
     ? "Saving"
     : status === "error"
       ? "Save error"
-      : dirty
+      : !published
+        ? "Unpublished"
+        : dirty
         ? "Unsaved"
         : status === "saved"
           ? "Saved"
           : "Ready";
   const classes = status === "error"
     ? "border-[#efb16b] bg-[#fff1dc] text-[#7a461f]"
-    : status === "saving"
-      ? "border-[#68b8c9] bg-[#e4f7f8] text-[#245c65]"
-      : dirty
+      : status === "saving"
+        ? "border-[#68b8c9] bg-[#e4f7f8] text-[#245c65]"
+      : !published || dirty
         ? "border-[#d8a05a] bg-[#fff1dc] text-[#7a461f]"
         : "border-[#9bc278] bg-[#eef8df] text-[#335a2d]";
 
@@ -1237,6 +1377,7 @@ function normalizeDetails(details: ShopDetails): ShopDetails {
 function toSaveSlot(slot: ShopDisplaySlotView) {
   return {
     inventoryItemId: slot.inventoryItemId,
+    listingId: slot.listingId,
     position: slot.position,
     displayAmount: slot.displayAmount,
     displayUnit: slot.displayUnit,

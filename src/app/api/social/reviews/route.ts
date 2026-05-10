@@ -4,18 +4,28 @@ import { createFarmReview, SocialReviewError } from "@/lib/social";
 
 export const dynamic = "force-dynamic";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+};
+
 export async function POST(request: Request) {
   try {
     const body = normalizeRequest(await request.json());
     const result = await createFarmReview(body);
 
-    return NextResponse.json(result, { status: result.created ? 201 : 200 });
+    return NextResponse.json(result, { status: result.created ? 201 : 200, headers: corsHeaders });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to post review" },
-      { status: error instanceof AuthenticationError ? 401 : error instanceof SocialReviewError ? 400 : 500 },
+      { status: error instanceof AuthenticationError ? 401 : error instanceof SocialReviewError ? 400 : 500, headers: corsHeaders },
     );
   }
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: corsHeaders });
 }
 
 function normalizeRequest(raw: unknown) {
