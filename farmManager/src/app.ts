@@ -1,43 +1,50 @@
-(() => {
-  const { state } = DemoState;
-  const G = Geometry;
+import * as BoundaryMap from "./boundaryMap.js";
+import * as DemoState from "./demoState.js";
+import * as FarmRenderer from "./renderer.js";
+import * as G from "./geometry.js";
+import { CATALOG } from "./catalog.js";
+import type { CropFieldObject, DrawType, FarmObject, Point, ScreenPoint, Units, ViewMode } from "./types.js";
 
-  const ui = {
-    canvas: document.getElementById("farmCanvas"),
-    selectMode: document.getElementById("selectMode"),
-    drawMode: document.getElementById("drawMode"),
-    closeShape: document.getElementById("closeShape"),
-    clearDraft: document.getElementById("clearDraft"),
-    zoomOut: document.getElementById("zoomOut"),
-    zoomIn: document.getElementById("zoomIn"),
-    rotateView: document.getElementById("rotateView"),
-    resetView: document.getElementById("resetView"),
-    settingsButton: document.getElementById("settingsButton"),
-    timelineInput: document.getElementById("timelineInput"),
-    timelineMarkers: document.getElementById("timelineMarkers"),
-    playTimeline: document.getElementById("playTimeline"),
-    addTimelineEntry: document.getElementById("addTimelineEntry"),
-    snapshotDate: document.getElementById("snapshotDate"),
-    snapshotLabel: document.getElementById("snapshotLabel"),
-    panelKicker: document.getElementById("panelKicker"),
-    panelTitle: document.getElementById("panelTitle"),
-    objectDetails: document.getElementById("objectDetails"),
-    onboarding: document.getElementById("onboarding"),
-    setupChoice: document.getElementById("setupChoice"),
-    boundaryMap: document.getElementById("boundaryMap"),
-    mapFallback: document.getElementById("mapFallback"),
-    useDemoBoundary: document.getElementById("useDemoBoundary"),
-    clearBoundary: document.getElementById("clearBoundary"),
-    saveBoundary: document.getElementById("saveBoundary"),
-    manualSetup: document.getElementById("manualSetup"),
-    aiSetup: document.getElementById("aiSetup"),
-    commitModal: document.getElementById("commitModal"),
-    commitName: document.getElementById("commitName"),
-    skipCommitName: document.getElementById("skipCommitName"),
-    saveCommitName: document.getElementById("saveCommitName")
-  };
+const { state } = DemoState;
 
-  function init() {
+const byId = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
+
+const ui = {
+  canvas: byId<HTMLCanvasElement>("farmCanvas"),
+  selectMode: byId<HTMLButtonElement>("selectMode"),
+  drawMode: byId<HTMLButtonElement>("drawMode"),
+  closeShape: byId<HTMLButtonElement>("closeShape"),
+  clearDraft: byId<HTMLButtonElement>("clearDraft"),
+  zoomOut: byId<HTMLButtonElement>("zoomOut"),
+  zoomIn: byId<HTMLButtonElement>("zoomIn"),
+  rotateView: byId<HTMLButtonElement>("rotateView"),
+  resetView: byId<HTMLButtonElement>("resetView"),
+  settingsButton: byId<HTMLButtonElement>("settingsButton"),
+  timelineInput: byId<HTMLInputElement>("timelineInput"),
+  timelineMarkers: byId<HTMLElement>("timelineMarkers"),
+  playTimeline: byId<HTMLButtonElement>("playTimeline"),
+  addTimelineEntry: byId<HTMLButtonElement>("addTimelineEntry"),
+  snapshotDate: byId<HTMLElement>("snapshotDate"),
+  snapshotLabel: byId<HTMLElement>("snapshotLabel"),
+  panelKicker: byId<HTMLElement>("panelKicker"),
+  panelTitle: byId<HTMLElement>("panelTitle"),
+  objectDetails: byId<HTMLElement>("objectDetails"),
+  onboarding: byId<HTMLElement>("onboarding"),
+  setupChoice: byId<HTMLElement>("setupChoice"),
+  boundaryMap: byId<HTMLElement>("boundaryMap"),
+  mapFallback: byId<HTMLElement>("mapFallback"),
+  useDemoBoundary: byId<HTMLButtonElement>("useDemoBoundary"),
+  clearBoundary: byId<HTMLButtonElement>("clearBoundary"),
+  saveBoundary: byId<HTMLButtonElement>("saveBoundary"),
+  manualSetup: byId<HTMLButtonElement>("manualSetup"),
+  aiSetup: byId<HTMLButtonElement>("aiSetup"),
+  commitModal: byId<HTMLElement>("commitModal"),
+  commitName: byId<HTMLInputElement>("commitName"),
+  skipCommitName: byId<HTMLButtonElement>("skipCommitName"),
+  saveCommitName: byId<HTMLButtonElement>("saveCommitName")
+};
+
+function init() {
     FarmRenderer.init(ui.canvas);
     BoundaryMap.init(ui, onBoundarySaved);
     bindUi();
@@ -45,7 +52,7 @@
     updateTimeline();
     updatePanel();
     window.setInterval(updateHud, 150);
-  }
+}
 
   function bindUi() {
     ui.selectMode.addEventListener("click", () => setMode("select"));
@@ -68,9 +75,9 @@
       ui.setupChoice.classList.add("hidden");
     });
 
-    document.querySelectorAll("[data-draw-type]").forEach((button) => {
+    document.querySelectorAll<HTMLButtonElement>("[data-draw-type]").forEach((button) => {
       button.addEventListener("click", () => {
-        state.drawType = button.dataset.drawType;
+        state.drawType = button.dataset.drawType as DrawType;
         document.querySelectorAll("[data-draw-type]").forEach((item) => item.classList.remove("active"));
         button.classList.add("active");
         clearDraft();
@@ -78,17 +85,17 @@
       });
     });
 
-    document.querySelectorAll("[data-view]").forEach((button) => {
+    document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) => {
       button.addEventListener("click", () => {
-        state.view = button.dataset.view;
+        state.view = button.dataset.view as ViewMode;
         document.querySelectorAll("[data-view]").forEach((item) => item.classList.remove("active"));
         button.classList.add("active");
       });
     });
 
-    document.querySelectorAll("[data-units]").forEach((button) => {
+    document.querySelectorAll<HTMLButtonElement>("[data-units]").forEach((button) => {
       button.addEventListener("click", () => {
-        state.units = button.dataset.units;
+        state.units = button.dataset.units as Units;
         document.querySelectorAll("[data-units]").forEach((item) => item.classList.remove("active"));
         button.classList.add("active");
         markPanelDirty();
@@ -112,7 +119,7 @@
     });
 
     ui.timelineInput.addEventListener("input", (event) => {
-      DemoState.loadCommit(Number(event.target.value));
+      DemoState.loadCommit(Number((event.target as HTMLInputElement).value));
       state.selectedId = DemoState.currentObjects()[0]?.id || null;
       updateTimeline();
       markPanelDirty();
@@ -403,7 +410,7 @@
     `;
 
     if (object.type === "cropArea") {
-      const children = state.objects.filter((item) => item.type === "cropField" && item.parentId === object.id);
+      const children = state.objects.filter((item): item is CropFieldObject => item.type === "cropField" && item.parentId === object.id);
       ui.objectDetails.innerHTML = `${common}
         <div class="detail-list">
           <span>Child crop fields</span>
@@ -564,7 +571,7 @@
     }
     if (action === "custom-entry") {
       const input = ui.objectDetails.querySelector("[data-role='catalog-search']");
-      applyCustomEntry(object, mode, input?.value.trim() || `Custom ${mode}`);
+      applyCustomEntry(object, mode, (input as HTMLInputElement | null)?.value.trim() || `Custom ${mode}`);
       state.pendingCatalogMode = null;
       markPanelDirty();
     }
@@ -695,7 +702,7 @@
   function updateTimeline() {
     ui.timelineInput.max = String(Math.max(0, state.commits.length - 1));
     ui.timelineInput.value = String(state.commitIndex);
-    ui.timelineMarkers.style.setProperty("--marker-count", state.commits.length);
+    ui.timelineMarkers.style.setProperty("--marker-count", String(state.commits.length));
     ui.timelineMarkers.innerHTML = state.commits
       .map((commit, index) => `<button class="${index === state.commitIndex ? "active" : ""}" data-commit-index="${index}" type="button">${commit.name}</button>`)
       .join("");
@@ -790,4 +797,3 @@
   }
 
   init();
-})();

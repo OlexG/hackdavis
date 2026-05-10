@@ -1,9 +1,12 @@
-window.BoundaryMap = (() => {
-  const boundaryPoints = [];
-  let map = null;
+import type { BoundaryMapUi, Point } from "./types.js";
 
-  function init(ui, onBoundarySaved) {
-    if (!window.maplibregl) {
+declare const maplibregl: any;
+
+const boundaryPoints: Point[] = [];
+let map: any = null;
+
+export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => void): void {
+    if (typeof maplibregl === "undefined") {
       ui.mapFallback.classList.remove("hidden");
       return;
     }
@@ -50,7 +53,7 @@ window.BoundaryMap = (() => {
           }
         });
       });
-      map.on("click", (event) => {
+      map.on("click", (event: { lngLat: { lng: number; lat: number } }) => {
         boundaryPoints.push([event.lngLat.lng, event.lngLat.lat]);
         updateMapSource();
       });
@@ -86,14 +89,14 @@ window.BoundaryMap = (() => {
       updateMapSource();
       onBoundarySaved(boundaryPoints.slice());
     });
-  }
+}
 
-  function redraw() {
+export function redraw(): void {
     boundaryPoints.length = 0;
     updateMapSource();
-  }
+}
 
-  function emptyGeoJsonSource() {
+function emptyGeoJsonSource() {
     return {
       type: "geojson",
       data: {
@@ -101,11 +104,11 @@ window.BoundaryMap = (() => {
         features: []
       }
     };
-  }
+}
 
-  function updateMapSource() {
+function updateMapSource(): void {
     if (!map || !map.getSource("farm-boundary")) return;
-    const features = [];
+    const features: unknown[] = [];
     if (boundaryPoints.length >= 2) {
       features.push({
         type: "Feature",
@@ -130,7 +133,4 @@ window.BoundaryMap = (() => {
       type: "FeatureCollection",
       features
     });
-  }
-
-  return { init, redraw };
-})();
+}

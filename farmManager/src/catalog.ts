@@ -1,4 +1,6 @@
-window.CATALOG = {
+import type { Catalog } from "./types.js";
+
+export const CATALOG: Catalog = {
   crops: [
     { key: "tomato", name: "Tomato", visual: "fruiting", defaultCount: 16, growth: 0.62 },
     { key: "corn", name: "Corn", visual: "grain", defaultCount: 18, growth: 0.58 },

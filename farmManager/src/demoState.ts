@@ -1,12 +1,30 @@
-window.DemoState = (() => {
-  const DEFAULT_FARM_BOUNDS = [
+import { CATALOG } from "./catalog.js";
+import * as Geometry from "./geometry.js";
+import type {
+  CropAreaAttrs,
+  CropAreaObject,
+  CropFieldAttrs,
+  CropFieldObject,
+  FarmCommit,
+  FarmObject,
+  FarmState,
+  LivestockAttrs,
+  LivestockObject,
+  PathAttrs,
+  PathObject,
+  Point,
+  StructureAttrs,
+  StructureObject
+} from "./types.js";
+
+export const DEFAULT_FARM_BOUNDS: Point[] = [
     [0, 0],
     [108, 0],
     [108, 82],
     [0, 82]
-  ];
+];
 
-  function cropArea(id, label, polygon, attrs = {}) {
+export function cropArea(id: string, label: string, polygon: Point[], attrs: Partial<CropAreaAttrs> = {}): CropAreaObject {
     return {
       id,
       label,
@@ -19,9 +37,16 @@ window.DemoState = (() => {
         ...attrs
       }
     };
-  }
+}
 
-  function cropField(id, label, polygon, parentId, cropKey, attrs = {}) {
+export function cropField(
+  id: string,
+  label: string,
+  polygon: Point[],
+  parentId: string | null,
+  cropKey: string | null,
+  attrs: Partial<CropFieldAttrs> = {}
+): CropFieldObject {
     const crop = cropKey
       ? CATALOG.crops.find((item) => item.key === cropKey) || {
           key: cropKey || "custom",
@@ -51,9 +76,9 @@ window.DemoState = (() => {
         ...attrs
       }
     };
-  }
+}
 
-  function livestock(id, label, polygon, attrs) {
+export function livestock(id: string, label: string, polygon: Point[], attrs: LivestockAttrs): LivestockObject {
     return {
       id,
       label,
@@ -62,9 +87,9 @@ window.DemoState = (() => {
       height: 0.55,
       attrs
     };
-  }
+}
 
-  function structure(id, label, polygon, attrs) {
+export function structure(id: string, label: string, polygon: Point[], attrs: StructureAttrs): StructureObject {
     return {
       id,
       label,
@@ -73,9 +98,9 @@ window.DemoState = (() => {
       height: attrs.height || 5,
       attrs
     };
-  }
+}
 
-  function path(id, label, points, attrs = {}) {
+export function path(id: string, label: string, points: Point[], attrs: Partial<PathAttrs> = {}): PathObject {
     return {
       id,
       label,
@@ -87,13 +112,13 @@ window.DemoState = (() => {
         ...attrs
       }
     };
-  }
+}
 
-  function clone(value) {
+export function clone<T>(value: T): T {
     return JSON.parse(JSON.stringify(value));
   }
 
-  const initialObjects = [
+const initialObjects: FarmObject[] = [
     cropArea("north-field", "North Crop Area", [[13, 8], [63, 7], [67, 36], [15, 39]], {
       status: "Parent crop area",
       soil: "Sandy loam"
@@ -157,7 +182,7 @@ window.DemoState = (() => {
     })
   ];
 
-  const state = {
+export const state: FarmState = {
     mode: "select",
     drawType: "cropArea",
     view: "grid",
@@ -190,17 +215,17 @@ window.DemoState = (() => {
     commitIndex: 0,
     dirtyPanelKey: "",
     pendingCatalogMode: null
-  };
+};
 
-  function currentObjects() {
+export function currentObjects(): FarmObject[] {
     return state.objects;
-  }
+}
 
-  function setCurrentObjects(objects) {
+export function setCurrentObjects(objects: FarmObject[]): void {
     state.objects = clone(objects);
-  }
+}
 
-  function createCommit(name) {
+export function createCommit(name: string): FarmCommit {
     const now = new Date();
     const autoName = `Farm snapshot - ${now.toLocaleString([], {
       month: "short",
@@ -219,9 +244,9 @@ window.DemoState = (() => {
     state.commits.push(commit);
     state.commitIndex = state.commits.length - 1;
     return commit;
-  }
+}
 
-  function resetForManualPlan() {
+export function resetForManualPlan(): void {
     const now = new Date();
     state.objects = [];
     state.selectedId = null;
@@ -238,19 +263,19 @@ window.DemoState = (() => {
       }
     ];
     state.commitIndex = 0;
-  }
+}
 
-  function activeBoundary() {
+export function activeBoundary(): Point[] {
     return state.boundaryLocal?.length >= 3 ? state.boundaryLocal : DEFAULT_FARM_BOUNDS;
-  }
+}
 
-  function setBoundaryFromGeo(points) {
+export function setBoundaryFromGeo(points: Point[]): void {
     state.boundaryGeo = clone(points);
     state.boundaryLocal = geoPolygonToLocal(points);
     state.boundaryConfirmed = true;
-  }
+}
 
-  function geoPolygonToLocal(points) {
+function geoPolygonToLocal(points: Point[]): Point[] {
     if (!points || points.length < 3) return clone(DEFAULT_FARM_BOUNDS);
     const closed = points.slice(0, 3).every(Boolean) ? points.slice() : clone(DEFAULT_FARM_BOUNDS);
     const lngs = closed.map((point) => point[0]);
@@ -262,38 +287,38 @@ window.DemoState = (() => {
     const midLat = ((minLat + maxLat) / 2) * (Math.PI / 180);
     const feetPerDegreeLat = 364000;
     const feetPerDegreeLng = Math.max(1, feetPerDegreeLat * Math.cos(midLat));
-    const projected = closed.map((point) => [
+    const projected: Point[] = closed.map((point) => [
       (point[0] - minLng) * feetPerDegreeLng,
       (maxLat - point[1]) * feetPerDegreeLat
     ]);
     const bbox = Geometry.getBBox(projected);
     return projected.map((point) => [point[0] - bbox.minX, point[1] - bbox.minY]);
-  }
+}
 
-  function resetBoundary() {
+export function resetBoundary(): void {
     state.boundaryGeo = null;
     state.boundaryLocal = clone(DEFAULT_FARM_BOUNDS);
     state.boundaryConfirmed = false;
-  }
+}
 
-  function deleteObject(id) {
+export function deleteObject(id: string): void {
     const object = state.objects.find((item) => item.id === id);
     if (!object) return;
     const childIds =
       object.type === "cropArea"
-        ? state.objects.filter((item) => item.parentId === object.id).map((item) => item.id)
+        ? state.objects.filter((item): item is CropFieldObject => item.type === "cropField" && item.parentId === object.id).map((item) => item.id)
         : [];
     const idsToDelete = new Set([id, ...childIds]);
     state.objects = state.objects.filter((item) => !idsToDelete.has(item.id));
     state.selectedId = state.objects[0]?.id || null;
-  }
+}
 
-  function loadCommit(index) {
+export function loadCommit(index: number): void {
     state.commitIndex = Geometry.clamp(index, 0, state.commits.length - 1);
     state.objects = clone(state.commits[state.commitIndex].objects);
-  }
+}
 
-  function useAiPreset() {
+export function useAiPreset(): void {
     const preset = clone(initialObjects);
     preset.push(
       cropArea("south-rotation", "South Rotation", [[45, 62], [65, 59], [73, 74], [50, 78]], {
@@ -308,26 +333,4 @@ window.DemoState = (() => {
     );
     state.objects = preset;
     createCommit("AI draft preset");
-  }
-
-  return {
-    DEFAULT_FARM_BOUNDS,
-    state,
-    cropArea,
-    cropField,
-    livestock,
-    structure,
-    path,
-    clone,
-    currentObjects,
-    setCurrentObjects,
-    createCommit,
-    resetForManualPlan,
-    activeBoundary,
-    setBoundaryFromGeo,
-    resetBoundary,
-    deleteObject,
-    loadCommit,
-    useAiPreset
-  };
-})();
+}
