@@ -1,8 +1,9 @@
-import type { Catalog, FarmManagerSnapshot } from "./types.js";
+import type { Catalog, FarmAiDraftPreferences, FarmManagerSnapshot } from "./types.js";
 import { parseFarmManagerStateResponse } from "./stateContract.js";
 
 const stateEndpoint = "/api/farm/manager-state";
 const catalogEndpoint = "/api/farm/catalog";
+const aiDraftEndpoint = "/api/farm/ai-draft";
 
 export type LoadFarmStateResult =
   | { ok: true; state: FarmManagerSnapshot | null; hasSavedFarm: boolean; updatedAt: string | null }
@@ -14,6 +15,10 @@ export type SaveFarmStateResult =
 
 export type LoadFarmCatalogResult =
   | { ok: true; catalog: Catalog }
+  | { ok: false; error: string };
+
+export type GenerateAiDraftResult =
+  | { ok: true; state: FarmManagerSnapshot; updatedAt: string | null }
   | { ok: false; error: string };
 
 export async function loadFarmCatalog(): Promise<LoadFarmCatalogResult> {
@@ -67,6 +72,38 @@ export async function saveFarmState(state: FarmManagerSnapshot): Promise<SaveFar
     return { ok: true, hasSavedFarm: parsed.hasSavedFarm, updatedAt: parsed.updatedAt };
   } catch (error) {
     return { ok: false, error: readUnknownError(error, "Unable to save farm state") };
+  }
+}
+
+export async function generateAiDraft(
+  state: FarmManagerSnapshot,
+  preferences: FarmAiDraftPreferences
+): Promise<GenerateAiDraftResult> {
+  try {
+    const response = await fetch(aiDraftEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        boundaryGeo: state.boundaryGeo,
+        boundaryLocal: state.boundaryLocal,
+        preferences
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      return { ok: false, error: readError(data, "Unable to generate AI farm draft") };
+    }
+
+    const parsed = parseFarmManagerStateResponse({
+      state: data.state,
+      hasSavedFarm: true,
+      updatedAt: data.updatedAt
+    });
+    if (!parsed.state) return { ok: false, error: "AI farm draft response was invalid" };
+    return { ok: true, state: parsed.state, updatedAt: parsed.updatedAt };
+  } catch (error) {
+    return { ok: false, error: readUnknownError(error, "Unable to generate AI farm draft") };
   }
 }
 

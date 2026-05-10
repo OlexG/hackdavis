@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { ObjectId, type WithId } from "mongodb";
 import { AuthenticationError, requireUserSession } from "@/lib/auth";
 import { getMongoDb } from "@/lib/mongodb";
@@ -14,7 +15,7 @@ import type {
   SocialOffer,
   User,
 } from "@/lib/models";
-import { sendOfferNotification } from "@/lib/notifications";
+import { createSocialOfferNotification } from "@/lib/notifications";
 import type { InventoryViewItem } from "@/lib/inventory";
 import type { ShopDisplaySlotView, ShopSnapshot } from "@/lib/shop";
 
@@ -348,17 +349,68 @@ export async function createSocialOffer(input: CreateSocialOfferInput): Promise<
   ]);
   await db.collection<SocialOffer>("social_offers").insertOne(offer);
 
-  const notification = await sendOfferNotification({
-    recipientUserId: farmUserId,
-    senderName: offer.senderName,
-    itemName: offer.itemName,
+  const recipientUserUuid = await ensureUserUuid(targetUser);
+  const notification = await createSocialOfferNotification({
     offerId: offer._id.toString(),
+    inventoryItemId: offer.inventoryItemId?.toString(),
+    recipientUserUuid,
+    actorUserUuid: currentUser.uuid,
+    actorName: offer.senderName,
+    itemName: offer.itemName,
+    quantity: offer.quantity,
+    priceCents: offer.priceCents,
+    message: offer.message,
   });
 
   return {
     offer: toSocialOfferView(offer),
     notificationSent: notification.sent > 0,
   };
+}
+
+export async function acceptSocialOffer(offerId: string) {
+  if (!ObjectId.isValid(offerId)) {
+    throw new SocialOfferError("Invalid offer");
+  }
+
+  const db = await getMongoDb();
+  const currentUser = await requireUserSession();
+  const now = new Date();
+  const offerObjectId = new ObjectId(offerId);
+  const offer = await db.collection<SocialOffer>("social_offers").findOneAndUpdate(
+    {
+      _id: offerObjectId,
+      farmUserId: currentUser.userId,
+    },
+    {
+      $set: {
+        status: "accepted",
+        updatedAt: now,
+      },
+    },
+    { returnDocument: "after" },
+  );
+
+  if (!offer) {
+    throw new SocialOfferError("Offer not found");
+  }
+
+  await db.collection("notifications").updateMany(
+    {
+      type: "offer",
+      socialOfferId: offerObjectId.toString(),
+      recipientUserUuid: currentUser.uuid,
+    },
+    {
+      $set: {
+        status: "accepted",
+        "pushEvents.offerAcceptedAt": now,
+        updatedAt: now,
+      },
+    },
+  );
+
+  return toSocialOfferView(offer);
 }
 
 export async function getSocialOffers(box: SocialOfferBox = "inbox") {
@@ -380,6 +432,26 @@ export async function getSocialOffers(box: SocialOfferBox = "inbox") {
     box,
     lastUpdated: offers[0]?.updatedAt.toISOString() ?? new Date().toISOString(),
   };
+}
+
+async function ensureUserUuid(user: User) {
+  if (typeof user.uuid === "string" && user.uuid) {
+    return user.uuid;
+  }
+
+  const db = await getMongoDb();
+  const uuid = randomUUID();
+  await db.collection<User>("users").updateOne(
+    { _id: user._id },
+    {
+      $set: {
+        uuid,
+        updatedAt: new Date(),
+      },
+    },
+  );
+
+  return uuid;
 }
 
 export class SocialReviewError extends Error {

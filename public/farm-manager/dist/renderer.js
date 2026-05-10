@@ -183,6 +183,7 @@ function drawObjects() {
     drawLayer(objects, "cropField", drawCropField);
     drawLayer(objects, "structure", drawStructure);
     objects.forEach(drawObjectLabel);
+    drawSelectedEditHandles(objects);
 }
 function drawLayer(objects, type, drawFn) {
     objects
@@ -566,6 +567,37 @@ function drawSelection(object) {
     ctx.shadowColor = "rgba(248, 224, 138, 0.5)";
     ctx.shadowBlur = 12;
     ctx.stroke(path);
+    ctx.restore();
+}
+function drawSelectedEditHandles(objects) {
+    if (state.mode !== "edit" && state.mode !== "move")
+        return;
+    const object = objects.find((item) => item.id === state.selectedId);
+    if (object)
+        drawEditHandles(object);
+}
+function drawEditHandles(object) {
+    const points = object.type === "path" ? object.points : object.polygon;
+    ctx.save();
+    points.forEach((point) => {
+        const p = project(point, object.type === "path" ? 0.5 : (object.height ?? 0) + 0.8);
+        ctx.save();
+        ctx.shadowColor = "rgba(248, 224, 138, 0.9)";
+        ctx.shadowBlur = 14;
+        ctx.fillStyle = "#fff1a6";
+        ctx.strokeStyle = "#3b2a14";
+        ctx.lineWidth = 3;
+        drawDiamond(p.x, p.y, 20, 16);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle = "#fffdf5";
+        ctx.strokeStyle = palette.selected;
+        ctx.lineWidth = 2;
+        drawDiamond(p.x, p.y, 10, 8);
+        ctx.fill();
+        ctx.stroke();
+    });
     ctx.restore();
 }
 function drawObjectLabel(object) {

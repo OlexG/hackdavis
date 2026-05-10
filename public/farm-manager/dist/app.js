@@ -26,6 +26,9 @@ let backendError = false;
 let onboardingVisible = true;
 let setupChoiceVisible = false;
 let activeCatalog = CATALOG;
+let autosaveTimer = null;
+let autosaveInFlight = false;
+let autosaveQueued = false;
 export function mountFarmManager(root = document, options = {}) {
     mountOptions = options;
     ui = createUi(root);
@@ -53,6 +56,10 @@ export function mountFarmManager(root = document, options = {}) {
     });
     const cleanup = () => {
         controller.abort();
+        if (autosaveTimer) {
+            window.clearTimeout(autosaveTimer);
+            autosaveTimer = null;
+        }
         if (hudTimer)
             window.clearInterval(hudTimer);
         if (state.playTimer) {
@@ -125,6 +132,10 @@ function hideOnboarding() {
     emitChromeChange();
 }
 async function persistToBackend() {
+    if (autosaveTimer) {
+        window.clearTimeout(autosaveTimer);
+        autosaveTimer = null;
+    }
     const result = await ApiClient.saveFarmState(DemoState.exportSnapshot());
     if (result.ok === false) {
         setBackendGate(result.error, true);
@@ -132,6 +143,29 @@ async function persistToBackend() {
     }
     clearBackendGate();
     return true;
+}
+function schedulePersistToBackend(delay = 700) {
+    if (!state.boundaryConfirmed || !state.commits.length)
+        return;
+    if (autosaveTimer)
+        window.clearTimeout(autosaveTimer);
+    autosaveTimer = window.setTimeout(() => {
+        autosaveTimer = null;
+        void runAutosave();
+    }, delay);
+}
+async function runAutosave() {
+    if (autosaveInFlight) {
+        autosaveQueued = true;
+        return;
+    }
+    autosaveInFlight = true;
+    await persistToBackend();
+    autosaveInFlight = false;
+    if (autosaveQueued) {
+        autosaveQueued = false;
+        schedulePersistToBackend(250);
+    }
 }
 function setBackendGate(message, isError = false) {
     backendMessage = message;
@@ -156,6 +190,7 @@ function createActions() {
         zoomIn: () => zoomAtScreenPoint(canvasCenter(), 0.18),
         zoomOut: () => zoomAtScreenPoint(canvasCenter(), -0.18),
         rotateView,
+        rotateBy,
         resetView,
         openBoundarySettings,
         useDemoBoundary: BoundaryMap.useDemoBoundary,
@@ -193,6 +228,7 @@ function getChromeState() {
         drawType: state.drawType,
         view: state.view,
         units: state.units,
+        rotation: state.rotation,
         onboardingVisible,
         setupChoiceVisible,
         ready: backendMessage === null,
@@ -230,12 +266,14 @@ function emitContentChange() {
 }
 function setMode(mode) {
     state.mode = mode;
-    ui.canvas.style.cursor = mode === "draw" ? "crosshair" : "grab";
+    ui.canvas.style.cursor = cursorForMode();
     updateDrawControls();
     emitChromeChange();
 }
 function setDrawType(drawType) {
     state.drawType = drawType;
+    state.mode = "draw";
+    ui.canvas.style.cursor = "crosshair";
     clearDraft();
     updateDrawControls();
     emitChromeChange();
@@ -243,21 +281,31 @@ function setDrawType(drawType) {
 function setView(view) {
     state.view = view;
     syncControlState();
+    schedulePersistToBackend();
     emitChromeChange();
 }
 function setUnits(units) {
     state.units = units;
     markPanelDirty();
     syncControlState();
+    schedulePersistToBackend();
     emitChromeChange();
 }
 function rotateView() {
     state.rotation = (state.rotation + 90) % 360;
     state.zoom = G.clamp(state.zoom, FarmRenderer.getZoomLimits().min, FarmRenderer.getZoomLimits().max);
+    schedulePersistToBackend();
+    emitChromeChange();
+}
+function rotateBy(degrees) {
+    state.rotation = normalizeRotation(state.rotation + degrees);
+    schedulePersistToBackend();
+    emitChromeChange();
 }
 function resetView() {
     state.rotation = 0;
     fitFarmToView();
+    schedulePersistToBackend();
 }
 function openBoundarySettings() {
     BoundaryMap.redraw();
@@ -270,41 +318,76 @@ function startManualSetup() {
     updateTimeline();
     markPanelDirty();
     setMode("draw");
+    schedulePersistToBackend(0);
 }
-function startAiSetup() {
-    DemoState.useAiPreset();
+async function startAiSetup(preferences) {
+    const result = await ApiClient.generateAiDraft(DemoState.exportSnapshot(), preferences);
+    if (result.ok === false) {
+        setBackendGate(result.error, true);
+        return false;
+    }
+    DemoState.importSnapshot(result.state);
+    hydrateCatalogAttrs();
     hideOnboarding();
-    state.selectedId = "squash-slot";
+    fitFarmToView();
     updateTimeline();
     markPanelDirty();
+    clearBackendGate();
     emitChromeChange();
+    emitContentChange();
+    return true;
 }
 function updateDrawControls() {
 }
 function onPointerDown(event) {
+    const rotating = event.button === 2 || event.shiftKey;
+    if (rotating)
+        event.preventDefault();
+    const world = screenToWorld(event);
+    const primaryPointer = event.button === 0 || (event.buttons & 1) === 1 || event.pointerType === "touch";
+    const editing = isEditMode();
+    const editingVertex = !rotating && editing && primaryPointer ? editableVertexAt(event, world) : null;
+    const movingObjectId = !rotating && editing && primaryPointer && !editingVertex ? movableObjectIdAt(world) : null;
     state.pointerDown = {
         x: event.clientX,
         y: event.clientY,
+        world,
         panX: state.panX,
-        panY: state.panY
+        panY: state.panY,
+        rotation: state.rotation,
+        rotating,
+        editingVertex,
+        movingObjectId,
+        moveTargets: movingObjectId ? getMoveTargets(movingObjectId) : []
     };
     state.isPanning = false;
     ui.canvas.setPointerCapture?.(event.pointerId);
 }
 function onPointerMove(event) {
-    if (state.pointerDown && event.buttons === 1) {
+    if (state.pointerDown && event.buttons !== 0) {
         const dx = event.clientX - state.pointerDown.x;
         const dy = event.clientY - state.pointerDown.y;
         if (Math.hypot(dx, dy) > 4)
             state.isPanning = true;
         if (state.isPanning) {
-            state.panX = state.pointerDown.panX + dx;
-            state.panY = state.pointerDown.panY + dy;
+            if (state.pointerDown.rotating) {
+                state.rotation = normalizeRotation(state.pointerDown.rotation + dx * 0.35);
+            }
+            else if (state.pointerDown.editingVertex) {
+                editVertexForPointer(event);
+            }
+            else if (state.pointerDown.movingObjectId) {
+                moveObjectsForPointer(event);
+            }
+            else if (!isEditMode()) {
+                state.panX = state.pointerDown.panX + dx;
+                state.panY = state.pointerDown.panY + dy;
+            }
             ui.canvas.style.cursor = "grabbing";
             return;
         }
     }
-    ui.canvas.style.cursor = state.mode === "draw" ? "crosshair" : "grab";
+    ui.canvas.style.cursor = cursorForMode();
     const world = screenToWorld(event);
     if (isInsideFarm(world))
         state.mouse = G.snapPoint(world);
@@ -312,6 +395,20 @@ function onPointerMove(event) {
         state.mouse = null;
 }
 function onPointerUp() {
+    if (state.pointerDown?.rotating && state.isPanning)
+        schedulePersistToBackend();
+    if (state.pointerDown?.editingVertex && state.isPanning) {
+        updateMovedObjectRelationships(state.pointerDown.editingVertex.id);
+        markPanelDirty();
+        schedulePersistToBackend();
+        emitContentChange();
+    }
+    if (state.pointerDown?.movingObjectId && state.isPanning) {
+        updateMovedObjectRelationships(state.pointerDown.movingObjectId);
+        markPanelDirty();
+        schedulePersistToBackend();
+        emitContentChange();
+    }
     window.setTimeout(() => {
         state.pointerDown = null;
         state.isPanning = false;
@@ -351,6 +448,164 @@ function zoomAtScreenPoint(cursor, delta) {
     const after = FarmRenderer.project(worldBefore);
     state.panX += cursor.x - after.x;
     state.panY += cursor.y - after.y;
+}
+function normalizeRotation(rotation) {
+    return ((rotation % 360) + 360) % 360;
+}
+function cursorForMode() {
+    if (state.mode === "draw")
+        return "crosshair";
+    if (isEditMode())
+        return "move";
+    return "grab";
+}
+function isEditMode() {
+    return state.mode === "edit" || state.mode === "move";
+}
+function editableVertexAt(event, world) {
+    const objects = editCandidateObjects(world);
+    let best = null;
+    let bestDistance = Infinity;
+    const rect = ui.canvas.getBoundingClientRect();
+    const screen = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    objects.forEach((object) => {
+        const pointKey = "polygon" in object ? "polygon" : "points" in object ? "points" : null;
+        if (!pointKey)
+            return;
+        const points = object[pointKey];
+        points.forEach((point, index) => {
+            const handleHeight = pointKey === "points" ? 0.5 : "height" in object ? object.height + 0.8 : 0.8;
+            const handle = FarmRenderer.project(point, handleHeight);
+            const distance = Math.hypot(screen.x - handle.x, screen.y - handle.y);
+            if (distance < bestDistance && distance <= 24) {
+                bestDistance = distance;
+                best = { id: object.id, pointKey, index, points: DemoState.clone(points) };
+            }
+        });
+    });
+    if (best) {
+        state.selectedId = best.id;
+        state.lastHitCycle = null;
+        markPanelDirty();
+        emitContentChange();
+    }
+    return best;
+}
+function editCandidateObjects(world) {
+    const selected = state.selectedId ? state.objects.find((object) => object.id === state.selectedId) : null;
+    const hits = isInsideFarm(world) ? FarmRenderer.hitTestAll(world) : [];
+    const objects = selected ? [selected] : [];
+    hits.forEach((object) => {
+        if (!objects.some((item) => item.id === object.id))
+            objects.push(object);
+    });
+    return objects;
+}
+function movableObjectIdAt(world) {
+    const fallbackId = state.selectedId && state.objects.some((object) => object.id === state.selectedId) ? state.selectedId : null;
+    if (!isInsideFarm(world))
+        return fallbackId;
+    const hits = FarmRenderer.hitTestAll(world);
+    if (!hits.length)
+        return fallbackId;
+    const selectedHit = state.selectedId && hits.find((object) => object.id === state.selectedId);
+    const object = selectedHit || hits[0];
+    state.selectedId = object.id;
+    state.lastHitCycle = null;
+    markPanelDirty();
+    emitContentChange();
+    return object.id;
+}
+function getMoveTargets(objectId) {
+    const ids = new Set([objectId]);
+    const object = state.objects.find((item) => item.id === objectId);
+    if (object?.type === "cropArea") {
+        state.objects.forEach((item) => {
+            if (item.type === "cropField" && item.parentId === object.id)
+                ids.add(item.id);
+        });
+    }
+    return state.objects
+        .filter((item) => ids.has(item.id))
+        .map((item) => ({
+        id: item.id,
+        polygon: "polygon" in item ? DemoState.clone(item.polygon) : undefined,
+        points: "points" in item ? DemoState.clone(item.points) : undefined
+    }));
+}
+function moveObjectsForPointer(event) {
+    const pointer = state.pointerDown;
+    if (!pointer)
+        return;
+    const world = screenToWorld(event);
+    const delta = [world[0] - pointer.world[0], world[1] - pointer.world[1]];
+    const primary = previewMovedObject(pointer.movingObjectId, pointer.moveTargets, delta);
+    if (!primary || !isMoveInsideFarm(primary))
+        return;
+    pointer.moveTargets.forEach((target) => {
+        const object = state.objects.find((item) => item.id === target.id);
+        if (!object)
+            return;
+        if ("polygon" in object && target.polygon)
+            object.polygon = translatePoints(target.polygon, delta);
+        if ("points" in object && target.points)
+            object.points = translatePoints(target.points, delta);
+    });
+    state.mouse = null;
+    markPanelDirty();
+    emitContentChange();
+}
+function editVertexForPointer(event) {
+    const pointer = state.pointerDown;
+    const vertex = pointer?.editingVertex;
+    if (!vertex)
+        return;
+    const world = screenToWorld(event);
+    if (!isInsideFarm(world))
+        return;
+    const object = state.objects.find((item) => item.id === vertex.id);
+    if (!object || !(vertex.pointKey in object))
+        return;
+    const points = DemoState.clone(vertex.points);
+    points[vertex.index] = world;
+    if (vertex.pointKey === "polygon" && points.length >= 3 && "polygon" in object)
+        object.polygon = points;
+    if (vertex.pointKey === "points" && points.length >= 2 && "points" in object)
+        object.points = points;
+    state.mouse = null;
+    markPanelDirty();
+    emitContentChange();
+}
+function previewMovedObject(objectId, targets, delta) {
+    const target = targets.find((item) => item.id === objectId);
+    if (!target)
+        return null;
+    return {
+        polygon: target.polygon ? translatePoints(target.polygon, delta) : undefined,
+        points: target.points ? translatePoints(target.points, delta) : undefined
+    };
+}
+function translatePoints(points, delta) {
+    return points.map((point) => [point[0] + delta[0], point[1] + delta[1]]);
+}
+function isMoveInsideFarm(object) {
+    const center = object.polygon?.length
+        ? G.polygonCentroid(object.polygon)
+        : object.points?.length
+            ? averagePoint(object.points)
+            : null;
+    return Boolean(center && isInsideFarm(center));
+}
+function averagePoint(points) {
+    const total = points.reduce((sum, point) => [sum[0] + point[0], sum[1] + point[1]], [0, 0]);
+    return [total[0] / points.length, total[1] / points.length];
+}
+function updateMovedObjectRelationships(objectId) {
+    const object = state.objects.find((item) => item.id === objectId);
+    if (object?.type !== "cropField")
+        return;
+    const parent = findContainingCropArea(object.polygon);
+    object.parentId = parent?.id || null;
 }
 function onCanvasClick(event) {
     if (state.isPanning)
@@ -462,6 +717,7 @@ function addObject(object) {
     state.objects.push(object);
     state.selectedId = object.id;
     markPanelDirty();
+    schedulePersistToBackend();
 }
 function findContainingCropArea(polygon) {
     const centroid = G.polygonCentroid(polygon);
@@ -560,6 +816,7 @@ function loadCommit(index) {
     state.selectedId = DemoState.currentObjects()[0]?.id || null;
     updateTimeline();
     markPanelDirty();
+    schedulePersistToBackend();
     emitContentChange();
 }
 function renameSelectedObject(name) {
@@ -569,6 +826,7 @@ function renameSelectedObject(name) {
         return;
     object.label = nextName;
     markPanelDirty();
+    schedulePersistToBackend();
     emitContentChange();
 }
 function deleteSelectedObject() {
@@ -577,6 +835,7 @@ function deleteSelectedObject() {
     DemoState.deleteObject(state.selectedId);
     state.lastHitCycle = null;
     markPanelDirty();
+    schedulePersistToBackend();
     emitContentChange();
 }
 function setCropCount(count) {
@@ -585,6 +844,7 @@ function setCropCount(count) {
         return;
     object.attrs.count = Math.max(0, Number(count) || 0);
     markPanelDirty();
+    schedulePersistToBackend();
     emitContentChange();
 }
 function setCropType(cropKey) {
@@ -607,6 +867,7 @@ function setCropType(cropKey) {
         applyCatalogEntry(object, "crop", cropKey);
     }
     markPanelDirty();
+    schedulePersistToBackend();
     emitContentChange();
 }
 function setCustomCropName(name) {
@@ -616,6 +877,7 @@ function setCustomCropName(name) {
         return;
     applyCustomEntry(object, "crop", nextName);
     markPanelDirty();
+    schedulePersistToBackend();
     emitContentChange();
 }
 function setLivestockSpecies(speciesKey) {
@@ -636,6 +898,7 @@ function setLivestockSpecies(speciesKey) {
         object.attrs.status = "Needs livestock details";
     }
     markPanelDirty();
+    schedulePersistToBackend();
     emitContentChange();
 }
 function setCustomLivestockName(name) {
@@ -645,6 +908,7 @@ function setCustomLivestockName(name) {
         return;
     applyCustomEntry(object, "livestock", nextName);
     markPanelDirty();
+    schedulePersistToBackend();
     emitContentChange();
 }
 function setLivestockBreed(breed) {
@@ -653,6 +917,7 @@ function setLivestockBreed(breed) {
         return;
     object.attrs.breed = breed;
     markPanelDirty();
+    schedulePersistToBackend();
     emitContentChange();
 }
 function setLivestockCount(count) {
@@ -661,6 +926,7 @@ function setLivestockCount(count) {
         return;
     object.attrs.count = Math.max(0, Number(count) || 0);
     markPanelDirty();
+    schedulePersistToBackend();
     emitContentChange();
 }
 function setStructureType(structureKey) {
@@ -669,6 +935,7 @@ function setStructureType(structureKey) {
         return;
     applyCatalogEntry(object, "structure", structureKey);
     markPanelDirty();
+    schedulePersistToBackend();
     emitContentChange();
 }
 function updateTimeline() {

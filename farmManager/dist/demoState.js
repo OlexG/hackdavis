@@ -221,7 +221,7 @@ export function importSnapshot(snapshot) {
             }
         ];
     state.commitIndex = Geometry.clamp(Number(snapshot.commitIndex) || 0, 0, state.commits.length - 1);
-    state.objects = clone(state.commits[state.commitIndex].objects);
+    state.objects = snapshot.objects?.length ? clone(snapshot.objects) : clone(state.commits[state.commitIndex].objects);
     state.units = snapshot.units || "ft";
     state.view = snapshot.view || "satellite";
     state.selectedId = snapshot.selectedId && state.objects.some((object) => object.id === snapshot.selectedId)

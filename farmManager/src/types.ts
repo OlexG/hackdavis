@@ -156,8 +156,23 @@ export interface FarmCommit {
 export interface PointerDownState {
   x: number;
   y: number;
+  world: Point;
   panX: number;
   panY: number;
+  rotation: number;
+  rotating: boolean;
+  editingVertex: {
+    id: string;
+    pointKey: "polygon" | "points";
+    index: number;
+    points: Point[];
+  } | null;
+  movingObjectId: string | null;
+  moveTargets: Array<{
+    id: string;
+    polygon?: Point[];
+    points?: Point[];
+  }>;
 }
 
 export interface HitCycleState {
@@ -167,7 +182,7 @@ export interface HitCycleState {
 }
 
 export interface FarmState {
-  mode: "select" | "draw";
+  mode: "select" | "move" | "edit" | "draw";
   drawType: DrawType;
   view: ViewMode;
   units: Units;
@@ -206,11 +221,29 @@ export interface FarmManagerSnapshot {
   selectedId: string | null;
 }
 
+export interface FarmAiDraftPreferences {
+  budgetCents: number;
+  goal: "food-security" | "profit" | "low-maintenance" | "balanced" | "family-kitchen" | "market-garden";
+  householdSize: number;
+  weeklyHours: number;
+  experience: "beginner" | "intermediate" | "advanced";
+  includeLivestock: boolean;
+  includeStructures: boolean;
+  irrigation: "none" | "hose" | "drip" | "sprinkler";
+  waterPriority: "low-water" | "balanced" | "high-production";
+  season: "spring" | "summer" | "fall" | "winter" | "year-round";
+  dietaryPreferences: string[];
+  excludedCropKeys: string[];
+  preferredCropKeys: string[];
+  notes: string;
+}
+
 export interface FarmManagerChromeState {
   mode: FarmState["mode"];
   drawType: DrawType;
   view: ViewMode;
   units: Units;
+  rotation: number;
   onboardingVisible: boolean;
   setupChoiceVisible: boolean;
   ready: boolean;
@@ -249,13 +282,14 @@ export interface FarmManagerActions {
   zoomIn: () => void;
   zoomOut: () => void;
   rotateView: () => void;
+  rotateBy: (degrees: number) => void;
   resetView: () => void;
   openBoundarySettings: () => void;
   useDemoBoundary: () => void;
   clearBoundary: () => void;
   saveBoundary: () => void;
   startManualSetup: () => void;
-  startAiSetup: () => void;
+  startAiSetup: (preferences: FarmAiDraftPreferences) => Promise<boolean>;
   loadCommit: (index: number) => void;
   togglePlayback: () => void;
   openCommitModal: () => void;

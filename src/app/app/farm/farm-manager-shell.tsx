@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { PixelGlyph, type PixelGlyphName } from "../_components/icons";
+import { MagicGenerateOverlay } from "../intelligence/magic-generate-overlay";
 import styles from "./farm-manager-shell.module.css";
 
 type FarmManagerChromeState = {
-  mode: "select" | "draw";
+  mode: "select" | "move" | "edit" | "draw";
   drawType: "cropArea" | "cropField" | "livestock" | "structure" | "path";
   view: "grid" | "satellite";
   units: "ft" | "m";
+  rotation: number;
   onboardingVisible: boolean;
   setupChoiceVisible: boolean;
   ready: boolean;
@@ -36,6 +39,23 @@ type FarmCommit = {
   name: string;
   autoName: string;
   objects: FarmObject[];
+};
+
+type FarmAiDraftPreferences = {
+  budgetCents: number;
+  goal: "food-security" | "profit" | "low-maintenance" | "balanced" | "family-kitchen" | "market-garden";
+  householdSize: number;
+  weeklyHours: number;
+  experience: "beginner" | "intermediate" | "advanced";
+  includeLivestock: boolean;
+  includeStructures: boolean;
+  irrigation: "none" | "hose" | "drip" | "sprinkler";
+  waterPriority: "low-water" | "balanced" | "high-production";
+  season: "spring" | "summer" | "fall" | "winter" | "year-round";
+  dietaryPreferences: string[];
+  excludedCropKeys: string[];
+  preferredCropKeys: string[];
+  notes: string;
 };
 
 type FarmCatalog = {
@@ -102,13 +122,14 @@ type FarmManagerActions = {
   zoomIn: () => void;
   zoomOut: () => void;
   rotateView: () => void;
+  rotateBy?: (degrees: number) => void;
   resetView: () => void;
   openBoundarySettings: () => void;
   useDemoBoundary: () => void;
   clearBoundary: () => void;
   saveBoundary: () => void;
   startManualSetup: () => void;
-  startAiSetup: () => void;
+  startAiSetup: (preferences: FarmAiDraftPreferences) => Promise<boolean>;
   loadCommit: (index: number) => void;
   togglePlayback: () => void;
   openCommitModal: () => void;
@@ -172,17 +193,40 @@ const emptyContent: FarmManagerContentState = {
 const mapLibreCssUrl = "https://unpkg.com/maplibre-gl@5.23.0/dist/maplibre-gl.css";
 const mapLibreScriptUrl = "https://unpkg.com/maplibre-gl@5.23.0/dist/maplibre-gl.js";
 
+const defaultAiDraftPreferences: FarmAiDraftPreferences = {
+  budgetCents: 75000,
+  goal: "balanced",
+  householdSize: 4,
+  weeklyHours: 8,
+  experience: "beginner",
+  includeLivestock: false,
+  includeStructures: true,
+  irrigation: "hose",
+  waterPriority: "balanced",
+  season: "spring",
+  dietaryPreferences: [],
+  excludedCropKeys: [],
+  preferredCropKeys: [],
+  notes: "",
+};
+
 export function FarmManagerShell() {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const mountRef = useRef<FarmManagerMount | null>(null);
+  const rotationDragRef = useRef<{ pointerId: number; x: number; moved: boolean } | null>(null);
+  const suppressCubeClickRef = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [commitName, setCommitName] = useState("");
+  const [aiDraftOpen, setAiDraftOpen] = useState(false);
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiDraftPreferences, setAiDraftPreferences] = useState<FarmAiDraftPreferences>(defaultAiDraftPreferences);
   const [actions, setActions] = useState<FarmManagerActions | undefined>(undefined);
   const [chrome, setChrome] = useState<FarmManagerChromeState>({
     mode: "select",
     drawType: "cropArea",
     view: "satellite",
     units: "ft",
+    rotation: 0,
     onboardingVisible: true,
     setupChoiceVisible: false,
     ready: false,
@@ -200,7 +244,7 @@ export function FarmManagerShell() {
         await loadScript("farm-manager-maplibre-js", mapLibreScriptUrl).catch(() => undefined);
 
         const loadRuntime = new Function("path", "return import(path)") as (path: string) => Promise<FarmManagerRuntime>;
-        const runtime = await loadRuntime("/farm-manager/dist/app.js");
+        const runtime = await loadRuntime(`/farm-manager/dist/app.js?v=${Date.now()}`);
 
         if (cancelled || !rootRef.current) return;
         const mount = runtime.mountFarmManager(rootRef.current, {
@@ -240,6 +284,49 @@ export function FarmManagerShell() {
     if (saved) setCommitName("");
   }
 
+  async function handleGenerateAiDraft() {
+    setAiGenerating(true);
+    setAiDraftOpen(false);
+    const generated = await actions?.startAiSetup(aiDraftPreferences);
+    setAiGenerating(false);
+    if (!generated) setAiDraftOpen(true);
+  }
+
+  function handleCubePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    suppressCubeClickRef.current = false;
+    rotationDragRef.current = { pointerId: event.pointerId, x: event.clientX, moved: false };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleCubePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = rotationDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.x;
+    if (Math.abs(dx) < 1) return;
+    drag.x = event.clientX;
+    drag.moved = true;
+    rotateFarmBy(dx * 0.55);
+  }
+
+  function handleCubePointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = rotationDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    rotationDragRef.current = null;
+    suppressCubeClickRef.current = drag.moved;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function rotateFarmBy(degrees: number) {
+    if (actions?.rotateBy) {
+      actions.rotateBy(degrees);
+      return;
+    }
+    if (Math.abs(degrees) >= 30) actions?.rotateView();
+  }
+
   return (
     <div ref={rootRef} className={`farm-manager-root ${styles.host}`}>
       <div className="app-shell">
@@ -254,6 +341,7 @@ export function FarmManagerShell() {
           <div className="toolbar-group">
             <div className="segmented" aria-label="Interaction mode">
               <button id="selectMode" className={chrome.mode === "select" ? "active" : ""} type="button" onClick={() => actions?.setMode("select")}>Select</button>
+              <button id="editMode" className={chrome.mode === "edit" || chrome.mode === "move" ? "active" : ""} type="button" onClick={() => actions?.setMode("move")}>Edit</button>
               <button id="drawMode" className={chrome.mode === "draw" ? "active" : ""} type="button" onClick={() => actions?.setMode("draw")}>Draw</button>
             </div>
 
@@ -300,6 +388,7 @@ export function FarmManagerShell() {
             onPointerCancel={(event) => actions?.handleCanvasPointerUp(event.nativeEvent)}
             onPointerLeave={() => actions?.handleCanvasPointerLeave()}
             onClick={(event) => actions?.handleCanvasClick(event.nativeEvent)}
+            onContextMenu={(event) => event.preventDefault()}
             onWheel={(event) => actions?.handleCanvasWheel(event.nativeEvent)}
           />
 
@@ -307,10 +396,44 @@ export function FarmManagerShell() {
             <FarmObjectPanel content={content} actions={actions} />
           </aside>
 
-          <div className="snapshot-chip">
-            <span id="snapshotDate">{content.timeline.snapshotDate}</span>
-            <strong id="snapshotLabel">{content.timeline.snapshotLabel}</strong>
-          </div>
+          <button
+            className="rotation-cube-control"
+            type="button"
+            aria-label="Rotate farm plan"
+            title="Drag to rotate"
+            onClick={() => {
+              if (suppressCubeClickRef.current) {
+                suppressCubeClickRef.current = false;
+                return;
+              }
+              rotateFarmBy(35);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                rotateFarmBy(-15);
+              }
+              if (event.key === "ArrowRight") {
+                event.preventDefault();
+                rotateFarmBy(15);
+              }
+            }}
+            onPointerDown={handleCubePointerDown}
+            onPointerMove={handleCubePointerMove}
+            onPointerUp={handleCubePointerUp}
+            onPointerCancel={handleCubePointerUp}
+          >
+            <span className="rotation-cube-scene" aria-hidden="true">
+              <span className="rotation-cube" style={{ transform: `rotateX(-32deg) rotateY(${45 + (chrome.rotation ?? 0)}deg)` }}>
+                <span className="rotation-cube-face rotation-cube-front" />
+                <span className="rotation-cube-face rotation-cube-back" />
+                <span className="rotation-cube-face rotation-cube-right" />
+                <span className="rotation-cube-face rotation-cube-left" />
+                <span className="rotation-cube-face rotation-cube-top" />
+                <span className="rotation-cube-face rotation-cube-bottom" />
+              </span>
+            </span>
+          </button>
         </main>
 
         <section id="onboarding" className={`onboarding ${chrome.onboardingVisible ? "" : "hidden"}`}>
@@ -346,14 +469,157 @@ export function FarmManagerShell() {
                   <strong>Manual</strong>
                   <span>Draw slots, then populate crop fields, paddocks, structures, and paths.</span>
                 </button>
-                <button id="aiSetup" className="choice-button" type="button" onClick={() => actions?.startAiSetup()}>
+                <button id="aiSetup" className="choice-button" type="button" onClick={() => setAiDraftOpen(true)}>
                   <strong>AI Draft</strong>
-                  <span>Future Gemini partitioning flow. This demo loads a preset recommendation.</span>
+                  <span>Generate an optimized Gemini plan from your boundary, budget, water, labor, and goals.</span>
                 </button>
               </div>
             </div>
           </div>
         </section>
+
+        <div id="aiDraftModal" className={`modal ${aiDraftOpen ? "" : "hidden"}`} role="dialog" aria-modal="true">
+          <div className="modal-card ai-draft-card">
+            <span className="eyebrow">AI Draft</span>
+            <h2>Generate Homestead Plan</h2>
+            <p>Gemini will choose from the full crop catalog and optimize the layout for these constraints.</p>
+            <div className="ai-draft-grid">
+              <label>
+                Budget
+                <input
+                  type="number"
+                  min="50"
+                  step="50"
+                  value={Math.round(aiDraftPreferences.budgetCents / 100)}
+                  onChange={(event) => setAiDraftPreferences((current) => ({
+                    ...current,
+                    budgetCents: Math.max(5000, Math.round(Number(event.target.value) * 100) || current.budgetCents),
+                  }))}
+                />
+              </label>
+              <label>
+                Goal
+                <select
+                  value={aiDraftPreferences.goal}
+                  onChange={(event) => setAiDraftPreferences((current) => ({
+                    ...current,
+                    goal: event.target.value as FarmAiDraftPreferences["goal"],
+                  }))}
+                >
+                  <option value="balanced">Balanced</option>
+                  <option value="food-security">Food security</option>
+                  <option value="family-kitchen">Family kitchen</option>
+                  <option value="market-garden">Market garden</option>
+                  <option value="profit">Profit</option>
+                  <option value="low-maintenance">Low maintenance</option>
+                </select>
+              </label>
+              <label>
+                Household
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={aiDraftPreferences.householdSize}
+                  onChange={(event) => setAiDraftPreferences((current) => ({
+                    ...current,
+                    householdSize: Math.max(1, Math.round(Number(event.target.value)) || current.householdSize),
+                  }))}
+                />
+              </label>
+              <label>
+                Weekly hours
+                <input
+                  type="number"
+                  min="1"
+                  max="80"
+                  value={aiDraftPreferences.weeklyHours}
+                  onChange={(event) => setAiDraftPreferences((current) => ({
+                    ...current,
+                    weeklyHours: Math.max(1, Math.round(Number(event.target.value)) || current.weeklyHours),
+                  }))}
+                />
+              </label>
+              <label>
+                Experience
+                <select
+                  value={aiDraftPreferences.experience}
+                  onChange={(event) => setAiDraftPreferences((current) => ({
+                    ...current,
+                    experience: event.target.value as FarmAiDraftPreferences["experience"],
+                  }))}
+                >
+                  <option value="beginner">Beginner</option>
+                  <option value="intermediate">Intermediate</option>
+                  <option value="advanced">Advanced</option>
+                </select>
+              </label>
+              <label>
+                Water
+                <select
+                  value={aiDraftPreferences.waterPriority}
+                  onChange={(event) => setAiDraftPreferences((current) => ({
+                    ...current,
+                    waterPriority: event.target.value as FarmAiDraftPreferences["waterPriority"],
+                  }))}
+                >
+                  <option value="balanced">Balanced</option>
+                  <option value="low-water">Low water</option>
+                  <option value="high-production">High production</option>
+                </select>
+              </label>
+              <label>
+                Irrigation
+                <select
+                  value={aiDraftPreferences.irrigation}
+                  onChange={(event) => setAiDraftPreferences((current) => ({
+                    ...current,
+                    irrigation: event.target.value as FarmAiDraftPreferences["irrigation"],
+                  }))}
+                >
+                  <option value="hose">Hose</option>
+                  <option value="drip">Drip</option>
+                  <option value="sprinkler">Sprinkler</option>
+                  <option value="none">None</option>
+                </select>
+              </label>
+              <label>
+                Season
+                <select
+                  value={aiDraftPreferences.season}
+                  onChange={(event) => setAiDraftPreferences((current) => ({
+                    ...current,
+                    season: event.target.value as FarmAiDraftPreferences["season"],
+                  }))}
+                >
+                  <option value="spring">Spring</option>
+                  <option value="summer">Summer</option>
+                  <option value="fall">Fall</option>
+                  <option value="winter">Winter</option>
+                  <option value="year-round">Year-round</option>
+                </select>
+              </label>
+            </div>
+            <label className="ai-draft-notes">
+              Notes
+              <textarea
+                value={aiDraftPreferences.notes}
+                placeholder="Favorite crops, dietary needs, market goals, things to avoid..."
+                onChange={(event) => setAiDraftPreferences((current) => ({ ...current, notes: event.target.value }))}
+              />
+            </label>
+            <div className="ai-draft-checks">
+              <label><input type="checkbox" checked={aiDraftPreferences.includeStructures} onChange={(event) => setAiDraftPreferences((current) => ({ ...current, includeStructures: event.target.checked }))} />Structures</label>
+              <label><input type="checkbox" checked={aiDraftPreferences.includeLivestock} onChange={(event) => setAiDraftPreferences((current) => ({ ...current, includeLivestock: event.target.checked }))} />Livestock</label>
+            </div>
+            <div className="modal-actions">
+              <button type="button" disabled={aiGenerating} onClick={() => setAiDraftOpen(false)}>Cancel</button>
+              <button className="active" type="button" disabled={aiGenerating} onClick={() => void handleGenerateAiDraft()}>
+                {aiGenerating ? "Generating" : "Generate"}
+              </button>
+            </div>
+          </div>
+        </div>
 
         <div id="commitModal" className={`modal ${content.commitModalOpen ? "" : "hidden"}`} role="dialog" aria-modal="true">
           <div className="modal-card">
@@ -399,6 +665,12 @@ export function FarmManagerShell() {
         ) : null}
       </div>
 
+      <MagicGenerateOverlay
+        visible={aiGenerating}
+        title="Growing Farm Draft"
+        ariaLabel="Generating AI farm draft"
+        targetId="app-main"
+      />
       {loadError ? <div className={styles.loadError}>Farm manager failed to load: {loadError}</div> : null}
     </div>
   );

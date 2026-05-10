@@ -12,6 +12,8 @@ export type OfferNotificationView = {
   type: "offer";
   status: OfferNotification["status"];
   listingId: string;
+  source?: OfferNotification["source"];
+  socialOfferId?: string;
   offeringName: string;
   farmName?: string;
   recipientUserUuid: string;
@@ -20,6 +22,7 @@ export type OfferNotificationView = {
   mode: OfferNotification["mode"];
   cashOfferCents?: number;
   barterListingIds: string[];
+  quantity?: string;
   note: string;
   createdAt: string;
   updatedAt: string;
@@ -41,6 +44,18 @@ export type RegisterPushTokenInput = {
   token: string;
   platform?: string;
   deviceName?: string;
+};
+
+export type CreateSocialOfferNotificationInput = {
+  offerId: string;
+  inventoryItemId?: string;
+  recipientUserUuid: string;
+  actorUserUuid: string;
+  actorName: string;
+  itemName: string;
+  quantity: string;
+  priceCents?: number;
+  message?: string;
 };
 
 export async function registerPushToken(input: RegisterPushTokenInput) {
@@ -127,6 +142,7 @@ export async function createOfferNotification(payload: CreateOfferPayload) {
     _id: new ObjectId(),
     type: "offer",
     status: "pending",
+    source: "shop",
     listingId,
     offeringName: offering.name,
     farmId: ObjectId.isValid(payload.farmId ?? "") ? new ObjectId(payload.farmId) : undefined,
@@ -151,6 +167,45 @@ export async function createOfferNotification(payload: CreateOfferPayload) {
   });
 
   return toOfferNotificationView(doc);
+}
+
+export async function createSocialOfferNotification(input: CreateSocialOfferNotificationInput) {
+  const db = await getMongoDb();
+  await ensureNotificationIndexes();
+
+  const now = new Date();
+  const doc: OfferNotification = {
+    _id: new ObjectId(),
+    type: "offer",
+    status: "pending",
+    source: "social",
+    socialOfferId: input.offerId,
+    listingId: input.inventoryItemId ?? input.offerId,
+    offeringName: input.itemName,
+    recipientUserUuid: input.recipientUserUuid,
+    actorUserUuid: input.actorUserUuid,
+    actorName: input.actorName,
+    mode: "cash",
+    cashOfferCents: input.priceCents,
+    barterListingIds: [],
+    quantity: input.quantity,
+    note: input.message,
+    pushEvents: { offerMadeAt: now },
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await db.collection<OfferNotification>("notifications").insertOne(doc);
+  const push = await sendPushNotificationToUserUuid(input.recipientUserUuid, {
+    title: "New Sunpatch offer",
+    body: `${input.actorName} sent an offer for ${input.itemName}.`,
+    data: { notificationId: doc._id.toString(), offerId: input.offerId, type: "social_offer" },
+  });
+
+  return {
+    notification: toOfferNotificationView(doc),
+    sent: push.sent,
+  };
 }
 
 export async function acceptOfferNotification(notificationId: string) {
@@ -250,6 +305,7 @@ async function ensureNotificationIndexes() {
     db.collection<OfferNotification>("notifications").createIndex({ type: 1, recipientUserUuid: 1, createdAt: -1 }),
     db.collection<OfferNotification>("notifications").createIndex({ type: 1, actorUserUuid: 1, createdAt: -1 }),
     db.collection<OfferNotification>("notifications").createIndex({ listingId: 1, createdAt: -1 }),
+    db.collection<OfferNotification>("notifications").createIndex({ socialOfferId: 1, createdAt: -1 }),
   ]);
 }
 
@@ -261,7 +317,7 @@ async function sendPushNotificationToUserUuid(
   const recipient = await db.collection<User>("users").findOne({ uuid: userUuid });
 
   if (!recipient) {
-    return;
+    return { sent: 0 };
   }
 
   const savedTokens = await db
@@ -276,10 +332,10 @@ async function sendPushNotificationToUserUuid(
   ].filter(isLikelyExpoPushToken);
 
   if (!tokens.length) {
-    return;
+    return { sent: 0 };
   }
 
-  await fetch(expoPushEndpoint, {
+  const response = await fetch(expoPushEndpoint, {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -288,7 +344,10 @@ async function sendPushNotificationToUserUuid(
     body: JSON.stringify(tokens.map((to) => ({ to, sound: "default", ...message }))),
   }).catch((error) => {
     console.warn("[notifications] Expo push failed:", error);
+    return null;
   });
+
+  return { sent: response?.ok ? tokens.length : 0 };
 }
 
 function toOfferNotificationView(doc: OfferNotification): OfferNotificationView {
@@ -297,6 +356,8 @@ function toOfferNotificationView(doc: OfferNotification): OfferNotificationView 
     type: "offer",
     status: doc.status,
     listingId: doc.listingId,
+    source: doc.source,
+    socialOfferId: doc.socialOfferId,
     offeringName: doc.offeringName,
     farmName: doc.farmName,
     recipientUserUuid: doc.recipientUserUuid,
@@ -305,6 +366,7 @@ function toOfferNotificationView(doc: OfferNotification): OfferNotificationView 
     mode: doc.mode,
     cashOfferCents: doc.cashOfferCents,
     barterListingIds: doc.barterListingIds ?? [],
+    quantity: doc.quantity,
     note: doc.note ?? "",
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),

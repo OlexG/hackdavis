@@ -1,6 +1,7 @@
 import { parseFarmManagerStateResponse } from "./stateContract.js";
 const stateEndpoint = "/api/farm/manager-state";
 const catalogEndpoint = "/api/farm/catalog";
+const aiDraftEndpoint = "/api/farm/ai-draft";
 export async function loadFarmCatalog() {
     try {
         const response = await fetch(catalogEndpoint, { cache: "no-store" });
@@ -47,6 +48,34 @@ export async function saveFarmState(state) {
     }
     catch (error) {
         return { ok: false, error: readUnknownError(error, "Unable to save farm state") };
+    }
+}
+export async function generateAiDraft(state, preferences) {
+    try {
+        const response = await fetch(aiDraftEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                boundaryGeo: state.boundaryGeo,
+                boundaryLocal: state.boundaryLocal,
+                preferences
+            })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            return { ok: false, error: readError(data, "Unable to generate AI farm draft") };
+        }
+        const parsed = parseFarmManagerStateResponse({
+            state: data.state,
+            hasSavedFarm: true,
+            updatedAt: data.updatedAt
+        });
+        if (!parsed.state)
+            return { ok: false, error: "AI farm draft response was invalid" };
+        return { ok: true, state: parsed.state, updatedAt: parsed.updatedAt };
+    }
+    catch (error) {
+        return { ok: false, error: readUnknownError(error, "Unable to generate AI farm draft") };
     }
 }
 function parseCatalog(data) {

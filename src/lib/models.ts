@@ -304,6 +304,8 @@ export type OfferNotification = {
   type: "offer";
   status: "pending" | "accepted" | "declined";
   listingId: string;
+  source?: "shop" | "social";
+  socialOfferId?: string;
   offeringName: string;
   farmId?: ObjectId;
   farmName?: string;
@@ -313,6 +315,7 @@ export type OfferNotification = {
   mode: "cash" | "barter";
   cashOfferCents?: number;
   barterListingIds?: string[];
+  quantity?: string;
   note?: string;
   pushEvents?: {
     offerMadeAt?: Date;

@@ -123,6 +123,11 @@ html {
   animation: magic-backdrop-fade 240ms steps(6, end) both;
 }
 
+.magic-backdrop-clear {
+  background: transparent;
+  pointer-events: auto;
+}
+
 .magic-stars {
   position: absolute;
   inset: 0;

@@ -33,10 +33,22 @@ const sparkLayout: { left: string; top: string; delay: string; tone: "pink" | "g
 
 const EXPECTED_SECONDS = 30;
 
-export function MagicGenerateOverlay({ visible }: { visible: boolean }) {
+export function MagicGenerateOverlay({
+  visible,
+  title = "Growing Intelligence",
+  ariaLabel = "Generating farm intelligence",
+  dimBackdrop = true,
+  targetId = "app-main",
+}: {
+  visible: boolean;
+  title?: string;
+  ariaLabel?: string;
+  dimBackdrop?: boolean;
+  targetId?: string;
+}) {
   const [phraseIndex, setPhraseIndex] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const mountTarget = typeof document === "undefined" ? null : document.getElementById("app-main");
+  const mountTarget = typeof document === "undefined" ? null : document.getElementById(targetId);
 
   useEffect(() => {
     if (!visible) {
@@ -60,14 +72,14 @@ export function MagicGenerateOverlay({ visible }: { visible: boolean }) {
 
   useEffect(() => {
     if (!visible || typeof document === "undefined") return;
-    const target = document.getElementById("app-main");
+    const target = document.getElementById(targetId);
     if (!target) return;
     const previousOverflow = target.style.overflow;
     target.style.overflow = "hidden";
     return () => {
       target.style.overflow = previousOverflow;
     };
-  }, [visible]);
+  }, [targetId, visible]);
 
   if (!visible || !mountTarget) {
     return null;
@@ -77,20 +89,20 @@ export function MagicGenerateOverlay({ visible }: { visible: boolean }) {
     <div
       role="status"
       aria-live="polite"
-      aria-label="Generating farm intelligence"
-      className="magic-backdrop absolute inset-0 z-[60] flex items-center justify-center px-6"
+      aria-label={ariaLabel}
+      className={`${dimBackdrop ? "magic-backdrop" : "magic-backdrop-clear"} absolute inset-0 z-[60] flex items-center justify-center px-6`}
     >
-      <div className="magic-stars" aria-hidden />
-      <div className="magic-scanlines" aria-hidden />
+      {dimBackdrop ? <div className="magic-stars" aria-hidden /> : null}
+      {dimBackdrop ? <div className="magic-scanlines" aria-hidden /> : null}
 
-      {sparkLayout.map((spark, index) => (
+      {dimBackdrop ? sparkLayout.map((spark, index) => (
         <span
           key={index}
           aria-hidden
           className={`magic-spark ${spark.tone === "gold" ? "magic-spark-gold" : spark.tone === "pink" ? "magic-spark-pink" : ""}`}
           style={{ left: spark.left, top: spark.top, animationDelay: spark.delay }}
         />
-      ))}
+      )) : null}
 
       <div
         style={{ ["--pixel-frame-bg" as string]: "#1c2c4a" }}
@@ -107,7 +119,7 @@ export function MagicGenerateOverlay({ visible }: { visible: boolean }) {
           Gemini · Almanac
         </p>
         <h2 className="mt-1 font-mono text-2xl font-black uppercase leading-tight tracking-[0.12em] text-[#34432b] drop-shadow-[2px_2px_0_#fffdf5]">
-          Growing Intelligence
+          {title}
         </h2>
 
         <div className="mt-4 grid h-6 place-items-center">

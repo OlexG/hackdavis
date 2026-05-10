@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { PixelGlyph } from "../_components/icons";
-import type { OfferNotificationView } from "@/lib/notifications";
+import type { SocialOfferView } from "@/lib/social";
 
-export function OffersBoard({ initialOffers }: { initialOffers: OfferNotificationView[] }) {
+export function OffersBoard({ initialOffers }: { initialOffers: SocialOfferView[] }) {
   const [offers, setOffers] = useState(initialOffers);
   const [error, setError] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -14,18 +14,18 @@ export function OffersBoard({ initialOffers }: { initialOffers: OfferNotificatio
     setError(null);
 
     try {
-      const response = await fetch(`/api/offers/${offerId}`, {
+      const response = await fetch(`/api/social/offers/${offerId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "accept" }),
       });
-      const data = (await response.json()) as { offer?: OfferNotificationView; error?: string };
+      const data = (await response.json()) as { offer?: SocialOfferView; error?: string };
 
       if (!response.ok || !data.offer) {
         throw new Error(data.error ?? "Unable to accept offer");
       }
 
-      setOffers((current) => current.map((offer) => (offer.id === offerId ? data.offer as OfferNotificationView : offer)));
+      setOffers((current) => current.map((offer) => (offer.id === offerId ? data.offer as SocialOfferView : offer)));
     } catch (acceptError) {
       setError(acceptError instanceof Error ? acceptError.message : "Unable to accept offer");
     } finally {
@@ -43,7 +43,7 @@ export function OffersBoard({ initialOffers }: { initialOffers: OfferNotificatio
             </span>
             <div>
               <p className="font-mono text-[10px] font-black uppercase tracking-[0.16em] text-[#7a3148]">Offers</p>
-              <h1 className="text-2xl font-black text-[#2d2313]">Shop offers and barters</h1>
+              <h1 className="text-2xl font-black text-[#2d2313]">Social offers</h1>
             </div>
           </div>
           <span className="rounded-none border-2 border-[#3b2a14] bg-[#fff4dc] px-3 py-1 font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#7a461f] shadow-[0_2px_0_#3b2a14]">
@@ -59,15 +59,15 @@ export function OffersBoard({ initialOffers }: { initialOffers: OfferNotificatio
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="font-mono text-[10px] font-black uppercase tracking-[0.12em] text-[#7a6843]">
-                  {offer.mode === "barter" ? "Barter offer" : "Cash offer"} · {offer.status}
+                  Neighbor offer · {offer.status}
                 </p>
-                <h2 className="mt-1 text-lg font-black text-[#2d311f]">{offer.offeringName}</h2>
+                <h2 className="mt-1 text-lg font-black text-[#2d311f]">{offer.itemName}</h2>
                 <p className="mt-1 text-sm font-semibold text-[#5e4a26]">
-                  {offer.actorName} offered {offer.mode === "cash" ? formatMoney(offer.cashOfferCents ?? 0) : `${offer.barterListingIds.length} barter listing${offer.barterListingIds.length === 1 ? "" : "s"}`}.
+                  {offer.senderName} offered {offer.quantity}{offer.priceCents !== undefined ? ` for ${formatMoney(offer.priceCents)}` : ""}.
                 </p>
-                {offer.note ? <p className="mt-2 text-sm text-[#6b6254]">{offer.note}</p> : null}
+                {offer.message ? <p className="mt-2 text-sm text-[#6b6254]">{offer.message}</p> : null}
               </div>
-              {offer.status === "pending" ? (
+              {offer.status === "sent" ? (
                 <button
                   type="button"
                   disabled={updatingId === offer.id}

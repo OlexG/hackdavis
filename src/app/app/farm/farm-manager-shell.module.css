@@ -74,9 +74,9 @@
 :global(.farm-manager-root input[type="text"]),
 :global(.farm-manager-root input[type="search"]),
 :global(.farm-manager-root input[type="number"]),
-:global(.farm-manager-root select) {
+:global(.farm-manager-root select),
+:global(.farm-manager-root textarea) {
   width: 100%;
-  height: 36px;
   border: 2px solid var(--wood-soft);
   border-radius: 0;
   padding: 0 10px;
@@ -87,10 +87,24 @@
   font-weight: 700;
 }
 
+:global(.farm-manager-root input[type="text"]),
+:global(.farm-manager-root input[type="search"]),
+:global(.farm-manager-root input[type="number"]),
+:global(.farm-manager-root select) {
+  height: 36px;
+}
+
+:global(.farm-manager-root textarea) {
+  min-height: 72px;
+  padding: 10px;
+  resize: vertical;
+}
+
 :global(.farm-manager-root input[type="text"]:focus),
 :global(.farm-manager-root input[type="search"]:focus),
 :global(.farm-manager-root input[type="number"]:focus),
-:global(.farm-manager-root select:focus) {
+:global(.farm-manager-root select:focus),
+:global(.farm-manager-root textarea:focus) {
   border-color: #9bb979;
 }
 
@@ -364,6 +378,97 @@
   cursor: crosshair;
 }
 
+:global(.farm-manager-root .rotation-cube-control) {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  z-index: 4;
+  display: grid;
+  width: 58px;
+  height: 58px;
+  min-width: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+:global(.farm-manager-root .rotation-cube-control:hover) {
+  background: transparent;
+}
+
+:global(.farm-manager-root .rotation-cube-control:active) {
+  transform: none;
+  box-shadow: none;
+  cursor: grabbing;
+}
+
+:global(.farm-manager-root .rotation-cube-control:focus-visible) {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+:global(.farm-manager-root .rotation-cube-scene) {
+  display: block;
+  width: 44px;
+  height: 44px;
+  perspective: 220px;
+  filter: drop-shadow(0 7px 5px rgba(0, 0, 0, 0.3));
+  pointer-events: none;
+}
+
+:global(.farm-manager-root .rotation-cube) {
+  position: relative;
+  display: block;
+  width: 34px;
+  height: 34px;
+  margin: 5px;
+  transform-style: preserve-3d;
+  transition: transform 80ms linear;
+}
+
+:global(.farm-manager-root .rotation-cube-face) {
+  position: absolute;
+  inset: 0;
+  border: 2px solid #3b2a14;
+  opacity: 0.96;
+  image-rendering: pixelated;
+}
+
+:global(.farm-manager-root .rotation-cube-front) {
+  background: #7da854;
+  transform: translateZ(17px);
+}
+
+:global(.farm-manager-root .rotation-cube-back) {
+  background: #c59d5b;
+  transform: rotateY(180deg) translateZ(17px);
+}
+
+:global(.farm-manager-root .rotation-cube-right) {
+  background: #c98d57;
+  transform: rotateY(90deg) translateZ(17px);
+}
+
+:global(.farm-manager-root .rotation-cube-left) {
+  background: #5c7c4c;
+  transform: rotateY(-90deg) translateZ(17px);
+}
+
+:global(.farm-manager-root .rotation-cube-top) {
+  background: #f8e08a;
+  transform: rotateX(90deg) translateZ(17px);
+}
+
+:global(.farm-manager-root .rotation-cube-bottom) {
+  background: #416f40;
+  transform: rotateX(-90deg) translateZ(17px);
+}
+
 :global(.farm-manager-root .object-panel) {
   position: absolute;
   top: 18px;
@@ -548,35 +653,6 @@
   text-align: left;
 }
 
-:global(.farm-manager-root .snapshot-chip) {
-  position: absolute;
-  left: 18px;
-  top: 18px;
-  z-index: 3;
-  min-width: 210px;
-  padding: 11px 13px;
-  border: 2px solid var(--soil);
-  border-radius: 0;
-  background: rgba(255, 253, 245, 0.92);
-  color: var(--text);
-  box-shadow: 0 3px 0 var(--soil), 0 18px 45px rgba(0, 0, 0, 0.2);
-}
-
-:global(.farm-manager-root .snapshot-chip span) {
-  display: block;
-  margin-bottom: 2px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-:global(.farm-manager-root .snapshot-chip strong) {
-  display: block;
-  color: #2d311f;
-  font-size: 16px;
-  font-weight: 900;
-}
-
 :global(.farm-manager-root .onboarding) {
   position: absolute;
   inset: 0;
@@ -755,6 +831,44 @@
   margin-top: 14px;
 }
 
+:global(.farm-manager-root .ai-draft-card) {
+  width: min(760px, 100%);
+}
+
+:global(.farm-manager-root .ai-draft-grid) {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+:global(.farm-manager-root .ai-draft-grid label),
+:global(.farm-manager-root .ai-draft-notes),
+:global(.farm-manager-root .ai-draft-checks label) {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+:global(.farm-manager-root .ai-draft-notes) {
+  margin-top: 12px;
+}
+
+:global(.farm-manager-root .ai-draft-checks) {
+  display: flex;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+:global(.farm-manager-root .ai-draft-checks label) {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
 :global(.farm-manager-root .slot-actions) {
   display: grid;
   gap: 8px;
@@ -881,11 +995,11 @@
     max-height: 45%;
   }
 
-  :global(.farm-manager-root .snapshot-chip) {
-    left: 12px;
-    top: 12px;
+  :global(.farm-manager-root .ai-draft-grid) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
 
 @media (max-width: 660px) {
   :global(.farm-manager-root .toolbar-group) {
@@ -894,5 +1008,9 @@
 
   :global(.farm-manager-root .topbar) {
     max-height: none;
+  }
+
+  :global(.farm-manager-root .ai-draft-grid) {
+    grid-template-columns: 1fr;
   }
 }
