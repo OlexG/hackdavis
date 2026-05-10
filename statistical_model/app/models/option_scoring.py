@@ -12,18 +12,18 @@ from pymongo.database import Database
 SQUARE_FEET_PER_ACRE = 43_560
 
 PLANT_CATEGORY_DEFAULTS = {
-    "sprouts": {"price": 3.5, "labor": 210, "seed": 900, "fertilizer": 220, "market": 0.58, "scale": 0.42},
-    "microgreen": {"price": 5.0, "labor": 260, "seed": 1200, "fertilizer": 180, "market": 0.62, "scale": 0.38},
-    "herb": {"price": 3.25, "labor": 145, "seed": 580, "fertilizer": 260, "market": 0.72, "scale": 0.64},
-    "leafy_green": {"price": 1.75, "labor": 130, "seed": 420, "fertilizer": 420, "market": 0.78, "scale": 0.78},
-    "vegetable": {"price": 1.35, "labor": 120, "seed": 360, "fertilizer": 520, "market": 0.74, "scale": 0.82},
-    "root": {"price": 1.15, "labor": 95, "seed": 260, "fertilizer": 440, "market": 0.68, "scale": 0.84},
-    "fruit": {"price": 1.85, "labor": 150, "seed": 620, "fertilizer": 500, "market": 0.76, "scale": 0.74},
-    "fruit_tree": {"price": 2.3, "labor": 110, "seed": 950, "fertilizer": 620, "market": 0.72, "scale": 0.70},
-    "tree_nut": {"price": 3.4, "labor": 85, "seed": 1100, "fertilizer": 700, "market": 0.82, "scale": 0.78},
-    "grain": {"price": 0.34, "labor": 35, "seed": 150, "fertilizer": 340, "market": 0.64, "scale": 0.92},
-    "legume": {"price": 0.75, "labor": 55, "seed": 180, "fertilizer": 220, "market": 0.66, "scale": 0.86},
-    "succulent": {"price": 2.4, "labor": 90, "seed": 300, "fertilizer": 120, "market": 0.52, "scale": 0.48},
+    "sprouts": {"price": 3.5, "labor": 210, "seed": 900, "fertilizer": 220, "market": 0.58, "scale": 0.42, "gross_cap": 80_000},
+    "microgreen": {"price": 5.0, "labor": 260, "seed": 1200, "fertilizer": 180, "market": 0.62, "scale": 0.38, "gross_cap": 90_000},
+    "herb": {"price": 3.25, "labor": 145, "seed": 580, "fertilizer": 260, "market": 0.72, "scale": 0.64, "gross_cap": 55_000},
+    "leafy_green": {"price": 1.75, "labor": 130, "seed": 420, "fertilizer": 420, "market": 0.78, "scale": 0.78, "gross_cap": 48_000},
+    "vegetable": {"price": 1.35, "labor": 120, "seed": 360, "fertilizer": 520, "market": 0.74, "scale": 0.82, "gross_cap": 36_000},
+    "root": {"price": 1.15, "labor": 95, "seed": 260, "fertilizer": 440, "market": 0.68, "scale": 0.84, "gross_cap": 30_000},
+    "fruit": {"price": 1.85, "labor": 150, "seed": 620, "fertilizer": 500, "market": 0.76, "scale": 0.74, "gross_cap": 42_000},
+    "fruit_tree": {"price": 2.3, "labor": 110, "seed": 950, "fertilizer": 620, "market": 0.72, "scale": 0.70, "gross_cap": 24_000},
+    "tree_nut": {"price": 3.4, "labor": 85, "seed": 1100, "fertilizer": 700, "market": 0.82, "scale": 0.78, "gross_cap": 18_000},
+    "grain": {"price": 0.34, "labor": 35, "seed": 150, "fertilizer": 340, "market": 0.64, "scale": 0.92, "gross_cap": 3_500},
+    "legume": {"price": 0.75, "labor": 55, "seed": 180, "fertilizer": 220, "market": 0.66, "scale": 0.86, "gross_cap": 5_500},
+    "succulent": {"price": 2.4, "labor": 90, "seed": 300, "fertilizer": 120, "market": 0.52, "scale": 0.48, "gross_cap": 38_000},
 }
 
 ANIMAL_DEFAULTS = {
@@ -127,7 +127,8 @@ def score_plant(
     market_score = clamp(float(defaults["market"]) + (0.08 if market else 0), 0.2, 0.95)
     scale_factor = float(defaults["scale"])
 
-    gross_per_acre = capacity_per_acre * yield_count * unit_price * scale_factor * climate_score * soil_score
+    raw_gross_per_acre = capacity_per_acre * yield_count * unit_price * scale_factor * climate_score * soil_score
+    gross_per_acre = compressed_gross_per_acre(raw_gross_per_acre, float(defaults["gross_cap"]))
     management_penalty = 1 + max(0, 1 - ideal_space) * 0.18
     cost_per_acre = (
         float(defaults["seed"])
@@ -452,6 +453,13 @@ def animal_scenario_profits(
     volatility = 0.20 + (1 - climate_score) * 0.16 + (1 - market_score) * 0.14
     shocks = rng.normal(1.0, volatility, scenario_count)
     return [expected_profit * max(0.05, shock) for shock in shocks]
+
+
+def compressed_gross_per_acre(raw_gross_per_acre: float, gross_cap: float) -> float:
+    if raw_gross_per_acre <= gross_cap:
+        return raw_gross_per_acre
+    overage = raw_gross_per_acre - gross_cap
+    return gross_cap + math.sqrt(overage * gross_cap) * 0.05
 
 
 def top_reasons(
