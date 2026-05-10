@@ -103,6 +103,12 @@ type PlannerResult = {
   error?: string;
 };
 
+type ScoredCrop = {
+  crop: AiDraftCrop;
+  score: number;
+  family: string;
+};
+
 type Placement = {
   x: number;
   y: number;
@@ -385,7 +391,8 @@ function plannerPrompt(input: {
     "You are designing an optimized editable homestead farm plan.",
     "Return only data that matches the schema. Use only cropKey, livestockKey, and structureKey values from the allowed lists.",
     "Optimize for real farm usefulness: budget, weekly labor, crop diversity, water fit, household food value, maintenance level, and usable access.",
-    "Do not invent crop names. Prefer compact annual vegetables for small sites, add perennials only when space and goal allow, and avoid livestock when labor or budget is too low.",
+    "Do not invent crop names. Prefer popular homestead staples that match the goal, season, labor, water, household size, and budget. Avoid niche medicinal, ornamental, sprout, orchard, and slow perennial crops unless the user's goals and site size clearly justify them.",
+    "For livestock, match animal size to the selected land and budget: small sites should use compact animals like quail, chickens, rabbits, or ducks; larger sites can use pigs, sheep, goats, and only very large well-funded sites should use cows.",
     "Use layoutGeometry to choose crop priorities for the available land shape.",
     "When includeStructures is true, include at least one compact support structure. When includeLivestock is true and the site has enough area, include a small livestock paddock.",
     "Do not choose shapes and do not place coordinates. The deterministic layout engine will partition the land outline, clip plots to the site geometry, and preserve walking gaps.",
@@ -630,24 +637,31 @@ function ensureSupportAssignments(
   input: {
     areaSquareFeet: number;
     preferences: FarmAiDraftPreferences;
+    candidateCrops: AiDraftCrop[];
     livestock: AiDraftLivestock[];
     structures: AiDraftStructure[];
   },
 ): GeminiFarmIntent {
+  const cropAssignments = ensureCropAssignments(intent.cropAssignments, input.candidateCrops, input.preferences, input.areaSquareFeet);
   const canPlaceLivestock = input.areaSquareFeet >= 650;
   const canPlaceStructures = input.areaSquareFeet >= 450;
-  const livestockAssignments = canPlaceLivestock ? [...intent.livestockAssignments] : [];
+  let livestockAssignments = canPlaceLivestock ? [...intent.livestockAssignments] : [];
   const structureAssignments = canPlaceStructures ? [...intent.structures] : [];
   const structureKeys = new Set(input.structures.map((structure) => structure.key));
 
-  if (input.preferences.includeLivestock && input.livestock.length && canPlaceLivestock && !livestockAssignments.length) {
-    const animal = pickLivestock(input.livestock);
-    livestockAssignments.push({
+  if (input.preferences.includeLivestock && input.livestock.length && canPlaceLivestock) {
+    const animal = selectLivestockForSite(
+      input.livestock,
+      input.preferences,
+      input.areaSquareFeet,
+      livestockAssignments[0]?.livestockKey,
+    );
+    livestockAssignments = animal ? [{
       livestockKey: animal.key,
-      count: Math.max(1, Math.min(6, animal.defaultCount || 2)),
-      areaRatio: input.areaSquareFeet < 1500 ? 0.11 : 0.14,
-      reason: "Reserved as a compact livestock paddock because livestock was enabled for a site with enough room.",
-    });
+      count: livestockCountForSite(animal, input.preferences, input.areaSquareFeet),
+      areaRatio: livestockAreaRatioForSite(animal, input.areaSquareFeet),
+      reason: `Selected by deterministic size-fit scoring for ${Math.round(input.areaSquareFeet)} sq ft, budget, labor, experience, water, season, and household constraints.`,
+    }] : [];
   }
 
   if (input.preferences.includeStructures && input.structures.length && canPlaceStructures) {
@@ -667,13 +681,32 @@ function ensureSupportAssignments(
 
   return {
     ...intent,
+    cropAssignments,
     livestockAssignments: normalizeRatios(livestockAssignments, 0.2),
     structures: normalizeRatios(structureAssignments, 0.14),
   };
 }
 
-function pickLivestock(livestock: AiDraftLivestock[]) {
-  return livestock.find((animal) => /\b(chicken|hen|duck|rabbit)\b/i.test(animal.name)) || livestock[0];
+function ensureCropAssignments(
+  assignments: GeminiFarmIntent["cropAssignments"],
+  candidateCrops: AiDraftCrop[],
+  preferences: FarmAiDraftPreferences,
+  areaSquareFeet: number,
+): GeminiFarmIntent["cropAssignments"] {
+  const targetCount = areaSquareFeet < 700 ? 2 : areaSquareFeet < 1500 ? 3 : areaSquareFeet < 2500 ? 4 : areaSquareFeet < 7000 ? 6 : 8;
+  const assignmentMap = new Map(assignments.map((assignment) => [assignment.cropKey, assignment]));
+  const selected = selectDiverseCrops(candidateCrops, preferences, Math.min(12, Math.max(targetCount + 4, assignments.length)), areaSquareFeet);
+  const merged = selected.slice(0, Math.max(targetCount, Math.min(8, selected.length))).map((crop) => {
+    const existing = assignmentMap.get(crop.key);
+    return {
+      cropKey: crop.key,
+      areaRatio: existing?.areaRatio ?? 0.08,
+      estimatedPlantCount: existing?.estimatedPlantCount ?? (crop.defaultCount || 12),
+      reason: existing?.reason || "Selected by deterministic popularity, season, labor, water, budget, household, and goal scoring.",
+    };
+  });
+
+  return normalizeRatios(merged, 0.72);
 }
 
 function preferredStructureKeys(hasLivestock: boolean) {
@@ -772,7 +805,10 @@ function createObjectsForLayout(
         cropName: crop.name,
         count: assignment.estimatedPlantCount,
         visual: crop.visual,
-        growth: 0.35,
+        growth: cropRenderGrowth(crop),
+        idealSpaceSqft: crop.idealSpaceSqft,
+        harvestCycles: crop.harvestCycles,
+        catalogKnown: true,
       },
     });
   });
@@ -811,6 +847,15 @@ function createObjectsForLayout(
   });
 
   return objects;
+}
+
+function cropRenderGrowth(crop: AiDraftCrop) {
+  const text = `${crop.key} ${crop.name} ${crop.visual}`.toLowerCase();
+  if (/\btomato|tomatoes\b/.test(text)) return 0.68;
+  if (/\bpepper|eggplant|strawberr|blueberr|blackberr|raspberr\b/.test(text)) return 0.62;
+  if (/\bcucumber|squash|pumpkin|melon|bean|pea\b/.test(text)) return 0.58;
+  if (/\blettuce|spinach|kale|chard|basil|cilantro|parsley\b/.test(text)) return 0.64;
+  return 0.52;
 }
 
 function rectPolygon({ x, y, width, depth }: Placement): LocalPoint[] {
@@ -1380,26 +1425,313 @@ function polygonCentroid(points: LocalPoint[]): LocalPoint {
 function selectCandidateCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPreferences) {
   const excluded = new Set(preferences.excludedCropKeys);
   const preferred = new Set(preferences.preferredCropKeys);
-  return crops
+  const scored = crops
     .filter((crop) => !excluded.has(crop.key))
-    .map((crop) => ({ crop, score: cropScore(crop, preferences, preferred.has(crop.key)) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 42)
-    .map((item) => item.crop);
+    .map((crop) => ({
+      crop,
+      score: cropScore(crop, preferences, preferred.has(crop.key)),
+      family: cropFamily(crop),
+    }))
+    .sort((a, b) => b.score - a.score || a.crop.name.localeCompare(b.crop.name));
+
+  return diversifyScoredCrops(scored, 42).map((item) => item.crop);
 }
 
-function cropScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences, preferred: boolean) {
+function selectDiverseCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPreferences, limit: number, areaSquareFeet: number) {
+  const preferred = new Set(preferences.preferredCropKeys);
+  const scored = crops
+    .map((crop) => ({
+      crop,
+      score: cropScore(crop, preferences, preferred.has(crop.key), areaSquareFeet),
+      family: cropFamily(crop),
+    }))
+    .sort((a, b) => b.score - a.score || a.crop.name.localeCompare(b.crop.name));
+
+  return diversifyScoredCrops(scored, limit).map((item) => item.crop);
+}
+
+function diversifyScoredCrops(scored: ScoredCrop[], limit: number) {
+  const selected: ScoredCrop[] = [];
+  const selectedKeys = new Set<string>();
+  const familyCounts = new Map<string, number>();
+  const maxPerFamily = limit <= 4 ? 1 : limit <= 8 ? 2 : 4;
+
+  for (const item of scored) {
+    if (selected.length >= limit) break;
+    const count = familyCounts.get(item.family) || 0;
+    if (count >= maxPerFamily) continue;
+    selected.push(item);
+    selectedKeys.add(item.crop.key);
+    familyCounts.set(item.family, count + 1);
+  }
+
+  for (const item of scored) {
+    if (selected.length >= limit) break;
+    if (selectedKeys.has(item.crop.key)) continue;
+    selected.push(item);
+    selectedKeys.add(item.crop.key);
+  }
+
+  return selected;
+}
+
+function cropScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences, preferred: boolean, areaSquareFeet = 2500) {
   let score = preferred ? 100 : 0;
   const text = `${crop.name} ${crop.cropCategory} ${crop.lightRequirement} ${crop.howToGrow} ${crop.tips}`.toLowerCase();
+  score += popularCropScore(crop);
+  score += categoryBaselineScore(crop);
+  if (isNicheCrop(crop)) score -= 36;
+  if (isTreeOrOrchardCrop(crop) && areaSquareFeet < 7000) score -= 42;
+  if (isTreeOrOrchardCrop(crop) && preferences.budgetCents < 150_000) score -= 20;
+  if (isLongTermPerennial(crop) && preferences.goal !== "low-maintenance" && areaSquareFeet < 4500) score -= 18;
+  if (isStapleKitchenCrop(crop)) score += 12;
   if (preferences.waterPriority === "low-water" && (crop.waterConsumptionMl || 0) > 900) score -= 20;
   if (preferences.waterPriority === "low-water" && (crop.waterConsumptionMl || 0) <= 600) score += 18;
+  if (preferences.irrigation === "none" && (crop.waterConsumptionMl || 0) > 650) score -= 12;
+  if (preferences.irrigation === "drip" && /\b(tomato|pepper|berry|vine|trellis)\b/.test(text)) score += 8;
+  if (preferences.season === "winter" && /\b(kale|cabbage|spinach|lettuce|greens|chard|root|carrot|radish)\b/.test(text)) score += 14;
+  if (preferences.season === "summer" && /\b(tomato|pepper|eggplant|basil|squash|cucumber|melon)\b/.test(text)) score += 14;
+  if (preferences.season === "fall" && /\b(kale|cabbage|broccoli|root|carrot|beet|radish|spinach|lettuce)\b/.test(text)) score += 10;
+  if (preferences.season === "spring" && /\b(lettuce|spinach|arugula|pea|carrot|radish|kale|beet|potato|cilantro|broccoli|cabbage)\b/.test(text)) score += 14;
   if (preferences.goal === "food-security" && /\b(potato|corn|bean|pea|squash|tomato|carrot|cabbage|kale)\b/.test(text)) score += 24;
+  if (preferences.goal === "family-kitchen" && /\b(tomato|lettuce|spinach|carrot|herb|basil|pepper|bean|cucumber)\b/.test(text)) score += 20;
+  if (preferences.goal === "market-garden" && /\b(greens|lettuce|spinach|arugula|herb|basil|berry|strawberr|tomato|pepper|radish)\b/.test(text)) score += 22;
   if (preferences.goal === "profit" && /\b(herb|berry|tomato|pepper|greens|micro|sprout)\b/.test(text)) score += 24;
   if (preferences.goal === "low-maintenance" && crop.lifeSpan === "perennial") score += 16;
   if (preferences.weeklyHours <= 4 && /\b(sprout|microgreen|daily|trellis)\b/.test(text)) score -= 12;
+  if (preferences.experience === "beginner" && /\b(trellis|prune|graft|daily|greenhouse)\b/.test(text)) score -= 8;
+  if (preferences.householdSize >= 5 && /\b(potato|corn|bean|pea|squash|cabbage|kale|tomato)\b/.test(text)) score += 8;
+  if (preferences.budgetCents <= 75_000 && crop.idealSpaceSqft && crop.idealSpaceSqft > 60) score -= 8;
   if (crop.idealSpaceSqft && crop.idealSpaceSqft <= 25) score += 10;
   if (crop.harvestCycles && crop.harvestCycles > 1) score += 8;
   return score;
+}
+
+function popularCropScore(crop: AiDraftCrop) {
+  const text = cropText(crop);
+  if (/\b(tomato|tomatoes)\b/.test(text)) return 62;
+  if (/\b(lettuce|spinach|carrot|carrots|beans|potato|potatoes)\b/.test(text)) return 52;
+  if (/\b(pepper|peppers|basil|cucumber|squash|kale|onion|onions|garlic|strawberr)\b/.test(text)) return 44;
+  if (/\b(peas|beets|radish|radishes|corn|broccoli|cabbage|cilantro|parsley|chard)\b/.test(text)) return 34;
+  if (/\b(pumpkin|melon|watermelon|blueberr|blackberr|raspberr|eggplant|scallion|shallot|dill)\b/.test(text)) return 24;
+  if (/\b(asparagus|artichoke|rhubarb|rosemary|sage|thyme|oregano|mint)\b/.test(text)) return 12;
+  return 0;
+}
+
+function categoryBaselineScore(crop: AiDraftCrop) {
+  switch (cropFamily(crop)) {
+    case "fruiting":
+      return 18;
+    case "leafy":
+      return 16;
+    case "root":
+      return 15;
+    case "legume":
+      return 14;
+    case "herb":
+      return 10;
+    case "brassica":
+      return 9;
+    case "berry":
+      return 7;
+    case "perennial":
+      return 2;
+    default:
+      return 0;
+  }
+}
+
+function cropFamily(crop: AiDraftCrop) {
+  const text = cropText(crop);
+  if (/\b(tomato|pepper|eggplant|cucumber|squash|pumpkin|melon|okra)\b/.test(text)) return "fruiting";
+  if (/\b(lettuce|spinach|arugula|chard|collard|endive|watercress|greens)\b/.test(text)) return "leafy";
+  if (/\b(carrot|beet|radish|potato|turnip|rutabaga|parsnip|onion|garlic|shallot|scallion|leek)\b/.test(text)) return "root";
+  if (/\b(bean|beans|pea|peas)\b/.test(text)) return "legume";
+  if (/\b(basil|cilantro|parsley|dill|oregano|thyme|sage|rosemary|mint|chive|tarragon|marjoram)\b/.test(text)) return "herb";
+  if (/\b(kale|cabbage|broccoli|cauliflower|brussels|bok choy|mustard|radicchio)\b/.test(text)) return "brassica";
+  if (/\b(strawberr|blueberr|blackberr|raspberr)\b/.test(text)) return "berry";
+  if (isTreeOrOrchardCrop(crop)) return "orchard";
+  if (isLongTermPerennial(crop)) return "perennial";
+  return "specialty";
+}
+
+function isStapleKitchenCrop(crop: AiDraftCrop) {
+  return /\b(tomato|lettuce|spinach|carrot|beans|potato|pepper|basil|cucumber|squash|kale|onion|garlic|peas|strawberr)\b/.test(cropText(crop));
+}
+
+function isNicheCrop(crop: AiDraftCrop) {
+  return /\b(aloe|alfalfa sprouts|wheatgrass|licorice|burdock|dandelion|cacti|prickly pear|chamomile|fennel|horseradish|ginger)\b/.test(cropText(crop));
+}
+
+function isLongTermPerennial(crop: AiDraftCrop) {
+  return crop.lifeSpan === "perennial" || /\b(asparagus|artichoke|rhubarb|grape|kiwi|berry|berries)\b/.test(cropText(crop));
+}
+
+function isTreeOrOrchardCrop(crop: AiDraftCrop) {
+  return /\b(almond|apple|apricot|avocado|banana|cherry|fig|grapefruit|guava|lemon|lime|loquat|mango|nectarine|olive|orange|peach|pear|persimmon|pistachio|plum|pomegranate|quince|walnut)\b/.test(cropText(crop));
+}
+
+function cropText(crop: AiDraftCrop) {
+  return `${crop.key} ${crop.name} ${crop.cropCategory ?? ""} ${crop.lifeSpan ?? ""} ${crop.lightRequirement ?? ""} ${crop.howToGrow ?? ""} ${crop.tips ?? ""}`.toLowerCase();
+}
+
+function selectLivestockForSite(
+  livestock: AiDraftLivestock[],
+  preferences: FarmAiDraftPreferences,
+  areaSquareFeet: number,
+  preferredKey?: string,
+) {
+  const candidates = livestock
+    .map((animal) => ({ animal, score: livestockScore(animal, preferences, areaSquareFeet, preferredKey) }))
+    .filter(({ score }) => score > -80)
+    .sort((first, second) => second.score - first.score);
+
+  return candidates[0]?.animal ?? null;
+}
+
+function livestockScore(
+  animal: AiDraftLivestock,
+  preferences: FarmAiDraftPreferences,
+  areaSquareFeet: number,
+  preferredKey?: string,
+) {
+  const text = livestockText(animal);
+  const idealSpace = livestockIdealSpace(animal);
+  const targetSpace = targetLivestockSpace(preferences, areaSquareFeet);
+  const availablePaddock = Math.max(90, areaSquareFeet * livestockAreaBudgetRatio(areaSquareFeet));
+  const setupCost = livestockSetupCostCents(animal);
+  const laborHours = livestockWeeklyHours(animal);
+  const waterDemand = livestockWaterDemand(animal);
+  let score = preferredKey === animal.key ? 6 : 0;
+
+  score -= Math.abs(Math.log2(idealSpace / targetSpace)) * 22;
+  if (idealSpace <= availablePaddock) score += Math.min(28, Math.log2(availablePaddock / idealSpace + 1) * 8);
+  else score -= 90 + Math.min(80, (idealSpace - availablePaddock) / Math.max(1, targetSpace) * 20);
+
+  if (areaSquareFeet < 1500 && idealSpace <= 20) score += 28;
+  if (areaSquareFeet < 1500 && idealSpace > 60) score -= 45;
+  if (areaSquareFeet < 1500 && /\b(chicken|hen|duck|quail)\b/.test(text)) score += 8;
+  if (areaSquareFeet >= 6500 && idealSpace >= 80) score += 14;
+  if (areaSquareFeet >= 12000 && idealSpace >= 180) score += 22;
+  if (areaSquareFeet >= 35000 && idealSpace >= 1000) score += 28;
+  if (areaSquareFeet < 35000 && idealSpace >= 1000) score -= 80;
+
+  if (preferences.budgetCents >= setupCost) score += 16;
+  else score -= Math.min(70, (setupCost - preferences.budgetCents) / Math.max(1, setupCost) * 65);
+  if (preferences.budgetCents < setupCost * 0.75) score -= 80;
+  if (preferences.weeklyHours >= laborHours) score += 12;
+  else score -= (laborHours - preferences.weeklyHours) * 10;
+
+  if (preferences.experience === "beginner" && idealSpace >= 80) score -= 16;
+  if (preferences.experience === "beginner" && idealSpace >= 180) score -= 18;
+  if (preferences.experience === "advanced" && idealSpace >= 80) score += 10;
+
+  if (preferences.householdSize >= 5 && idealSpace >= 80 && idealSpace < 1000) score += 8;
+  if (preferences.householdSize <= 2 && idealSpace > 80) score -= 12;
+
+  if (preferences.goal === "food-security" || preferences.goal === "family-kitchen") {
+    if (animal.yieldTypes?.some((type) => type === "eggs" || type === "milk")) score += 12;
+    if (/\b(chicken|duck|quail|rabbit)\b/.test(text)) score += 8;
+  }
+  if (preferences.goal === "balanced" && animal.yieldTypes?.includes("eggs")) score += 6;
+  if (preferences.goal === "market-garden" || preferences.goal === "profit") {
+    if (/\b(rabbit|quail|pig|goat|sheep)\b/.test(text)) score += 10;
+  }
+  if (preferences.goal === "low-maintenance") {
+    if (idealSpace <= 20) score += 10;
+    if (idealSpace >= 80) score -= 18;
+  }
+
+  if (preferences.waterPriority === "low-water") score -= waterDemand * 8;
+  if (preferences.waterPriority === "high-production" && animal.yieldTypes?.includes("milk")) score += 8;
+  if (preferences.irrigation === "none" && waterDemand >= 2) score -= 8;
+  if (preferences.season === "summer" && /\b(pig|cow|duck)\b/.test(text)) score -= 6;
+  if (preferences.season === "winter" && /\b(duck|quail|rabbit|chicken)\b/.test(text)) score += 5;
+
+  return score;
+}
+
+function targetLivestockSpace(preferences: FarmAiDraftPreferences, areaSquareFeet: number) {
+  let target = 12;
+  if (areaSquareFeet >= 1500) target = 18;
+  if (areaSquareFeet >= 4500) target = 80;
+  if (areaSquareFeet >= 9000) target = 200;
+  if (areaSquareFeet >= 18000) target = 250;
+  if (areaSquareFeet >= 35000) target = 4000;
+  if (preferences.budgetCents < 400_000) target = Math.min(target, 250);
+  if (preferences.budgetCents < 100_000) target = Math.min(target, 18);
+  if (preferences.weeklyHours <= 5) target = Math.min(target, 20);
+  if (preferences.experience === "beginner") target = Math.min(target, areaSquareFeet >= 12000 ? 250 : 80);
+  if (preferences.householdSize >= 5 && preferences.weeklyHours >= 8 && preferences.budgetCents >= 150_000) target *= 1.2;
+  if (preferences.goal === "low-maintenance") target = Math.min(target, 20);
+  return target;
+}
+
+function livestockIdealSpace(animal: AiDraftLivestock) {
+  if (animal.idealSpaceSqft && animal.idealSpaceSqft > 0) return animal.idealSpaceSqft;
+  const text = livestockText(animal);
+  if (/\b(cow|cattle)\b/.test(text)) return 4000;
+  if (/\b(goat|sheep)\b/.test(text)) return 225;
+  if (/\b(pig|hog)\b/.test(text)) return 80;
+  if (/\b(duck)\b/.test(text)) return 15;
+  if (/\b(chicken|hen|rabbit)\b/.test(text)) return 12;
+  if (/\b(quail)\b/.test(text)) return 1;
+  return 30;
+}
+
+function livestockAreaBudgetRatio(areaSquareFeet: number) {
+  if (areaSquareFeet < 1500) return 0.11;
+  if (areaSquareFeet < 4500) return 0.13;
+  if (areaSquareFeet < 12000) return 0.16;
+  return 0.2;
+}
+
+function livestockAreaRatioForSite(animal: AiDraftLivestock, areaSquareFeet: number) {
+  const targetArea = Math.max(80, livestockIdealSpace(animal) * Math.max(2, Math.min(6, animal.defaultCount || 2)));
+  return Math.max(0.08, Math.min(0.2, targetArea / Math.max(1, areaSquareFeet)));
+}
+
+function livestockCountForSite(animal: AiDraftLivestock, preferences: FarmAiDraftPreferences, areaSquareFeet: number) {
+  const idealSpace = livestockIdealSpace(animal);
+  const paddockArea = areaSquareFeet * livestockAreaRatioForSite(animal, areaSquareFeet);
+  const capacity = Math.max(1, Math.floor(paddockArea / Math.max(1, idealSpace)));
+  const laborCap = Math.max(1, Math.floor(preferences.weeklyHours / Math.max(1.5, livestockWeeklyHours(animal) / 3)));
+  return Math.max(1, Math.min(animal.defaultCount || 2, capacity, laborCap, idealSpace >= 80 ? 3 : 12));
+}
+
+function livestockSetupCostCents(animal: AiDraftLivestock) {
+  const text = livestockText(animal);
+  if (/\b(cow|cattle)\b/.test(text)) return 500_000;
+  if (/\b(goat|sheep)\b/.test(text)) return 150_000;
+  if (/\b(pig|hog)\b/.test(text)) return 110_000;
+  if (/\b(duck)\b/.test(text)) return 45_000;
+  if (/\b(chicken|hen)\b/.test(text)) return 35_000;
+  if (/\b(rabbit)\b/.test(text)) return 30_000;
+  if (/\b(quail)\b/.test(text)) return 18_000;
+  return 50_000;
+}
+
+function livestockWeeklyHours(animal: AiDraftLivestock) {
+  const text = livestockText(animal);
+  if (/\b(cow|cattle)\b/.test(text)) return 12;
+  if (/\b(goat|sheep)\b/.test(text)) return 8;
+  if (/\b(pig|hog)\b/.test(text)) return 7;
+  if (/\b(duck)\b/.test(text)) return 5;
+  if (/\b(chicken|hen|rabbit)\b/.test(text)) return 4;
+  if (/\b(quail)\b/.test(text)) return 2;
+  return 5;
+}
+
+function livestockWaterDemand(animal: AiDraftLivestock) {
+  const text = livestockText(animal);
+  if (/\b(cow|cattle)\b/.test(text)) return 3;
+  if (/\b(pig|hog|duck)\b/.test(text)) return 2;
+  if (/\b(goat|sheep)\b/.test(text)) return 1.4;
+  return 0.7;
+}
+
+function livestockText(animal: AiDraftLivestock) {
+  return `${animal.key} ${animal.name} ${animal.feed ?? ""} ${animal.yieldTypes?.join(" ") ?? ""}`.toLowerCase();
 }
 
 function scorePlan(
@@ -1430,11 +1762,10 @@ function createCatalogFallbackIntent(input: {
 }): GeminiFarmIntent {
   const cropCount = input.areaSquareFeet < 2500 ? 5 : input.areaSquareFeet < 7000 ? 7 : 9;
   const selectedCrops = input.candidateCrops.slice(0, Math.max(3, cropCount));
-  const includeLivestock = input.preferences.includeLivestock
-    && input.areaSquareFeet >= 650
-    && input.preferences.weeklyHours >= 5
-    && input.preferences.budgetCents >= 120_000;
-  const selectedLivestock = includeLivestock ? input.livestock.slice(0, 1) : [];
+  const selectedLivestockAnimal = input.preferences.includeLivestock && input.areaSquareFeet >= 650
+    ? selectLivestockForSite(input.livestock, input.preferences, input.areaSquareFeet)
+    : null;
+  const selectedLivestock = selectedLivestockAnimal ? [selectedLivestockAnimal] : [];
   const structureKeys = new Set(input.structures.map((structure) => structure.key));
   const selectedStructures = input.preferences.includeStructures && input.areaSquareFeet >= 450
     ? ["greenhouse", "shed", "coop"].filter((key) => structureKeys.has(key)).slice(0, selectedLivestock.length ? 2 : 1)
@@ -1456,9 +1787,9 @@ function createCatalogFallbackIntent(input: {
     })),
     livestockAssignments: selectedLivestock.map((animal) => ({
       livestockKey: animal.key,
-      count: Math.max(1, Math.min(6, animal.defaultCount || 2)),
-      areaRatio: 0.12,
-      reason: "Included because budget and weekly labor can support a small paddock.",
+      count: livestockCountForSite(animal, input.preferences, input.areaSquareFeet),
+      areaRatio: livestockAreaRatioForSite(animal, input.areaSquareFeet),
+      reason: "Selected by catalog size-fit scoring for land area, budget, labor, experience, water, season, and household constraints.",
     })),
     structures: selectedStructures.map((structureKey) => ({
       structureKey,

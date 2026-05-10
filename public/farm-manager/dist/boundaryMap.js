@@ -19,6 +19,33 @@ export function init(ui, onBoundarySaved, options = {}) {
         });
         map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "top-right");
         map.addControl(new maplibregl.ScaleControl({ maxWidth: 160, unit: "imperial" }), "bottom-left");
+        try {
+            const geolocate = new maplibregl.GeolocateControl({
+                positionOptions: { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+                trackUserLocation: false,
+                showUserLocation: true,
+                fitBoundsOptions: { maxZoom: 18 }
+            });
+            map.addControl(geolocate, "top-right");
+        }
+        catch (controlError) {
+            // Geolocate control unavailable — fall back to manual recenter below.
+        }
+        if (typeof navigator !== "undefined" && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition((position) => {
+                if (!map)
+                    return;
+                map.flyTo({
+                    center: [position.coords.longitude, position.coords.latitude],
+                    zoom: 18,
+                    speed: 1.6,
+                    curve: 1.4,
+                    essential: true
+                });
+            }, () => {
+                // Permission denied or unavailable — keep the default center.
+            }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+        }
         map.on("load", () => {
             map.addSource("farm-boundary", emptyGeoJsonSource());
             map.addLayer({

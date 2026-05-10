@@ -435,25 +435,91 @@ export function FarmManagerShell() {
         </main>
 
         <section id="onboarding" className={`onboarding ${chrome.onboardingVisible ? "" : "hidden"}`}>
-          <div className="onboarding-card">
-            <div className="wizard-copy">
-              <span className="eyebrow">Step 1</span>
-              <h1>Draw Homestead Boundary</h1>
-              <p>
+          <div
+            style={{ ["--pixel-frame-bg" as string]: "#fbf6e8" }}
+            className="pixel-frame onboarding-card-pixel relative grid w-[min(1180px,100%)] grid-cols-1 overflow-hidden border-2 border-[#3b2a14] bg-[#fffdf5] shadow-[0_6px_0_#3b2a14,0_24px_60px_rgba(39,27,16,0.28)] lg:grid-cols-[minmax(280px,360px)_minmax(420px,1fr)]"
+          >
+            <div className="pixel-gradient-meadow flex flex-col gap-3 border-b-2 border-[#3b2a14] p-6 lg:border-b-0 lg:border-r-2">
+              <span className="inline-flex w-fit items-center gap-1.5 rounded-none border-2 border-[#3b2a14] bg-[#fff8dc] px-2 py-0.5 font-mono text-[10px] font-black uppercase tracking-[0.18em] text-[#5e4a26] shadow-[0_2px_0_#3b2a14]">
+                <PixelGlyph name="scroll" className="size-3.5" />
+                Step 1
+              </span>
+              <div className="flex items-start gap-3">
+                <span className="grid size-12 shrink-0 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#ffe89a] text-[#a8761c] shadow-[inset_0_2px_0_rgba(255,255,255,0.55),inset_0_-3px_0_rgba(168,118,28,0.32),0_2px_0_#3b2a14]">
+                  <PixelGlyph name="sun" className="size-7" />
+                </span>
+                <h1 className="font-mono text-xl font-black uppercase leading-[1.1] tracking-[0.08em] text-[#27351f] drop-shadow-[1px_1px_0_rgba(255,253,245,0.55)] sm:text-2xl">
+                  Draw Homestead Boundary
+                </h1>
+              </div>
+              <p className="text-sm font-semibold leading-6 text-[#5e4a26]">
                 Click points on the real map to define the farm boundary. The saved boundary becomes the local low-poly
                 planning board.
               </p>
+              <ul className="mt-1 grid gap-1.5 text-xs font-bold leading-5 text-[#5e4a26]">
+                <li className="flex items-center gap-2">
+                  <PixelGlyph name="leaf" className="size-3.5 shrink-0 text-[#2f6f4e]" />
+                  Click 3 or more points to outline the patch.
+                </li>
+                <li className="flex items-center gap-2">
+                  <PixelGlyph name="wheat" className="size-3.5 shrink-0 text-[#a8761c]" />
+                  No live tiles? Use the demo boundary to keep going.
+                </li>
+                <li className="flex items-center gap-2">
+                  <PixelGlyph name="sparkle" className="size-3.5 shrink-0 text-[#7a461f]" />
+                  Save when the shape feels right — you can redraw later.
+                </li>
+              </ul>
             </div>
-            <div className="map-shell">
-              <div id="boundaryMap" />
-              <div id="mapFallback" className="map-fallback hidden">
-                <strong>Map tiles unavailable</strong>
-                <span>Use the demo boundary to continue without live map tiles.</span>
+
+            <div className="relative min-h-[420px] border-2 border-[#3b2a14] bg-[#203029] lg:min-h-[560px] lg:border-0">
+              <div id="boundaryMap" className="absolute inset-0" />
+              <div
+                id="mapFallback"
+                className="map-fallback hidden absolute inset-0 z-[1] grid place-items-center content-center gap-1.5 px-6 text-center"
+                style={{
+                  background:
+                    "linear-gradient(135deg, rgba(73,107,71,0.84), rgba(32,48,41,0.92)), repeating-linear-gradient(45deg, rgba(255,255,255,0.08) 0 1px, transparent 1px 18px)",
+                }}
+              >
+                <span className="grid size-10 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#fff8dc] text-[#5e4a26] shadow-[0_2px_0_#3b2a14]">
+                  <PixelGlyph name="scroll" className="size-5" />
+                </span>
+                <strong className="font-mono text-sm font-black uppercase tracking-[0.14em] text-[#fffdf5] drop-shadow-[1px_1px_0_#3b2a14]">
+                  Map tiles unavailable
+                </strong>
+                <span className="text-xs font-semibold text-[#e9f4df]">
+                  Use the demo boundary to continue without live map tiles.
+                </span>
               </div>
-              <div className="map-tools">
-                <button id="useDemoBoundary" type="button" onClick={() => actions?.useDemoBoundary()}>Demo Boundary</button>
-                <button id="clearBoundary" type="button" onClick={() => actions?.clearBoundary()}>Clear</button>
-                <button id="saveBoundary" type="button" onClick={() => actions?.saveBoundary()}>Save Boundary</button>
+              <div className="absolute inset-x-3 bottom-3 z-[2] flex flex-wrap justify-end gap-2">
+                <button
+                  id="useDemoBoundary"
+                  type="button"
+                  onClick={() => actions?.useDemoBoundary()}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <PixelGlyph name="wagon" className="size-3.5" />
+                  Demo Boundary
+                </button>
+                <button
+                  id="clearBoundary"
+                  type="button"
+                  onClick={() => actions?.clearBoundary()}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <PixelGlyph name="sparkle" className="size-3.5" />
+                  Clear
+                </button>
+                <button
+                  id="saveBoundary"
+                  type="button"
+                  className="active inline-flex items-center gap-1.5"
+                  onClick={() => actions?.saveBoundary()}
+                >
+                  <PixelGlyph name="leaf" className="size-3.5" />
+                  Save Boundary
+                </button>
               </div>
             </div>
           </div>

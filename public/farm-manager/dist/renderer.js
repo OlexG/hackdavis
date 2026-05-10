@@ -306,42 +306,159 @@ function drawPlant(position, baseHeight, attrs) {
     const growth = Math.max(0.12, attrs.growth || 0.45);
     const h = (5 + growth * 16) * state.zoom;
     const sway = Math.sin(performance.now() / 900 + position[0]) * 0.45;
+    const model = cropModel(attrs);
     ctx.save();
     ctx.lineCap = "round";
-    ctx.strokeStyle = attrs.visual === "grain" ? "#d3c85a" : "#2e6f45";
+    ctx.strokeStyle = model.stem;
     ctx.lineWidth = Math.max(1, 1.7 * state.zoom);
     ctx.beginPath();
     ctx.moveTo(base.x, base.y);
     ctx.lineTo(base.x + sway, base.y - h);
     ctx.stroke();
-    if (attrs.visual === "grain") {
+    if (model.kind === "grain") {
         ctx.fillStyle = "#8db64f";
         drawTriangle(base.x + sway, base.y - h * 0.55, 4.5 * state.zoom, 8 * state.zoom, -1);
         drawTriangle(base.x + sway, base.y - h * 0.48, 4.5 * state.zoom, 8 * state.zoom, 1);
         if (growth > 0.72) {
-            ctx.fillStyle = "#ecc95a";
+            ctx.fillStyle = model.fruit;
             drawDiamond(base.x + sway, base.y - h * 0.82, 2.8 * state.zoom, 5.5 * state.zoom);
         }
     }
-    else if (attrs.visual === "fruiting") {
-        ctx.fillStyle = "#4f9c51";
+    else if (model.kind === "tomato") {
+        ctx.strokeStyle = "#2b6b3d";
+        ctx.lineWidth = Math.max(1, 1.15 * state.zoom);
+        ctx.beginPath();
+        ctx.moveTo(base.x - 3.5 * state.zoom, base.y - h * 0.16);
+        ctx.lineTo(base.x + sway, base.y - h * 0.82);
+        ctx.lineTo(base.x + 3.5 * state.zoom, base.y - h * 0.16);
+        ctx.stroke();
+        ctx.fillStyle = model.leaf;
+        drawDiamond(base.x + sway - 2.5 * state.zoom, base.y - h * 0.48, 6.5 * growth * state.zoom, 4.6 * growth * state.zoom);
+        drawDiamond(base.x + sway + 2.4 * state.zoom, base.y - h * 0.58, 6.2 * growth * state.zoom, 4.4 * growth * state.zoom);
+        drawDiamond(base.x + sway, base.y - h * 0.72, 5.4 * growth * state.zoom, 4.1 * growth * state.zoom);
+        ctx.fillStyle = model.fruit;
+        drawCircle(base.x + sway - 3.3 * state.zoom, base.y - h * 0.56, Math.max(1.8, 3 * growth * state.zoom));
+        drawCircle(base.x + sway + 2.9 * state.zoom, base.y - h * 0.66, Math.max(1.6, 2.7 * growth * state.zoom));
+        drawCircle(base.x + sway - 0.4 * state.zoom, base.y - h * 0.76, Math.max(1.5, 2.5 * growth * state.zoom));
+        ctx.fillStyle = model.secondaryFruit || model.fruit;
+        drawCircle(base.x + sway + 4.7 * state.zoom, base.y - h * 0.47, Math.max(1.2, 2.1 * growth * state.zoom));
+    }
+    else if (model.kind === "fruiting") {
+        ctx.fillStyle = model.leaf;
         drawDiamond(base.x + sway, base.y - h * 0.42, 6 * growth * state.zoom, 4.5 * growth * state.zoom);
         drawDiamond(base.x + sway + 2, base.y - h * 0.66, 5 * growth * state.zoom, 4 * growth * state.zoom);
         if (growth > 0.56) {
-            ctx.fillStyle = "#d94d3d";
+            ctx.fillStyle = model.fruit;
             drawCircle(base.x - 2 * state.zoom, base.y - h * 0.62, 2.2 * state.zoom);
+            if (model.secondaryFruit) {
+                ctx.fillStyle = model.secondaryFruit;
+                drawCircle(base.x + 2.2 * state.zoom, base.y - h * 0.7, 1.6 * state.zoom);
+            }
         }
     }
-    else if (attrs.visual === "leafy" || attrs.visual === "herb") {
-        ctx.fillStyle = attrs.visual === "herb" ? "#64b66b" : "#9ccd68";
+    else if (model.kind === "vine") {
+        ctx.strokeStyle = model.stem;
+        ctx.lineWidth = Math.max(1, 1.2 * state.zoom);
+        ctx.beginPath();
+        ctx.moveTo(base.x - 5 * state.zoom, base.y - 1.5 * state.zoom);
+        ctx.bezierCurveTo(base.x - 1 * state.zoom, base.y - h * 0.3, base.x + 4 * state.zoom, base.y - h * 0.18, base.x + 7 * state.zoom, base.y - h * 0.42);
+        ctx.stroke();
+        ctx.fillStyle = model.leaf;
+        drawDiamond(base.x - 2 * state.zoom, base.y - h * 0.2, 5.5 * growth * state.zoom, 3.8 * growth * state.zoom);
+        drawDiamond(base.x + 4 * state.zoom, base.y - h * 0.38, 5 * growth * state.zoom, 3.6 * growth * state.zoom);
+        if (growth > 0.54) {
+            ctx.fillStyle = model.fruit;
+            drawCircle(base.x + 7 * state.zoom, base.y - h * 0.43, 2.8 * growth * state.zoom);
+        }
+    }
+    else if (model.kind === "root") {
+        ctx.fillStyle = model.leaf;
+        drawDiamond(base.x - 1.2 * state.zoom, base.y - h * 0.25, 4.2 * growth * state.zoom, 5.2 * growth * state.zoom);
+        drawDiamond(base.x + 1.6 * state.zoom, base.y - h * 0.32, 4.2 * growth * state.zoom, 5.2 * growth * state.zoom);
+        ctx.fillStyle = model.fruit;
+        drawTriangle(base.x, base.y + 1.5 * state.zoom, 3.8 * growth * state.zoom, 8 * growth * state.zoom, 1);
+    }
+    else if (model.kind === "mound") {
+        ctx.fillStyle = model.leaf;
+        drawCircle(base.x - 2 * state.zoom, base.y - h * 0.22, 4.5 * growth * state.zoom);
+        drawCircle(base.x + 2.5 * state.zoom, base.y - h * 0.28, 4.2 * growth * state.zoom);
+        ctx.fillStyle = model.fruit;
+        drawCircle(base.x, base.y + 1.5 * state.zoom, 2.4 * growth * state.zoom);
+    }
+    else if (model.kind === "groundcover") {
+        ctx.fillStyle = model.leaf;
+        drawCircle(base.x - 2.4 * state.zoom, base.y - h * 0.16, 3.6 * growth * state.zoom);
+        drawCircle(base.x + 2.2 * state.zoom, base.y - h * 0.18, 3.4 * growth * state.zoom);
+        if (growth > 0.5) {
+            ctx.fillStyle = model.fruit;
+            drawCircle(base.x, base.y - h * 0.28, 1.8 * state.zoom);
+        }
+    }
+    else if (model.kind === "leafy" || model.kind === "herb") {
+        ctx.fillStyle = model.leaf;
         drawDiamond(base.x, base.y - 2 * state.zoom, 6 * growth * state.zoom, 4 * growth * state.zoom);
         drawDiamond(base.x + 1.5 * state.zoom, base.y - 3.5 * state.zoom, 4.5 * growth * state.zoom, 3.5 * growth * state.zoom);
+        drawDiamond(base.x - 1.6 * state.zoom, base.y - 4.2 * state.zoom, 4 * growth * state.zoom, 3.4 * growth * state.zoom);
     }
     else {
-        ctx.fillStyle = "#5cb56a";
+        ctx.fillStyle = model.leaf;
         drawCircle(base.x, base.y - h * 0.42, Math.max(2, 4.5 * growth * state.zoom));
     }
     ctx.restore();
+}
+function cropModel(attrs) {
+    const text = `${attrs.cropKey || ""} ${attrs.cropName || ""} ${attrs.visual || ""}`.toLowerCase();
+    if (/\btomato|tomatoes\b/.test(text))
+        return { kind: "tomato", stem: "#28673e", leaf: "#3f8f45", fruit: "#d9362f", secondaryFruit: "#f05a3f" };
+    if (/\bpepper|peppers\b/.test(text))
+        return { kind: "fruiting", stem: "#2d7140", leaf: "#3f8d42", fruit: "#d63c2e", secondaryFruit: "#f08a29" };
+    if (/\beggplant\b/.test(text))
+        return { kind: "fruiting", stem: "#2e6f45", leaf: "#4a8f44", fruit: "#5d3c91", secondaryFruit: "#7a55b3" };
+    if (/\bstrawberr/.test(text))
+        return { kind: "groundcover", stem: "#2f6d3c", leaf: "#4b9b45", fruit: "#d93832" };
+    if (/\bblueberr/.test(text))
+        return { kind: "groundcover", stem: "#335f42", leaf: "#4e8f48", fruit: "#445da8" };
+    if (/\bblackberr|raspberr/.test(text))
+        return { kind: "groundcover", stem: "#315c3b", leaf: "#4f8945", fruit: "#7c2b5f" };
+    if (/\bcucumber\b/.test(text))
+        return { kind: "vine", stem: "#2e7641", leaf: "#54a04c", fruit: "#62a846" };
+    if (/\bsquash|pumpkin|melon|watermelon\b/.test(text))
+        return { kind: "vine", stem: "#376c38", leaf: "#5c9a45", fruit: "#e49b32" };
+    if (/\bcarrot|carrots\b/.test(text))
+        return { kind: "root", stem: "#438044", leaf: "#5ba35b", fruit: "#e7812c" };
+    if (/\bbeet|beets|radish|radishes|turnip|rutabaga\b/.test(text))
+        return { kind: "root", stem: "#447e43", leaf: "#629e56", fruit: "#b73559" };
+    if (/\bpotato|potatoes\b/.test(text))
+        return { kind: "mound", stem: "#3f7343", leaf: "#5b934c", fruit: "#b78652" };
+    if (/\blettuce\b/.test(text))
+        return { kind: "leafy", stem: "#4d8b47", leaf: "#a9cf67", fruit: "#a9cf67" };
+    if (/\bspinach|chard\b/.test(text))
+        return { kind: "leafy", stem: "#2f7040", leaf: "#69a85c", fruit: "#69a85c" };
+    if (/\bkale|cabbage|broccoli|bok choy|collard|mustard\b/.test(text))
+        return { kind: "leafy", stem: "#2e6c41", leaf: "#78ad5b", fruit: "#78ad5b" };
+    if (/\bbasil|cilantro|parsley|dill|oregano|thyme|sage|rosemary|mint|chive|tarragon\b/.test(text))
+        return { kind: "herb", stem: "#2e6f45", leaf: "#5fb96a", fruit: "#5fb96a" };
+    if (/\bcorn|wheat|grain|grass\b/.test(text))
+        return { kind: "grain", stem: "#d3c85a", leaf: "#8db64f", fruit: "#ecc95a" };
+    if (/\bbean|beans|pea|peas\b/.test(text))
+        return { kind: "vine", stem: "#2d7542", leaf: "#58a94d", fruit: "#4f9f4a" };
+    if (attrs.visual === "fruiting")
+        return { kind: "fruiting", stem: "#2e6f45", leaf: "#4f9c51", fruit: "#d94d3d" };
+    if (attrs.visual === "grain")
+        return { kind: "grain", stem: "#d3c85a", leaf: "#8db64f", fruit: "#ecc95a" };
+    if (attrs.visual === "root")
+        return { kind: "root", stem: "#438044", leaf: "#5ba35b", fruit: "#d48938" };
+    if (attrs.visual === "vine")
+        return { kind: "vine", stem: "#376c38", leaf: "#5c9a45", fruit: "#e49b32" };
+    if (attrs.visual === "mound")
+        return { kind: "mound", stem: "#3f7343", leaf: "#5b934c", fruit: "#b78652" };
+    if (attrs.visual === "groundcover")
+        return { kind: "groundcover", stem: "#2f6d3c", leaf: "#4b9b45", fruit: "#d93832" };
+    if (attrs.visual === "herb")
+        return { kind: "herb", stem: "#2e6f45", leaf: "#64b66b", fruit: "#64b66b" };
+    if (attrs.visual === "leafy")
+        return { kind: "leafy", stem: "#2e6f45", leaf: "#9ccd68", fruit: "#9ccd68" };
+    return { kind: "generic", stem: "#2e6f45", leaf: "#5cb56a", fruit: "#5cb56a" };
 }
 function drawAnimals(object) {
     const positions = generatePositions(object.polygon, object.attrs.count, G.hashString(object.id), 2);
@@ -546,10 +663,13 @@ function drawPath(points, color) {
 function tracePath(points, height) {
     points.forEach((point, index) => {
         const p = project(point, height);
-        if (index === 0)
-            ctx.beginPath(), ctx.moveTo(p.x, p.y);
-        else
+        if (index === 0) {
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+        }
+        else {
             ctx.lineTo(p.x, p.y);
+        }
     });
 }
 function traceLine(a, b, height) {
@@ -635,10 +755,13 @@ function drawDraft() {
     if (points.length) {
         points.forEach((point, index) => {
             const p = project(point, 1);
-            if (index === 0)
-                ctx.beginPath(), ctx.moveTo(p.x, p.y);
-            else
+            if (index === 0) {
+                ctx.beginPath();
+                ctx.moveTo(p.x, p.y);
+            }
+            else {
                 ctx.lineTo(p.x, p.y);
+            }
         });
         if (state.drawType !== "path" && state.draft.length >= 3) {
             ctx.closePath();
@@ -700,9 +823,9 @@ export function hitTestAll(world) {
             return pointNearPath(world, object.points, 2.8);
         return G.pointInPolygon(world, object.polygon);
     })
-        .sort((a, b) => hitPriority(a, world) - hitPriority(b, world));
+        .sort((a, b) => hitPriority(a) - hitPriority(b));
 }
-function hitPriority(object, world) {
+function hitPriority(object) {
     if (object.type === "structure")
         return 10;
     if (object.type === "cropField")
