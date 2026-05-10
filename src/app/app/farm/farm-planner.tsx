@@ -512,69 +512,47 @@ export function FarmPlanner() {
   return (
     <section className="farmv2-shell">
       <header className="farmv2-topbar">
-        <div className="farmv2-brand">
-          <span className="farmv2-brand-mark" aria-hidden="true" />
-          <div>
-            <span className="farmv2-eyebrow">Orchard Ridge</span>
-            <strong>Homestead Map</strong>
-          </div>
-        </div>
-        <div className="farmv2-toolbar">
-          <div className="farmv2-toolgroup">
-            <span className="farmv2-toolgroup-label">Mode</span>
-            <Segmented options={["select", "draw"]} value={mode} labels={{ select: "Select", draw: "Draw" }} onChange={(value) => setMode(value as InteractionMode)} />
-          </div>
-          <div className="farmv2-toolgroup">
-            <span className="farmv2-toolgroup-label">Draw</span>
-            <Segmented options={["cropArea", "cropField", "livestock", "structure", "path"]} value={drawType} labels={typeLabels} onChange={(value) => {
-              setDrawType(value as DrawType);
-              draftRef.current = [];
-              setDraft([]);
-              // Picking a draw type implies you want to draw — flip to Draw
-              // mode so the canvas is immediately in the right interaction state.
-              setMode("draw");
-            }} />
-            <button type="button" onClick={() => finishCurrentDraft()}>{drawType === "path" ? "Enter" : "Close"}</button>
-            <button type="button" onClick={() => {
-              draftRef.current = [];
-              setDraft([]);
-              setMouse(null);
-            }}>Clear</button>
-          </div>
-        </div>
-        <div className="farmv2-toolbar farmv2-toolbar-right">
+        <div className="farmv2-row">
+          <Segmented options={["select", "draw"]} value={mode} labels={{ select: "Select", draw: "Draw" }} onChange={(value) => setMode(value as InteractionMode)} />
+          <div className="farmv2-row-divider" aria-hidden="true" />
+          <Segmented options={["cropArea", "cropField", "livestock", "structure", "path"]} value={drawType} labels={typeLabels} onChange={(value) => {
+            setDrawType(value as DrawType);
+            draftRef.current = [];
+            setDraft([]);
+            setMode("draw");
+          }} />
+          <button type="button" onClick={() => finishCurrentDraft()}>{drawType === "path" ? "Enter" : "Close"}</button>
+          <button type="button" onClick={() => {
+            draftRef.current = [];
+            setDraft([]);
+            setMouse(null);
+          }}>Clear</button>
+          <div className="farmv2-row-divider" aria-hidden="true" />
+          <Segmented options={["grid", "satellite"]} value={activePlan?.view ?? "grid"} labels={{ grid: "Grid", satellite: "Sat" }} onChange={(value) => updatePlan((plan) => ({ ...plan, view: value as "grid" | "satellite" }))} />
+          <Segmented options={["ft", "m"]} value={activePlan?.units ?? "ft"} labels={{ ft: "ft", m: "m" }} onChange={(value) => updatePlan((plan) => ({ ...plan, units: value as "ft" | "m" }))} />
+          <div className="farmv2-row-divider" aria-hidden="true" />
+          <button type="button" aria-label="Zoom out" onClick={() => updatePlan((plan) => {
+            const renderer = rendererRef.current;
+            if (!renderer) return plan;
+            const size = renderer.size();
+            const next = renderer.zoomAtScreenPoint({ x: size.width / 2, y: size.height / 2 }, -0.18, plan);
+            return { ...plan, camera: { ...plan.camera, ...next } };
+          })}>−</button>
+          <button type="button" aria-label="Zoom in" onClick={() => updatePlan((plan) => {
+            const renderer = rendererRef.current;
+            if (!renderer) return plan;
+            const size = renderer.size();
+            const next = renderer.zoomAtScreenPoint({ x: size.width / 2, y: size.height / 2 }, 0.18, plan);
+            return { ...plan, camera: { ...plan.camera, ...next } };
+          })}>+</button>
+          <button type="button" onClick={() => updatePlan((plan) => {
+            const limits = rendererRef.current?.getZoomLimits();
+            const nextZoom = limits ? clamp(plan.camera.zoom, limits.min, limits.max) : plan.camera.zoom;
+            return { ...plan, camera: { ...plan.camera, rotation: (plan.camera.rotation + 90) % 360, zoom: nextZoom } };
+          })}>Rotate</button>
+          <button type="button" onClick={() => updatePlan((plan) => ({ ...plan, camera: { zoom: rendererRef.current?.getZoomLimits().min ?? 1, panX: 0, panY: -18, rotation: 0 } }))}>Reset</button>
+          <button type="button" className="farmv2-row-end" onClick={() => setOnboardingOpen(true)}>Settings</button>
           {error ? <span className="farmv2-error">{error}</span> : null}
-          <div className="farmv2-toolgroup">
-            <span className="farmv2-toolgroup-label">View</span>
-            <Segmented options={["grid", "satellite"]} value={activePlan?.view ?? "grid"} labels={{ grid: "Grid", satellite: "Sat" }} onChange={(value) => updatePlan((plan) => ({ ...plan, view: value as "grid" | "satellite" }))} />
-            <Segmented options={["ft", "m"]} value={activePlan?.units ?? "ft"} labels={{ ft: "ft", m: "m" }} onChange={(value) => updatePlan((plan) => ({ ...plan, units: value as "ft" | "m" }))} />
-          </div>
-          <div className="farmv2-toolgroup">
-            <span className="farmv2-toolgroup-label">Camera</span>
-            <button type="button" aria-label="Zoom out" onClick={() => updatePlan((plan) => {
-              const renderer = rendererRef.current;
-              if (!renderer) return plan;
-              const size = renderer.size();
-              const next = renderer.zoomAtScreenPoint({ x: size.width / 2, y: size.height / 2 }, -0.18, plan);
-              return { ...plan, camera: { ...plan.camera, ...next } };
-            })}>−</button>
-            <button type="button" aria-label="Zoom in" onClick={() => updatePlan((plan) => {
-              const renderer = rendererRef.current;
-              if (!renderer) return plan;
-              const size = renderer.size();
-              const next = renderer.zoomAtScreenPoint({ x: size.width / 2, y: size.height / 2 }, 0.18, plan);
-              return { ...plan, camera: { ...plan.camera, ...next } };
-            })}>+</button>
-            <button type="button" onClick={() => updatePlan((plan) => {
-              const limits = rendererRef.current?.getZoomLimits();
-              const nextZoom = limits ? clamp(plan.camera.zoom, limits.min, limits.max) : plan.camera.zoom;
-              return { ...plan, camera: { ...plan.camera, rotation: (plan.camera.rotation + 90) % 360, zoom: nextZoom } };
-            })}>Rotate</button>
-            <button type="button" onClick={() => updatePlan((plan) => ({ ...plan, camera: { zoom: rendererRef.current?.getZoomLimits().min ?? 1, panX: 0, panY: -18, rotation: 0 } }))}>Reset</button>
-          </div>
-          <div className="farmv2-toolgroup">
-            <button type="button" onClick={() => setOnboardingOpen(true)}>Settings</button>
-          </div>
         </div>
       </header>
 
@@ -1780,17 +1758,19 @@ function FarmV2Styles() {
   return (
     <style jsx global>{`
       .farmv2-shell{--panel:rgba(21,29,26,.86);--border:rgba(218,229,206,.16);--text:#edf4e7;--muted:#9fb09f;--accent:#f0c35a;position:absolute;inset:0;display:grid;grid-template-rows:auto 1fr auto;overflow:hidden;background:#111714;color:var(--text)}
-      .farmv2-toolgroup{display:flex;align-items:center;gap:6px;padding:0 6px;border-right:2px dashed #c9b88a}
-      .farmv2-toolgroup:last-child{border-right:0}
-      .farmv2-toolgroup-label{display:none}
-      @media(min-width:1180px){.farmv2-toolgroup-label{display:block;align-self:center;color:#7a6843;font-family:var(--font-geist-mono),ui-monospace,monospace;font-size:9px;font-weight:900;letter-spacing:.16em;text-transform:uppercase;padding-right:2px}}
+      /* legacy toolgroup classes intentionally inert — the row layout owns spacing now */
       .farmv2-shell button,.farmv2-shell input,.farmv2-shell select{font:inherit}
       .farmv2-shell button{height:34px;min-width:38px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.07);color:var(--text);cursor:pointer}
       .farmv2-shell button:hover{background:rgba(255,255,255,.12)}
       .farmv2-shell button.active{border-color:rgba(240,195,90,.85);background:#dcae49;color:#19150d}
-      .farmv2-topbar{z-index:4;display:flex;align-items:center;gap:16px;min-height:66px;padding:12px 16px;border-bottom:1px solid var(--border);background:rgba(13,18,16,.9);backdrop-filter:blur(16px)}
-      .farmv2-brand{display:flex;align-items:center;gap:11px;min-width:190px}.farmv2-brand-mark{width:34px;height:34px;border-radius:7px;background:linear-gradient(135deg,#67c5a0 0 49%,transparent 50%),linear-gradient(45deg,transparent 0 42%,#f0c35a 43% 100%),#314438}.farmv2-eyebrow{display:block;color:var(--muted);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
-      .farmv2-toolbar{display:flex;align-items:center;gap:8px}.farmv2-toolbar-right{margin-left:auto}.farmv2-segmented{display:inline-flex;overflow:hidden;border:1px solid var(--border);border-radius:8px}.farmv2-segmented button{border:0;border-radius:0}
+      .farmv2-topbar{z-index:4;display:flex;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);background:rgba(13,18,16,.9);backdrop-filter:blur(16px)}
+      .farmv2-row{flex:1;display:flex;align-items:center;gap:5px;min-height:34px}
+      /* Dashed separators that grow to absorb leftover row width, pushing the
+         neighbouring tool clusters out toward the edges of the bar. */
+      .farmv2-row-divider{flex:1 1 0;min-width:14px;align-self:stretch;background-image:linear-gradient(to right,#c9b88a 50%,transparent 50%);background-size:8px 2px;background-repeat:repeat-x;background-position:center}
+      .farmv2-row-end{margin-left:auto}
+      .farmv2-brand{display:flex;align-items:center;gap:8px;min-width:auto;padding-right:8px;border-right:2px dashed #c9b88a}.farmv2-brand-mark{width:28px;height:28px;border-radius:0;background:linear-gradient(135deg,#67c5a0 0 49%,transparent 50%),linear-gradient(45deg,transparent 0 42%,#f0c35a 43% 100%),#314438}.farmv2-eyebrow{display:block;color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+      .farmv2-segmented{display:inline-flex;overflow:hidden;border:1px solid var(--border);border-radius:8px}.farmv2-segmented button{border:0;border-radius:0}
       .farmv2-stage{position:relative;min-height:0;background:radial-gradient(circle at 20% 15%,rgba(103,197,160,.12),transparent 24%),linear-gradient(180deg,#253534 0%,#18211d 52%,#101511 100%)}.farmv2-stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
       .farmv2-panel{position:absolute;top:18px;right:18px;z-index:3;width:min(340px,calc(100vw - 36px));max-height:calc(100% - 112px);overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--panel);box-shadow:0 18px 45px rgba(0,0,0,.28);backdrop-filter:blur(18px)}
       .farmv2-panel-header{padding:15px 16px 12px;border-bottom:1px solid var(--border)}.farmv2-panel-header span,.farmv2-detail-item span{display:block;margin-bottom:5px;color:var(--muted);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.farmv2-panel-header input{width:100%;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.07);color:var(--text);font-size:18px;font-weight:800;padding:8px}
@@ -1800,13 +1780,14 @@ function FarmV2Styles() {
       .farmv2-onboarding{position:absolute;inset:0;z-index:10;display:grid;place-items:center;padding:22px;background:radial-gradient(circle at 20% 12%,rgba(103,197,160,.18),transparent 24%),rgba(10,14,12,.92);backdrop-filter:blur(16px)}.farmv2-onboarding-card{display:grid;grid-template-columns:minmax(260px,360px) minmax(420px,760px);width:min(1180px,100%);min-height:min(720px,calc(100vh - 44px));overflow:hidden;border:1px solid var(--border);border-radius:8px;background:rgba(18,25,22,.96);box-shadow:0 28px 90px rgba(0,0,0,.36)}.farmv2-wizard-copy{padding:28px;border-right:1px solid var(--border);background:linear-gradient(180deg,rgba(103,197,160,.08),transparent 38%),#151d1a}.farmv2-wizard-copy h1,.farmv2-choice-card h2{margin:6px 0 10px;font-size:28px;line-height:1.05}.farmv2-wizard-copy p,.farmv2-choice-card span{color:var(--muted);font-size:14px;line-height:1.5}.farmv2-map-shell{position:relative;min-height:520px;background:#203029}.farmv2-boundary-map{position:absolute;inset:0}.farmv2-map-tools{position:absolute;left:14px;right:14px;bottom:14px;z-index:2;display:flex;justify-content:flex-end;gap:8px}.farmv2-setup-choice{position:absolute;inset:0;display:grid;place-items:center;padding:22px;background:rgba(10,14,12,.78)}.farmv2-choice-card{width:min(680px,100%);border:1px solid var(--border);border-radius:8px;padding:22px;background:rgba(21,29,26,.96);box-shadow:0 24px 70px rgba(0,0,0,.34)}.farmv2-choice-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}.farmv2-choice-grid button{height:auto;min-height:126px;padding:16px;text-align:left}.farmv2-choice-grid strong{display:block;margin-bottom:7px;font-size:18px}.farmv2-error{max-width:300px;color:#ffd7cf;font-size:12px}
       .farmv2-topbar,.farmv2-timeline{border-color:#3b2a14;background:#fffaf0;color:#2d2313;box-shadow:0 2px 0 #3b2a14;backdrop-filter:none}
       .farmv2-topbar{border-bottom-width:2px}.farmv2-timeline{border-top-width:2px}
-      .farmv2-brand strong{color:#34432b;font-family:var(--font-geist-mono),ui-monospace,monospace;font-size:13px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}.farmv2-brand-mark{border:2px solid #8b6f3e;background:linear-gradient(135deg,#67c5a0 0 49%,transparent 50%),linear-gradient(45deg,transparent 0 42%,#ffe89a 43% 100%),#fffdf5;box-shadow:inset 0 2px 0 rgba(255,255,255,.6),inset 0 -3px 0 rgba(168,118,28,.25),0 2px 0 #5e4a26}.farmv2-topbar .farmv2-eyebrow{color:#746850}
+      .farmv2-brand strong{color:#34432b;font-family:var(--font-geist-mono),ui-monospace,monospace;font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase;line-height:1.05}.farmv2-brand-mark{border:2px solid #8b6f3e;background:linear-gradient(135deg,#67c5a0 0 49%,transparent 50%),linear-gradient(45deg,transparent 0 42%,#ffe89a 43% 100%),#fffdf5;box-shadow:inset 0 2px 0 rgba(255,255,255,.6),inset 0 -3px 0 rgba(168,118,28,.25),0 2px 0 #5e4a26}.farmv2-topbar .farmv2-eyebrow{color:#746850}
       .farmv2-shell button,.farmv2-map-tools button,.farmv2-choice-grid button,.farmv2-commit-form button{min-height:34px;border:2px solid #8b6f3e;border-radius:0;background:#fffdf5;color:#5e4a26;box-shadow:0 2px 0 #5e4a26;font-family:var(--font-geist-mono),ui-monospace,monospace;font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase;transition:background-color .15s ease,transform .15s ease,box-shadow .15s ease,border-color .15s ease}
       .farmv2-shell button:hover,.farmv2-map-tools button:hover,.farmv2-choice-grid button:hover,.farmv2-commit-form button:hover{border-color:#3b2a14;background:#fff3cf;color:#3b2a14}
       .farmv2-shell button:active,.farmv2-map-tools button:active,.farmv2-choice-grid button:active,.farmv2-commit-form button:active{transform:translateY(2px);box-shadow:0 1px 0 #5e4a26}
       .farmv2-shell button:disabled,.farmv2-commit-form button:disabled{cursor:not-allowed;background:#d8cfaa;color:#746850;box-shadow:none;opacity:.7}
       .farmv2-shell button.active,.farmv2-marker-row button.active{border-color:#3b2a14;background:#ffd667;color:#3b2a14;box-shadow:inset 0 2px 0 rgba(255,255,255,.55),inset 0 -3px 0 rgba(168,118,28,.28),0 2px 0 #3b2a14}
-      .farmv2-segmented{display:inline-flex;gap:4px;overflow:visible;border:2px solid #3b2a14;border-radius:0;background:#fffdf5;padding:3px;box-shadow:0 2px 0 #3b2a14}.farmv2-segmented button{height:30px;min-width:0;border-color:transparent;background:transparent;box-shadow:none;color:#837766;font-size:10px}.farmv2-segmented button:hover{border-color:#c9b88a;background:#fff8dc;box-shadow:0 1px 0 #b29c66}.farmv2-segmented button.active{border-color:#8b6f3e;background:#fff3cf;color:#2d2313;box-shadow:inset 0 2px 0 rgba(255,255,255,.55),0 2px 0 #5e4a26}
+      .farmv2-segmented{display:inline-flex;gap:2px;overflow:visible;border:2px solid #3b2a14;border-radius:0;background:#fffdf5;padding:2px;box-shadow:0 2px 0 #3b2a14}.farmv2-segmented button{height:24px;min-width:0;padding:0 7px;border-color:transparent;background:transparent;box-shadow:none;color:#837766;font-size:10px;letter-spacing:.04em}.farmv2-segmented button:hover{border-color:#c9b88a;background:#fff8dc;box-shadow:0 1px 0 #b29c66}.farmv2-segmented button.active{border-color:#8b6f3e;background:#fff3cf;color:#2d2313;box-shadow:inset 0 2px 0 rgba(255,255,255,.55),0 2px 0 #5e4a26}
+      .farmv2-row > button{height:30px;padding:0 10px;font-size:10px;min-width:auto}
       .farmv2-panel-header input,.farmv2-detail-item select,.farmv2-detail-item input,.farmv2-commit-form input{border:2px solid #c9b88a;border-radius:0;background:#fffdf5;color:#365833;box-shadow:inset 0 2px 0 rgba(255,255,255,.65);font-weight:800;outline:none}.farmv2-panel-header input:focus,.farmv2-detail-item select:focus,.farmv2-detail-item input:focus,.farmv2-commit-form input:focus{border-color:#8b6f3e;background:#fff8dc}
       .farmv2-timeline input[type=range]{accent-color:#8b6f3e}.farmv2-marker-row button{color:#5e4a26;border-color:#c9b88a;background:#fffdf5;box-shadow:0 2px 0 #b29c66}.farmv2-commit-form input::placeholder{color:#9a8a66}
       .farmv2-map-tools button{background:#fffdf5;color:#5e4a26}.farmv2-choice-grid button{border-color:#3b2a14;background:#fffdf5;color:#2d2313;box-shadow:0 3px 0 #3b2a14}.farmv2-choice-grid button strong{font-family:var(--font-geist-mono),ui-monospace,monospace;font-size:13px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:#34432b}.farmv2-choice-grid button span{color:#746850;font-family:var(--font-geist-sans),ui-sans-serif,system-ui,sans-serif;font-size:13px;font-weight:700;letter-spacing:0;text-transform:none}
