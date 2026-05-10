@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
-import { MongoClient } from "mongodb";
+import { GridFSBucket, MongoClient } from "mongodb";
+import { Readable } from "node:stream";
 
 dotenv.config({ path: ".env.local" });
 
@@ -16,10 +17,34 @@ if (!dbName) {
 }
 
 const now = new Date();
+const shopImagesBucket = "shop_images";
+const imageUserAgent = "davishacks-seed/1.0 (local development seed script)";
 const testUser = {
   email: "test@gmail.com",
   password: "test1234",
   displayName: "Test Farmer",
+};
+
+function unsplashImage(photoId, label) {
+  return {
+    key: `unsplash-${photoId}`,
+    fileName: `${label}-${photoId}.jpg`,
+    downloadUrl: `https://images.unsplash.com/photo-${photoId}?auto=format&fit=crop&w=800&q=80`,
+    sourcePage: `https://unsplash.com/photos/${photoId}`,
+  };
+}
+
+const imageSources = {
+  tomatoes: unsplashImage("1592924357228-91a4daadcfea", "tomatoes"),
+  strawberries: unsplashImage("1464965911861-746a04b4bca6", "strawberries"),
+  lettuce: unsplashImage("1622206151226-18ca2c9ab4a1", "lettuce"),
+  cilantro: unsplashImage("1601493700631-2b16ec4b4716", "herbs"),
+  eggs: unsplashImage("1582722872445-44dc5f7e3c8f", "eggs"),
+  mushrooms: unsplashImage("1504545102780-26774c1bb073", "mushrooms"),
+  jam: unsplashImage("1590080875852-ba44f83ff2db", "jam"),
+  flowers: unsplashImage("1561181286-d3fee7d55364", "flowers"),
+  vegetables: unsplashImage("1542838132-92c53300491e", "vegetables"),
+  marketMushrooms: unsplashImage("1504545102780-26774c1bb073", "market-mushrooms"),
 };
 
 const catalogItems = [
@@ -315,6 +340,321 @@ const inventoryItems = [
   },
 ];
 
+const neighborFarms = [
+  {
+    email: "riverbed@sunpatch.local",
+    displayName: "Maya at Riverbed Rows",
+    farmName: "Riverbed Rows",
+    bio: "A shady east Davis microfarm with salad greens, herbs, and porch pickup.",
+    details: {
+      shopName: "Riverbed Rows Stand",
+      hours: "Wed and Sat, 8 AM - 12 PM",
+      pickupLocation: "East Davis porch cooler",
+      pickupCoords: { lat: 38.5549, lng: -121.7121 },
+      pickupInstructions: "Text before arrival; cooler is under the blue awning.",
+      paymentOptions: "Venmo, cash, or herb trades",
+      contact: "maya@riverbed.local",
+      availabilityNote: "Tender greens and herbs are cut early on pickup mornings.",
+    },
+    inventory: [
+      itemSeed("Little gem lettuce", "harvest", "ready", 18, "heads", "wash table", "north shade bed", "#65a95a", 450, "Crisp mini heads packed for same-day pickup.", "2026-05-12T07:00:00.000Z", imageSources.lettuce),
+      itemSeed("Cilantro bundles", "harvest", "ready", 24, "bunches", "porch cooler", "herb strip", "#4f9f52", 250, "Fragrant bunches with roots rinsed and wrapped.", "2026-05-11T07:00:00.000Z", imageSources.cilantro),
+      itemSeed("Strawberry mint shrub", "preserves", "curing", 10, "bottles", "pantry crate", "spring berry bed", "#c95b76", 900, "Bright drinking vinegar for soda water or salad dressing.", "2026-08-20T07:00:00.000Z", imageSources.jam),
+    ],
+    reviews: [
+      reviewSeed("Nora Chen", 5, "Pickup was simple and the lettuce stayed crisp for days.", ["fresh", "easy pickup"]),
+      reviewSeed("Omar Patel", 5, "The cilantro bundles were huge and packed clean.", ["generous", "clean"]),
+      reviewSeed("Jess Rivera", 4, "Loved the shrub bottles. I wish I had bought two.", ["preserves", "small batch"]),
+    ],
+  },
+  {
+    email: "poppy@sunpatch.local",
+    displayName: "Theo from Poppy Patch",
+    farmName: "Poppy Patch Backyard",
+    bio: "Sunny backyard beds focused on berries, tomatoes, and pollinator-friendly extras.",
+    details: {
+      shopName: "Poppy Patch Cart",
+      hours: "Fri, 4 PM - 7 PM · Sun, 9 AM - 1 PM",
+      pickupLocation: "South Davis driveway cart",
+      pickupCoords: { lat: 38.5394, lng: -121.7443 },
+      pickupInstructions: "Use the honor box clipped to the cart shelf.",
+      paymentOptions: "Cash, Venmo, Zelle",
+      contact: "theo@poppypatch.local",
+      availabilityNote: "Tomatoes go fast; berry pints are posted as they ripen.",
+    },
+    inventory: [
+      itemSeed("Early girl tomatoes", "harvest", "ready", 9, "lb", "driveway cart", "sun trellis", "#e9783a", 500, "Firm slicing tomatoes picked at first blush.", "2026-05-15T07:00:00.000Z", imageSources.tomatoes),
+      itemSeed("Albion strawberries", "harvest", "ready", 16, "pints", "cooler shelf", "berry trough", "#d94d5c", 650, "Sweet pints sorted with the soft berries removed.", "2026-05-11T07:00:00.000Z", imageSources.strawberries),
+      itemSeed("Pollinator posies", "harvest", "ready", 12, "bunches", "water bucket", "front border", "#d7b64b", 400, "Small edible-flower and pollinator bouquets.", "2026-05-13T07:00:00.000Z", imageSources.flowers),
+    ],
+    reviews: [
+      reviewSeed("Ari Salazar", 5, "The strawberry pints tasted like the first real week of spring.", ["sweet", "seasonal"]),
+      reviewSeed("Priya Shah", 4, "Cute stand and clear honor-box pricing.", ["cute stand", "clear prices"]),
+      reviewSeed("Mina Brooks", 5, "Tomatoes were labeled by ripeness, which helped a lot.", ["organized", "tomatoes"]),
+    ],
+  },
+  {
+    email: "oaklane@sunpatch.local",
+    displayName: "Sam at Oak Lane Coop",
+    farmName: "Oak Lane Coop & Garden",
+    bio: "A compact family farm stand with eggs, jam, mushrooms, and rotating garden harvests.",
+    details: {
+      shopName: "Oak Lane Farm Shelf",
+      hours: "Daily after 10 AM while stocked",
+      pickupLocation: "Oak Lane side gate",
+      pickupCoords: { lat: 38.5668, lng: -121.7601 },
+      pickupInstructions: "Shelf is inside the side gate; close the latch after pickup.",
+      paymentOptions: "Cash jar, PayPal, or trade",
+      contact: "sam@oaklane.local",
+      availabilityNote: "Eggs and preserves are steady; mushrooms appear after cool nights.",
+    },
+    inventory: [
+      itemSeed("Pasture eggs", "harvest", "ready", 8, "dozen", "gate shelf", "coop run", "#d7b64b", 700, "Mixed-color dozen from the backyard flock.", "2026-05-18T07:00:00.000Z", imageSources.eggs),
+      itemSeed("Oyster mushrooms", "harvest", "ready", 5, "lb", "cooler tray", "oak log stack", "#b99067", 900, "Tender clusters harvested before the caps flatten.", "2026-05-12T07:00:00.000Z", imageSources.mushrooms),
+      itemSeed("Apricot rosemary jam", "preserves", "curing", 14, "jars", "pantry shelf", "tree guild", "#e0a33a", 850, "Low-sugar jam with a soft rosemary finish.", "2026-11-01T07:00:00.000Z", imageSources.jam),
+    ],
+    reviews: [
+      reviewSeed("Eli Morgan", 5, "The eggs were spotless and the pickup shelf was easy to find.", ["eggs", "easy pickup"]),
+      reviewSeed("Talia Nguyen", 5, "Best oyster mushrooms I have found nearby.", ["mushrooms", "fresh"]),
+      reviewSeed("Rowan Lee", 4, "Jam was excellent and the labels made gifting easy.", ["preserves", "giftable"]),
+    ],
+  },
+  {
+    email: "willowbox@sunpatch.local",
+    displayName: "Lena at Willow Box",
+    farmName: "Willow Box Microgreens",
+    bio: "A tiny hydro shelf and raised-bed setup with greens, pea shoots, and bright preserves.",
+    details: {
+      shopName: "Willow Box Greens",
+      hours: "Tue and Thu, 5 PM - 7 PM",
+      pickupLocation: "North Davis alley shelf",
+      pickupCoords: { lat: 38.5709, lng: -121.7418 },
+      pickupInstructions: "Orders sit in the labeled insulated tote by the side door.",
+      paymentOptions: "Venmo or cash",
+      contact: "lena@willowbox.local",
+      availabilityNote: "Greens are cut to order when the tote list fills.",
+    },
+    inventory: [
+      itemSeed("Pea shoot clamshells", "harvest", "ready", 20, "clamshells", "alley tote", "hydro shelf", "#66ad63", 550, "Tender pea shoots clipped the morning of pickup.", "2026-05-11T07:00:00.000Z", imageSources.lettuce),
+      itemSeed("Spicy salad mix", "harvest", "ready", 14, "bags", "cool tote", "mustard bed", "#72b85b", 600, "Peppery baby greens with edible flower petals.", "2026-05-12T07:00:00.000Z", imageSources.vegetables),
+      itemSeed("Strawberry lavender jam", "preserves", "curing", 18, "jars", "pantry crate", "berry rail", "#c95b76", 950, "Soft-set berry jam with a light lavender finish.", "2026-10-15T07:00:00.000Z", imageSources.jam),
+    ],
+    reviews: [
+      reviewSeed("Cam Huynh", 5, "The pea shoots were clean, sweet, and packed perfectly.", ["greens", "clean"]),
+      reviewSeed("Drew Ellis", 4, "Great salad mix with just enough spice.", ["salad", "peppery"]),
+      reviewSeed("Lara Kim", 5, "Jam tasted homemade in the best way.", ["jam", "giftable"]),
+    ],
+  },
+  {
+    email: "figyard@sunpatch.local",
+    displayName: "Amir from Fig Yard",
+    farmName: "Fig Yard Garden",
+    bio: "A warm courtyard garden with tomatoes, herbs, edible flowers, and weekend bundles.",
+    details: {
+      shopName: "Fig Yard Weekend Box",
+      hours: "Sat, 10 AM - 2 PM",
+      pickupLocation: "Central Davis courtyard gate",
+      pickupCoords: { lat: 38.5457, lng: -121.7391 },
+      pickupInstructions: "Ring the brass bell if the courtyard gate is closed.",
+      paymentOptions: "Cash, Zelle, or garden trade",
+      contact: "amir@figyard.local",
+      availabilityNote: "Weekend boxes mix ripe produce with a few garden surprises.",
+    },
+    inventory: [
+      itemSeed("Cherry tomato cups", "harvest", "ready", 22, "cups", "courtyard table", "arch trellis", "#e9783a", 450, "Mixed cherry tomatoes sorted by color.", "2026-05-14T07:00:00.000Z", imageSources.tomatoes),
+      itemSeed("Basil bouquets", "harvest", "ready", 16, "bunches", "water jar", "herb border", "#3f8b58", 350, "Long-stem basil bundles for pesto or porch bouquets.", "2026-05-12T07:00:00.000Z", imageSources.cilantro),
+      itemSeed("Edible flower cups", "harvest", "ready", 10, "cups", "shade tray", "flower edge", "#d7b64b", 500, "Calendula, viola, and borage flowers for salads.", "2026-05-11T07:00:00.000Z", imageSources.flowers),
+    ],
+    reviews: [
+      reviewSeed("Maya Ortiz", 5, "The tomato cups were gorgeous and sorted with care.", ["tomatoes", "colorful"]),
+      reviewSeed("Ben Tran", 5, "Basil bundles made enough pesto for the freezer.", ["herbs", "generous"]),
+      reviewSeed("Sofia Park", 4, "Flower cups made dinner look fancy.", ["flowers", "fun"]),
+    ],
+  },
+  {
+    email: "compostcorner@sunpatch.local",
+    displayName: "June at Compost Corner",
+    farmName: "Compost Corner",
+    bio: "A practical neighborhood plot with mushrooms, hardy greens, and preserved pantry goods.",
+    details: {
+      shopName: "Compost Corner Shelf",
+      hours: "Mon, Wed, Fri after 3 PM",
+      pickupLocation: "West Davis shed shelf",
+      pickupCoords: { lat: 38.5525, lng: -121.7733 },
+      pickupInstructions: "Look for the cedar shelf beside the rain barrel.",
+      paymentOptions: "Cash jar, PayPal, or compost swap",
+      contact: "june@compostcorner.local",
+      availabilityNote: "Mushrooms and greens are stocked in small cool-weather batches.",
+    },
+    inventory: [
+      itemSeed("Blue oyster clusters", "harvest", "ready", 6, "lb", "shed cooler", "straw blocks", "#b99067", 950, "Dense clusters harvested while caps are still curled.", "2026-05-12T07:00:00.000Z", imageSources.marketMushrooms),
+      itemSeed("Romaine bundles", "harvest", "ready", 11, "heads", "wash bin", "compost bed", "#65a95a", 425, "Tall romaine heads grown in finished compost.", "2026-05-13T07:00:00.000Z", imageSources.lettuce),
+      itemSeed("Tomato leaf sauce", "preserves", "curing", 12, "jars", "pantry shelf", "summer sauce batch", "#e9783a", 875, "Savory sauce from frozen summer tomatoes and herbs.", "2026-09-30T07:00:00.000Z", imageSources.jam),
+    ],
+    reviews: [
+      reviewSeed("Inez Ford", 5, "The mushrooms cooked down beautifully.", ["mushrooms", "high quality"]),
+      reviewSeed("Mark Yu", 4, "Romaine was crisp and the pickup shelf was obvious.", ["greens", "pickup"]),
+      reviewSeed("Harper Reed", 5, "The sauce jar saved a weeknight dinner.", ["preserves", "practical"]),
+    ],
+  },
+  {
+    email: "sunsetrows@sunpatch.local",
+    displayName: "Nico at Sunset Rows",
+    farmName: "Sunset Rows",
+    bio: "A west-facing garden with warm tomatoes, berry boxes, and little porch bundles.",
+    details: {
+      shopName: "Sunset Rows Porch",
+      hours: "Thu and Sun, 4 PM - 7 PM",
+      pickupLocation: "West Davis porch rail",
+      pickupCoords: { lat: 38.5487, lng: -121.7856 },
+      pickupInstructions: "Porch rail boxes are labeled by first name.",
+      paymentOptions: "Venmo, cash, or tomato trades",
+      contact: "nico@sunsetrows.local",
+      availabilityNote: "Evening harvests are posted after the beds cool down.",
+    },
+    inventory: [
+      itemSeed("Sunset tomato quarts", "harvest", "ready", 18, "quarts", "porch rail", "west trellis", "#e9783a", 650, "Mixed slicers and cherries packed just before sunset.", "2026-05-15T07:00:00.000Z", imageSources.tomatoes),
+      itemSeed("Berry breakfast boxes", "harvest", "ready", 12, "boxes", "cooler bench", "berry run", "#d94d5c", 750, "Small strawberry boxes with mint tucked on top.", "2026-05-11T07:00:00.000Z", imageSources.strawberries),
+      itemSeed("Basil tomato jam", "preserves", "curing", 15, "jars", "pantry crate", "late summer batch", "#e0a33a", 875, "Sweet tomato jam with basil and a little lemon.", "2026-10-10T07:00:00.000Z", imageSources.jam),
+    ],
+    reviews: [
+      reviewSeed("Tess Walker", 5, "The evening pickup timing worked perfectly after work.", ["evening pickup", "tomatoes"]),
+      reviewSeed("Owen Li", 4, "Berry boxes were small but really sweet.", ["berries", "sweet"]),
+      reviewSeed("Keira Stone", 5, "Tomato jam was surprisingly good on toast.", ["preserves", "unique"]),
+    ],
+  },
+  {
+    email: "meadowmilk@sunpatch.local",
+    displayName: "Priya at Meadow Milk & Greens",
+    farmName: "Meadow Milk & Greens",
+    bio: "A family yard with pasture eggs, herbs, and small-batch greens near the greenbelt.",
+    details: {
+      shopName: "Meadow Milk & Greens",
+      hours: "Mon and Sat, 9 AM - 11 AM",
+      pickupLocation: "Greenbelt gate cooler",
+      pickupCoords: { lat: 38.5612, lng: -121.7312 },
+      pickupInstructions: "Cooler is chained to the inside fence post.",
+      paymentOptions: "Cash, Zelle, or herb swap",
+      contact: "priya@meadowmilk.local",
+      availabilityNote: "Eggs restock most mornings; herbs depend on heat.",
+    },
+    inventory: [
+      itemSeed("Greenbelt eggs", "harvest", "ready", 10, "dozen", "gate cooler", "small flock", "#d7b64b", 725, "Mixed shell colors from the backyard layers.", "2026-05-18T07:00:00.000Z", imageSources.eggs),
+      itemSeed("Dill and parsley bunches", "harvest", "ready", 18, "bunches", "water crock", "kitchen bed", "#4f9f52", 300, "Soft herb bunches wrapped for fridge storage.", "2026-05-12T07:00:00.000Z", imageSources.cilantro),
+      itemSeed("Butterhead lettuce", "harvest", "ready", 9, "heads", "wash basket", "shade row", "#65a95a", 400, "Loose butterhead lettuce rinsed and spun dry.", "2026-05-12T07:00:00.000Z", imageSources.lettuce),
+    ],
+    reviews: [
+      reviewSeed("Jules Park", 5, "Egg colors were beautiful and the cooler was easy to spot.", ["eggs", "easy pickup"]),
+      reviewSeed("Morgan Shah", 5, "Herbs lasted all week in the fridge.", ["herbs", "fresh"]),
+      reviewSeed("Ana Moore", 4, "Lettuce was tender and clean.", ["greens", "clean"]),
+    ],
+  },
+  {
+    email: "clovercart@sunpatch.local",
+    displayName: "Rafi at Clover Cart",
+    farmName: "Clover Cart",
+    bio: "A curbside cart with flower cups, salad bags, and whatever the clover beds produce.",
+    details: {
+      shopName: "Clover Cart",
+      hours: "Wed, 3 PM - 6 PM · Sat, 8 AM - 10 AM",
+      pickupLocation: "Clover Court curb cart",
+      pickupCoords: { lat: 38.5358, lng: -121.7319 },
+      pickupInstructions: "Cart is rolled out by the mailbox during open hours.",
+      paymentOptions: "Cash box or Cash App",
+      contact: "rafi@clovercart.local",
+      availabilityNote: "Cart quantities are small and rotate every open day.",
+    },
+    inventory: [
+      itemSeed("Clover salad bags", "harvest", "ready", 15, "bags", "curb cart", "clover beds", "#72b85b", 550, "Tender salad bags with pea shoots and baby greens.", "2026-05-12T07:00:00.000Z", imageSources.vegetables),
+      itemSeed("Tiny flower cups", "harvest", "ready", 12, "cups", "shade tray", "flower strip", "#d7b64b", 450, "Edible flower cups for cakes, salads, and drinks.", "2026-05-11T07:00:00.000Z", imageSources.flowers),
+      itemSeed("Strawberry spoon jam", "preserves", "curing", 16, "jars", "pantry box", "berry corner", "#c95b76", 900, "Loose spoon jam for yogurt and biscuits.", "2026-10-01T07:00:00.000Z", imageSources.jam),
+    ],
+    reviews: [
+      reviewSeed("Milo Grant", 5, "The cart setup is adorable and fast.", ["cute stand", "quick"]),
+      reviewSeed("Nadia Fox", 4, "Flower cups made cupcakes look professional.", ["flowers", "fun"]),
+      reviewSeed("Samir Cole", 5, "Salad bags had great texture.", ["salad", "fresh"]),
+    ],
+  },
+  {
+    email: "pondside@sunpatch.local",
+    displayName: "Iris at Pondside Produce",
+    farmName: "Pondside Produce",
+    bio: "A damp little garden with mushrooms, herbs, and cool-weather greens.",
+    details: {
+      shopName: "Pondside Produce Shelf",
+      hours: "Tue, Fri, and Sun after 1 PM",
+      pickupLocation: "Pondside shed window",
+      pickupCoords: { lat: 38.5755, lng: -121.7538 },
+      pickupInstructions: "Use the sliding shed window; bags are on the blue tray.",
+      paymentOptions: "PayPal, cash, or compost trade",
+      contact: "iris@pondside.local",
+      availabilityNote: "Mushrooms flush after cooler nights and sell out quickly.",
+    },
+    inventory: [
+      itemSeed("Mixed oyster mushrooms", "harvest", "ready", 7, "lb", "shed window", "mushroom rack", "#b99067", 1000, "Mixed oyster mushrooms packed in paper bags.", "2026-05-12T07:00:00.000Z", imageSources.mushrooms),
+      itemSeed("Pondside romaine", "harvest", "ready", 13, "heads", "blue tray", "cool bed", "#65a95a", 425, "Crunchy romaine from the damp garden edge.", "2026-05-13T07:00:00.000Z", imageSources.lettuce),
+      itemSeed("Herb salt jars", "preserves", "curing", 20, "jars", "dry shelf", "herb rack", "#8a6f3f", 600, "Garden herb salt for eggs and roasted vegetables.", "2026-12-01T07:00:00.000Z", imageSources.jam),
+    ],
+    reviews: [
+      reviewSeed("Dani Ruiz", 5, "Mushrooms were meaty and super fresh.", ["mushrooms", "fresh"]),
+      reviewSeed("Elena Brooks", 4, "The pickup window is quirky but clear.", ["pickup", "organized"]),
+      reviewSeed("Jon Bell", 5, "Herb salt has become a kitchen staple.", ["preserves", "practical"]),
+    ],
+  },
+  {
+    email: "lavenderlane@sunpatch.local",
+    displayName: "Mina at Lavender Lane",
+    farmName: "Lavender Lane",
+    bio: "A pollinator-heavy strip garden with flowers, strawberries, and fragrant herb bundles.",
+    details: {
+      shopName: "Lavender Lane Table",
+      hours: "Sat and Sun, 8 AM - 12 PM",
+      pickupLocation: "Lavender Lane front table",
+      pickupCoords: { lat: 38.5481, lng: -121.7215 },
+      pickupInstructions: "Front table is shaded by the purple umbrella.",
+      paymentOptions: "Cash, Venmo, or bouquet trade",
+      contact: "mina@lavenderlane.local",
+      availabilityNote: "Bouquets and berries are posted every weekend morning.",
+    },
+    inventory: [
+      itemSeed("Lavender herb bundles", "harvest", "ready", 20, "bundles", "front table", "herb strip", "#8a6f3f", 375, "Fragrant bundles with lavender, mint, and rosemary.", "2026-05-18T07:00:00.000Z", imageSources.cilantro),
+      itemSeed("Weekend strawberries", "harvest", "ready", 14, "pints", "ice tray", "berry row", "#d94d5c", 675, "Bright weekend strawberry pints.", "2026-05-11T07:00:00.000Z", imageSources.strawberries),
+      itemSeed("Pollinator bouquets", "harvest", "ready", 16, "bunches", "water bucket", "flower lane", "#d7b64b", 550, "Small bouquets for kitchen tables and bees.", "2026-05-13T07:00:00.000Z", imageSources.flowers),
+    ],
+    reviews: [
+      reviewSeed("Tara Lane", 5, "The bouquet lasted longer than expected.", ["flowers", "lasting"]),
+      reviewSeed("Noah Stein", 5, "Strawberries were sweet and carefully packed.", ["berries", "sweet"]),
+      reviewSeed("Rina Patel", 4, "Herb bundles smelled amazing.", ["herbs", "fragrant"]),
+    ],
+  },
+  {
+    email: "railtrail@sunpatch.local",
+    displayName: "Eli at Rail Trail Farm",
+    farmName: "Rail Trail Farm",
+    bio: "A narrow rail-trail plot with dependable greens, tomato cups, and pantry jars.",
+    details: {
+      shopName: "Rail Trail Farm Box",
+      hours: "Every day, 7 AM - 9 AM",
+      pickupLocation: "Rail trail lockbox",
+      pickupCoords: { lat: 38.5422, lng: -121.7587 },
+      pickupInstructions: "Lockbox code is posted after reservation; cold items are below.",
+      paymentOptions: "Zelle, card, or cash",
+      contact: "eli@railtrail.local",
+      availabilityNote: "Morning boxes are packed before the trail gets busy.",
+    },
+    inventory: [
+      itemSeed("Trail tomato cups", "harvest", "ready", 18, "cups", "lockbox shelf", "trail trellis", "#e9783a", 450, "Snack cups of cherry tomatoes for trail walkers.", "2026-05-14T07:00:00.000Z", imageSources.tomatoes),
+      itemSeed("Morning lettuce bags", "harvest", "ready", 12, "bags", "cold shelf", "rail bed", "#65a95a", 525, "Washed morning lettuce packed for same-day salads.", "2026-05-12T07:00:00.000Z", imageSources.lettuce),
+      itemSeed("Roasted tomato sauce", "preserves", "curing", 18, "jars", "pantry bin", "sauce batch", "#e9783a", 925, "Roasted tomato sauce with garlic and basil.", "2026-10-20T07:00:00.000Z", imageSources.jam),
+    ],
+    reviews: [
+      reviewSeed("Parker Wynn", 5, "Morning pickup before my walk was perfect.", ["morning", "easy pickup"]),
+      reviewSeed("Leah Green", 4, "Tomato cups were a great snack size.", ["tomatoes", "snack"]),
+      reviewSeed("Cal Foster", 5, "Sauce jar tasted like summer.", ["preserves", "tomatoes"]),
+    ],
+  },
+];
+
 async function ensureIndexes(db) {
   await Promise.all([
     db.collection("users").createIndex({ email: 1 }, { unique: true }),
@@ -325,7 +665,233 @@ async function ensureIndexes(db) {
     db.collection("inventory_items").createIndex({ userId: 1, category: 1, status: 1 }),
     db.collection("inventory_items").createIndex({ userId: 1, name: 1 }, { unique: true }),
     db.collection("shop_displays").createIndex({ userId: 1 }, { unique: true }),
+    db.collection("farm_reviews").createIndex({ farmUserId: 1, rating: -1 }),
+    db.collection("farm_reviews").createIndex({ farmUserId: 1, reviewerName: 1 }, { unique: true }),
   ]);
+}
+
+function itemSeed(name, category, status, amount, unit, location, source, color, priceCents, notes, useBy, image) {
+  return {
+    name,
+    category,
+    status,
+    quantity: { amount, unit },
+    location,
+    source,
+    notes,
+    color,
+    priceCents,
+    useBy: new Date(useBy),
+    acquiredAt: new Date("2026-05-09T07:00:00.000Z"),
+    image,
+  };
+}
+
+function reviewSeed(reviewerName, rating, comment, tags) {
+  return {
+    reviewerName,
+    rating,
+    comment,
+    tags,
+  };
+}
+
+async function ensureSeedShopImage(db, userId, inventoryItemId, image) {
+  const files = db.collection(`${shopImagesBucket}.files`);
+  const existing = await files.findOne({
+    "metadata.seedKey": image.key,
+    "metadata.inventoryItemId": inventoryItemId,
+  });
+
+  if (existing?._id) {
+    return existing._id;
+  }
+
+  const downloaded = await downloadSeedImage(image.downloadUrl);
+  const bucket = new GridFSBucket(db, { bucketName: shopImagesBucket });
+  const uploadStream = bucket.openUploadStream(image.fileName, {
+    metadata: {
+      userId,
+      inventoryItemId,
+      contentType: downloaded.contentType,
+      sourceUrl: image.downloadUrl,
+      sourcePage: image.sourcePage,
+      seedKey: image.key,
+      uploadedAt: now,
+    },
+  });
+
+  await new Promise((resolve, reject) => {
+    uploadStream.on("error", reject);
+    uploadStream.on("finish", resolve);
+    Readable.from(downloaded.bytes).pipe(uploadStream);
+  });
+
+  return uploadStream.id;
+}
+
+async function downloadSeedImage(url) {
+  let lastError;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (attempt > 0) {
+      await sleep(900 * attempt);
+    }
+
+    try {
+      const response = await fetch(url, {
+        redirect: "follow",
+        headers: {
+          "User-Agent": imageUserAgent,
+          "Accept": "image/avif,image/webp,image/png,image/jpeg,image/*",
+        },
+      });
+      const contentType = response.headers.get("content-type")?.split(";")[0] ?? "application/octet-stream";
+
+      if (!response.ok || !contentType.startsWith("image/")) {
+        throw new Error(`Image download failed ${response.status} ${contentType}`);
+      }
+
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!bytes.length) {
+        throw new Error("Image download was empty");
+      }
+
+      return { bytes, contentType };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Image download failed");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function seedNeighborFarm(db, farmSeed, passwordHash) {
+  const userResult = await db.collection("users").findOneAndUpdate(
+    { email: farmSeed.email },
+    {
+      $set: {
+        email: farmSeed.email,
+        passwordHash,
+        role: "user",
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        createdAt: now,
+      },
+    },
+    { upsert: true, returnDocument: "after" },
+  );
+  const user = userResult;
+
+  await db.collection("profiles").updateOne(
+    { userId: user._id },
+    {
+      $set: {
+        displayName: farmSeed.displayName,
+        bio: farmSeed.bio,
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        userId: user._id,
+        avatarUrl: null,
+        createdAt: now,
+      },
+    },
+    { upsert: true },
+  );
+
+  await db.collection("farms").findOneAndUpdate(
+    { userId: user._id, name: farmSeed.farmName },
+    {
+      $set: {
+        userId: user._id,
+        name: farmSeed.farmName,
+        units: "feet",
+        bounds: {
+          width: 36,
+          depth: 28,
+          height: 8,
+        },
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        createdAt: now,
+      },
+    },
+    { upsert: true, returnDocument: "after" },
+  );
+
+  const savedInventory = [];
+
+  for (const inventoryItem of farmSeed.inventory) {
+    const { image, ...inventoryDocument } = inventoryItem;
+    const saved = await db.collection("inventory_items").findOneAndUpdate(
+      { userId: user._id, name: inventoryItem.name },
+      {
+        $set: {
+          ...inventoryDocument,
+          userId: user._id,
+          updatedAt: now,
+        },
+        $setOnInsert: {
+          createdAt: now,
+        },
+      },
+      { upsert: true, returnDocument: "after" },
+    );
+
+    const imageId = image ? await ensureSeedShopImage(db, user._id, saved._id, image) : null;
+    savedInventory.push({ ...saved, imageId });
+  }
+
+  await db.collection("shop_displays").findOneAndUpdate(
+    { userId: user._id },
+    {
+      $set: {
+        userId: user._id,
+        theme: "farm-stand",
+        layoutMode: "shelves",
+        details: farmSeed.details,
+        slots: savedInventory.map((item, index) => ({
+          inventoryItemId: item._id,
+          position: index,
+          displayAmount: item.quantity.amount,
+          displayUnit: item.quantity.unit,
+          priceCents: item.priceCents,
+          signText: `${item.name} · ${item.notes.split(".")[0]}`,
+          visible: true,
+          ...(item.imageId ? { imageId: item.imageId } : {}),
+        })),
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        createdAt: now,
+      },
+    },
+    { upsert: true, returnDocument: "after" },
+  );
+
+  for (const review of farmSeed.reviews) {
+    await db.collection("farm_reviews").findOneAndUpdate(
+      { farmUserId: user._id, reviewerName: review.reviewerName },
+      {
+        $set: {
+          ...review,
+          farmUserId: user._id,
+          updatedAt: now,
+        },
+        $setOnInsert: {
+          createdAt: now,
+        },
+      },
+      { upsert: true, returnDocument: "after" },
+    );
+  }
 }
 
 async function seed() {
@@ -525,7 +1091,11 @@ async function seed() {
       { upsert: true, returnDocument: "after" },
     );
 
-    console.log(`Seeded ${dbName} for ${testUser.email}`);
+    for (const neighborFarm of neighborFarms) {
+      await seedNeighborFarm(db, neighborFarm, passwordHash);
+    }
+
+    console.log(`Seeded ${dbName} for ${testUser.email} and ${neighborFarms.length} public farm shopfronts`);
   } finally {
     await client.close();
   }

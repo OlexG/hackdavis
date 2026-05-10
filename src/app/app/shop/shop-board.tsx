@@ -1,26 +1,27 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { PixelGlyph } from "../_components/icons";
 import type { ShopDisplaySlotView, ShopSnapshot } from "@/lib/shop";
+import { HoursSelector, PaymentSelector, PickupLocationSelector } from "./shop-selectors";
+import { PickupPinMap } from "./pickup-map";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type ShopViewMode = "edit" | "preview";
 type ShopDetails = ShopSnapshot["details"];
-type DetailField = {
-  key: keyof ShopDetails;
+type DetailGlyph = "sun" | "wagon" | "basket" | "leaf" | "scroll";
+type SimpleDetailKey = "shopName" | "pickupInstructions" | "contact" | "availabilityNote";
+type SimpleDetailField = {
+  key: SimpleDetailKey;
   label: string;
-  glyph: "sun" | "wagon" | "basket" | "leaf" | "scroll";
+  glyph: DetailGlyph;
   multiline?: boolean;
 };
 
-const detailFields: DetailField[] = [
+const simpleDetailFields: SimpleDetailField[] = [
   { key: "shopName", label: "Shop name", glyph: "leaf" },
-  { key: "hours", label: "Open days and hours", glyph: "sun" },
-  { key: "pickupLocation", label: "Pickup location", glyph: "wagon" },
   { key: "pickupInstructions", label: "Pickup instructions", glyph: "scroll", multiline: true },
-  { key: "paymentOptions", label: "Payment or trade", glyph: "basket" },
   { key: "contact", label: "Contact", glyph: "scroll" },
   { key: "availabilityNote", label: "Availability note", glyph: "leaf", multiline: true },
 ];
@@ -34,7 +35,9 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
   const [saveError, setSaveError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
+  const [isDirtyState, setIsDirtyState] = useState(false);
   const hasUserEdited = useRef(false);
+  const saveTokenRef = useRef(0);
 
   const visibleSlots = useMemo(
     () => slots.filter((slot) => slot.visible).sort((left, right) => left.position - right.position),
@@ -46,47 +49,43 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
   );
   const totalDisplayed = visibleSlots.reduce((total, slot) => total + slot.displayAmount, 0);
 
-  useEffect(() => {
-    if (!hasUserEdited.current) {
-      return;
-    }
-
+  async function saveChanges() {
     setSaveStatus("saving");
     setSaveError(null);
-    const timeout = window.setTimeout(async () => {
-      try {
-        const response = await fetch("/api/shop/display", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ details, slots: slots.map(toSaveSlot) }),
-        });
-        const data = (await response.json()) as Partial<ShopSnapshot> & { error?: string };
+    const editId = ++saveTokenRef.current;
 
-        if (!response.ok || data.error) {
-          throw new Error("error" in data ? data.error : "Unable to save shop display");
-        }
+    try {
+      const response = await fetch("/api/shop/display", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ details, slots: slots.map(toSaveSlot) }),
+      });
+      const data = (await response.json()) as Partial<ShopSnapshot> & { error?: string };
 
-        if (!Array.isArray(data.slots)) {
-          throw new Error("Shop display response was missing slots");
-        }
-
-        hasUserEdited.current = false;
-        setSlots(data.slots);
-        if (data.details) {
-          setDetails(data.details);
-        }
-        setSaveStatus("saved");
-      } catch (error) {
-        setSaveStatus("error");
-        setSaveError(error instanceof Error ? error.message : "Unable to save shop display");
+      if (!response.ok || data.error) {
+        throw new Error("error" in data ? data.error : "Unable to save shop display");
       }
-    }, 650);
 
-    return () => window.clearTimeout(timeout);
-  }, [details, slots]);
+      if (editId !== saveTokenRef.current) {
+        // Newer edit landed while saving — keep local state, don't overwrite.
+        return;
+      }
+
+      hasUserEdited.current = false;
+      setIsDirtyState(false);
+      setSaveStatus("saved");
+    } catch (error) {
+      setSaveStatus("error");
+      setSaveError(error instanceof Error ? error.message : "Unable to save shop display");
+    }
+  }
 
   function markEdited() {
     hasUserEdited.current = true;
+    setIsDirtyState(true);
+    if (saveStatus === "saved" || saveStatus === "error") {
+      setSaveStatus("idle");
+    }
   }
 
   function flashAction(message: string) {
@@ -213,6 +212,8 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
         actionMessage={actionMessage}
         draggedItemId={draggedItemId}
         uploadingItemId={uploadingItemId}
+        isDirty={isDirtyState}
+        onSave={saveChanges}
         onDragStart={handleDragStart}
         onDropShelf={handleDropOnShelf}
         onDetailsChange={updateDetails}
@@ -233,6 +234,38 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
         />
       ) : null}
     </div>
+  );
+}
+
+export function PublicShopfrontPreview({ snapshot }: { snapshot: ShopSnapshot }) {
+  const visibleSlots = snapshot.slots
+    .filter((slot) => slot.visible)
+    .sort((left, right) => left.position - right.position);
+  const totalDisplayed = visibleSlots.reduce((total, slot) => total + slot.displayAmount, 0);
+  const noop = () => undefined;
+  const noopAsync = async () => undefined;
+
+  return (
+    <FarmStandPanel
+      displayName={snapshot.displayName}
+      details={snapshot.details}
+      mode="preview"
+      visibleSlots={visibleSlots}
+      totalDisplayed={totalDisplayed}
+      saveStatus="idle"
+      saveError={null}
+      actionMessage={null}
+      draggedItemId={null}
+      uploadingItemId={null}
+      isDirty={false}
+      onSave={noopAsync}
+      onDragStart={noop}
+      onDropShelf={noop}
+      onDetailsChange={noop}
+      onUpdate={noop}
+      onUpload={noopAsync}
+      onHide={noop}
+    />
   );
 }
 
@@ -279,6 +312,8 @@ function FarmStandPanel({
   actionMessage,
   draggedItemId,
   uploadingItemId,
+  isDirty,
+  onSave,
   onDragStart,
   onDropShelf,
   onDetailsChange,
@@ -296,6 +331,8 @@ function FarmStandPanel({
   actionMessage: string | null;
   draggedItemId: string | null;
   uploadingItemId: string | null;
+  isDirty: boolean;
+  onSave: () => Promise<void>;
   onDragStart: (itemId: string) => void;
   onDropShelf: (targetItemId?: string) => void;
   onDetailsChange: (patch: Partial<ShopDetails>) => void;
@@ -338,10 +375,24 @@ function FarmStandPanel({
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            {isEditing ? <StatusBadge status={saveStatus} error={saveError} /> : null}
+            {isEditing ? <StatusBadge status={saveStatus} error={saveError} dirty={isDirty} /> : null}
             <span className="rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] px-2.5 py-1 font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#5e4a26] shadow-[0_2px_0_#3b2a14]">
               {visibleSlots.length} on shelf · {Math.round(totalDisplayed * 10) / 10} units
             </span>
+            {isEditing ? (
+              <button
+                type="button"
+                onClick={() => onSave()}
+                disabled={!isDirty || saveStatus === "saving"}
+                className={`rounded-none border-2 px-3 py-1 font-mono text-[11px] font-black uppercase tracking-[0.1em] shadow-[0_2px_0_#3b2a14] transition active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14] ${
+                  isDirty && saveStatus !== "saving"
+                    ? "border-[#3b2a14] bg-[#7da854] text-[#fffdf5] hover:bg-[#9bc278]"
+                    : "cursor-not-allowed border-[#a8916a] bg-[#f1e4c2] text-[#7a6843] opacity-70"
+                }`}
+              >
+                {saveStatus === "saving" ? "Saving…" : isDirty ? "Save changes" : "Saved"}
+              </button>
+            ) : null}
           </div>
           {actionMessage ? (
             <p className="rounded-none border-2 border-[#d8a05a] bg-[#fff4dc] px-3 py-1 font-mono text-[11px] font-black uppercase tracking-[0.08em] text-[#7a461f] shadow-[0_2px_0_#a8761c]">
@@ -414,39 +465,84 @@ function ShopDetailsEditor({
   details: ShopDetails;
   onChange: (patch: Partial<ShopDetails>) => void;
 }) {
+  const cardClass = "pixel-frame grid gap-2 self-start border-2 border-[#c9b88a] bg-[#fffdf5] p-2.5 shadow-[0_2px_0_#b29c66]";
+
+  const shopNameField = simpleDetailFields.find((f) => f.key === "shopName")!;
+  const contactField = simpleDetailFields.find((f) => f.key === "contact")!;
+  const pickupInstructionsField = simpleDetailFields.find((f) => f.key === "pickupInstructions")!;
+  const availabilityField = simpleDetailFields.find((f) => f.key === "availabilityNote")!;
+
   return (
-    <div className="bg-[#fffaf0] p-3">
+    <div className="grid gap-2 bg-[#fffaf0] p-3">
       <div className="grid gap-2 lg:grid-cols-2">
-        {detailFields.map((field) => (
-          <label
-            key={field.key}
-            style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
-            className={`pixel-frame grid gap-1.5 border-2 border-[#c9b88a] bg-[#fffdf5] p-2.5 shadow-[0_2px_0_#b29c66] ${
-              field.multiline ? "lg:col-span-2" : ""
-            }`}
-          >
-            <span className="flex items-center gap-2 font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">
-              <PixelGlyph name={field.glyph} className="size-4" />
-              {field.label}
-            </span>
-            {field.multiline ? (
-              <textarea
-                value={details[field.key]}
-                onChange={(event) => onChange({ [field.key]: event.target.value })}
-                rows={3}
-                className="min-h-20 w-full resize-y rounded-none border-2 border-[#c9b88a] bg-white px-2 py-1.5 text-sm font-bold leading-snug text-[#365833] outline-none focus:border-[#9bb979]"
-              />
-            ) : (
-              <input
-                value={details[field.key]}
-                onChange={(event) => onChange({ [field.key]: event.target.value })}
-                className="h-9 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
-              />
-            )}
-          </label>
-        ))}
+        <SimpleDetailEditor field={shopNameField} details={details} onChange={onChange} />
+        <SimpleDetailEditor field={contactField} details={details} onChange={onChange} />
       </div>
+
+      <div style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }} className={cardClass}>
+        <HoursSelector
+          value={details.hoursSchedule}
+          onChange={(next) => onChange({ hoursSchedule: next })}
+        />
+      </div>
+
+      <div style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }} className={cardClass}>
+        <PaymentSelector
+          value={details.payment}
+          onChange={(next) => onChange({ payment: next })}
+        />
+      </div>
+
+      <div style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }} className={cardClass}>
+        <PickupLocationSelector
+          address={details.pickupLocation}
+          coords={details.pickupCoords}
+          onAddressChange={(value) => onChange({ pickupLocation: value })}
+          onCoordsChange={(value) => onChange({ pickupCoords: value })}
+        />
+      </div>
+
+      <SimpleDetailEditor field={pickupInstructionsField} details={details} onChange={onChange} />
+      <SimpleDetailEditor field={availabilityField} details={details} onChange={onChange} />
     </div>
+  );
+}
+
+function SimpleDetailEditor({
+  field,
+  details,
+  onChange,
+}: {
+  field: SimpleDetailField;
+  details: ShopDetails;
+  onChange: (patch: Partial<ShopDetails>) => void;
+}) {
+  return (
+    <label
+      style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
+      className={`pixel-frame grid gap-1.5 border-2 border-[#c9b88a] bg-[#fffdf5] p-2.5 shadow-[0_2px_0_#b29c66] ${
+        field.multiline ? "lg:col-span-2" : ""
+      }`}
+    >
+      <span className="flex items-center gap-2 font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">
+        <PixelGlyph name={field.glyph} className="size-4" />
+        {field.label}
+      </span>
+      {field.multiline ? (
+        <textarea
+          value={details[field.key]}
+          onChange={(event) => onChange({ [field.key]: event.target.value })}
+          rows={3}
+          className="min-h-20 w-full resize-y rounded-none border-2 border-[#c9b88a] bg-white px-2 py-1.5 text-sm font-bold leading-snug text-[#365833] outline-none focus:border-[#9bb979]"
+        />
+      ) : (
+        <input
+          value={details[field.key]}
+          onChange={(event) => onChange({ [field.key]: event.target.value })}
+          className="h-9 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
+        />
+      )}
+    </label>
   );
 }
 
@@ -458,17 +554,31 @@ function FarmStandInfoStrip({
   visibleSlots: ShopDisplaySlotView[];
 }) {
   const freshestUntil = getSoonestUseByLabel(visibleSlots);
-  const publicDetails = [
-    { label: "Hours", value: details.hours, glyph: "sun" as const },
-    { label: "Pickup", value: details.pickupLocation, detail: details.pickupInstructions, glyph: "wagon" as const },
-    { label: "Payment", value: details.paymentOptions, glyph: "basket" as const },
-    { label: "Contact", value: details.contact, glyph: "scroll" as const },
-    { label: "Availability", value: details.availabilityNote, glyph: "leaf" as const },
-  ].filter((item) => item.value || item.detail);
+  const hasMap = Boolean(details.pickupCoords);
+  type RemainingItem = { label: string; value: string; detail?: string; glyph: "wagon" | "scroll" };
+  const remainingDetails: RemainingItem[] = [];
+  if (!hasMap && details.pickupLocation) {
+    remainingDetails.push({
+      label: "Pickup",
+      value: details.pickupLocation,
+      detail: details.pickupInstructions,
+      glyph: "wagon",
+    });
+  }
+  if (hasMap && details.pickupInstructions) {
+    remainingDetails.push({
+      label: "Pickup notes",
+      value: details.pickupInstructions,
+      glyph: "scroll",
+    });
+  }
+  if (details.contact) {
+    remainingDetails.push({ label: "Contact", value: details.contact, glyph: "scroll" });
+  }
 
   return (
     <div className="bg-[#fffaf0] p-3">
-      <div className="grid gap-2 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+      <div className="grid items-start gap-2 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         <div
           style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
           className="pixel-frame border-2 border-[#3b2a14] bg-[#fffdf5] p-3 shadow-[0_2px_0_#8b6f3e]"
@@ -491,41 +601,208 @@ function FarmStandInfoStrip({
               {freshestUntil}
             </span>
           </div>
+          {hasMap && details.pickupCoords ? (
+            <div className="mt-3 grid gap-2">
+              <PickupPinMap
+                coords={details.pickupCoords}
+                label={details.pickupLocation}
+                heightClass="h-44"
+              />
+              {details.pickupLocation ? (
+                <div className="flex items-start gap-2 rounded-none border-2 border-[#c9b88a] bg-[#fffaf0] p-2">
+                  <PixelGlyph name="wagon" className="mt-0.5 size-4 shrink-0 text-[#7a6843]" />
+                  <p className="text-xs font-bold leading-snug text-[#2d311f]">
+                    {details.pickupLocation}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2">
-          {publicDetails.length ? publicDetails.map((item) => (
-            <div
+        <div className="grid content-start gap-2">
+          <HoursPreviewCard details={details} />
+          <PaymentPreviewCard details={details} />
+          {remainingDetails.map((item) => (
+            <PreviewMiniCard
               key={item.label}
-              style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
-              className="pixel-frame flex min-h-24 gap-2 border-2 border-[#c9b88a] bg-[#fffdf5] p-2 shadow-[0_2px_0_#b29c66]"
-            >
-              <span className="grid size-8 shrink-0 place-items-center rounded-none border-2 border-[#8b6f3e] bg-[#fff8dc] shadow-[0_1px_0_#5e4a26]">
-                <PixelGlyph name={item.glyph} className="size-4.5" />
-              </span>
-              <div className="min-w-0">
-                <div className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">
-                  {item.label}
-                </div>
-                <div className="mt-0.5 text-xs font-black leading-tight text-[#2d311f]">
-                  {item.value}
-                </div>
-                {item.detail ? (
-                  <p className="mt-1 text-[11px] font-semibold leading-snug text-[#7a6843]">
-                    {item.detail}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          )) : (
-            <div className="rounded-none border-2 border-dashed border-[#d4c39a] bg-[#fffdf5] px-3 py-5 text-center font-mono text-xs font-black uppercase tracking-[0.12em] text-[#9a8a66] sm:col-span-2">
+              label={item.label}
+              glyph={item.glyph}
+              value={item.value}
+              detail={item.detail}
+            />
+          ))}
+          {!remainingDetails.length && !details.hoursSchedule && !details.payment && !details.hours && !details.paymentOptions ? (
+            <div className="rounded-none border-2 border-dashed border-[#d4c39a] bg-[#fffdf5] px-3 py-5 text-center font-mono text-xs font-black uppercase tracking-[0.12em] text-[#9a8a66]">
               Shop details not published yet
             </div>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
   );
+}
+
+function PreviewMiniCard({
+  label,
+  glyph,
+  value,
+  detail,
+}: {
+  label: string;
+  glyph: "wagon" | "scroll" | "sun" | "basket" | "leaf";
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div
+      style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
+      className="pixel-frame flex gap-2 border-2 border-[#c9b88a] bg-[#fffdf5] p-2 shadow-[0_2px_0_#b29c66]"
+    >
+      <span className="grid size-8 shrink-0 place-items-center rounded-none border-2 border-[#8b6f3e] bg-[#fff8dc] shadow-[0_1px_0_#5e4a26]">
+        <PixelGlyph name={glyph} className="size-4" />
+      </span>
+      <div className="min-w-0">
+        <div className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">
+          {label}
+        </div>
+        <div className="mt-0.5 text-xs font-black leading-tight text-[#2d311f]">{value}</div>
+        {detail ? (
+          <p className="mt-1 text-[11px] font-semibold leading-snug text-[#7a6843]">{detail}</p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function HoursPreviewCard({ details }: { details: ShopDetails }) {
+  const schedule = details.hoursSchedule;
+
+  if (!schedule && !details.hours) {
+    return null;
+  }
+
+  if (!schedule) {
+    return (
+      <PreviewMiniCard label="Hours" glyph="sun" value={details.hours || "Hours not posted"} />
+    );
+  }
+
+  const dayShorts = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const activeDays = new Set(schedule.days);
+  const range = schedule.openMinutes === schedule.closeMinutes
+    ? null
+    : `${formatMinutes(schedule.openMinutes)} – ${formatMinutes(schedule.closeMinutes)}`;
+
+  return (
+    <div
+      style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
+      className="pixel-frame grid gap-2 border-2 border-[#c9b88a] bg-[#fffdf5] p-2 shadow-[0_2px_0_#b29c66]"
+    >
+      <div className="flex items-center gap-2">
+        <span className="grid size-8 shrink-0 place-items-center rounded-none border-2 border-[#8b6f3e] bg-[#fff8dc] shadow-[0_1px_0_#5e4a26]">
+          <PixelGlyph name="sun" className="size-4" />
+        </span>
+        <div className="min-w-0">
+          <div className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">
+            Open days &amp; hours
+          </div>
+          {range ? (
+            <div className="mt-0.5 font-mono text-xs font-black text-[#2d311f]">{range}</div>
+          ) : null}
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {dayShorts.map((short, index) => {
+          const active = activeDays.has(index);
+          return (
+            <span
+              key={short}
+              aria-label={`${short}${active ? " open" : " closed"}`}
+              className={`grid h-7 min-w-0 place-items-center rounded-none border-2 font-mono text-[10px] font-black uppercase tracking-[0.04em] ${
+                active
+                  ? "border-[#3b2a14] bg-[#7da854] text-[#fffdf5] shadow-[0_2px_0_#3b2a14]"
+                  : "border-[#c9b88a] bg-[#fff8dc] text-[#9a8a66]"
+              }`}
+            >
+              {short}
+            </span>
+          );
+        })}
+      </div>
+      {schedule.note ? (
+        <p className="text-[11px] font-semibold leading-snug text-[#7a6843]">{schedule.note}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function PaymentPreviewCard({ details }: { details: ShopDetails }) {
+  const payment = details.payment;
+
+  if (!payment && !details.paymentOptions) {
+    return null;
+  }
+
+  if (!payment || !payment.methods.length) {
+    return (
+      <PreviewMiniCard
+        label="Payment"
+        glyph="basket"
+        value={details.paymentOptions || payment?.note || "Ask the farmer"}
+      />
+    );
+  }
+
+  const methodLabels: Record<string, string> = {
+    venmo: "Venmo",
+    cashapp: "Cash App",
+    zelle: "Zelle",
+    paypal: "PayPal",
+    cash: "Cash",
+    card: "Card",
+    check: "Check",
+    trade: "Trade",
+  };
+
+  return (
+    <div
+      style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
+      className="pixel-frame grid gap-2 border-2 border-[#c9b88a] bg-[#fffdf5] p-2 shadow-[0_2px_0_#b29c66]"
+    >
+      <div className="flex items-center gap-2">
+        <span className="grid size-8 shrink-0 place-items-center rounded-none border-2 border-[#8b6f3e] bg-[#fff8dc] shadow-[0_1px_0_#5e4a26]">
+          <PixelGlyph name="basket" className="size-4" />
+        </span>
+        <div className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">
+          Payment or trade
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {payment.methods.map((method) => (
+          <span
+            key={method.kind}
+            className="inline-flex items-center gap-1 whitespace-nowrap rounded-none border-2 border-[#3b2a14] bg-[#7da854] px-2 py-0.5 font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#fffdf5] shadow-[0_2px_0_#3b2a14]"
+          >
+            {methodLabels[method.kind] ?? method.kind}
+            {method.handle ? <span className="text-[9px] font-bold normal-case opacity-90">{method.handle}</span> : null}
+          </span>
+        ))}
+      </div>
+      {payment.note ? (
+        <p className="text-[11px] font-semibold leading-snug text-[#7a6843]">{payment.note}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function formatMinutes(minutes: number) {
+  const total = ((minutes % (24 * 60)) + 24 * 60) % (24 * 60);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  const period = h >= 12 ? "PM" : "AM";
+  const display = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${display}:${m.toString().padStart(2, "0")} ${period}`;
 }
 
 function Awning() {
@@ -844,6 +1121,23 @@ function ImageSlot({
           className="object-cover"
           unoptimized
         />
+      ) : !editable ? (
+        <div
+          className="grid h-full w-full place-items-center text-center"
+          style={{
+            backgroundImage:
+              "linear-gradient(135deg, rgba(255,255,255,0.28) 25%, transparent 25% 50%, rgba(59,42,20,0.08) 50% 75%, transparent 75%)",
+            backgroundColor: slot.item.color,
+            backgroundSize: "6px 6px",
+          }}
+        >
+          <div className="rounded-none border-2 border-[#3b2a14] bg-[#fffdf5]/90 px-3 py-2 shadow-[0_2px_0_#3b2a14]">
+            <PixelGlyph name="leaf" className="mx-auto mb-1 size-5 text-[#365833]" />
+            <div className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#5e4a26]">
+              Fresh from farm
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="grid place-items-center text-center">
           <PixelGlyph name="sparkle" className="mx-auto mb-1 size-5 text-[#c9a64a]" />
@@ -888,13 +1182,23 @@ function ImageSlot({
   );
 }
 
-function StatusBadge({ status, error }: { status: SaveStatus; error: string | null }) {
-  const text = status === "saving" ? "Saving" : status === "saved" ? "Saved" : status === "error" ? "Save error" : "Ready";
+function StatusBadge({ status, error, dirty }: { status: SaveStatus; error: string | null; dirty: boolean }) {
+  const text = status === "saving"
+    ? "Saving"
+    : status === "error"
+      ? "Save error"
+      : dirty
+        ? "Unsaved"
+        : status === "saved"
+          ? "Saved"
+          : "Ready";
   const classes = status === "error"
     ? "border-[#efb16b] bg-[#fff1dc] text-[#7a461f]"
     : status === "saving"
       ? "border-[#68b8c9] bg-[#e4f7f8] text-[#245c65]"
-      : "border-[#9bc278] bg-[#eef8df] text-[#335a2d]";
+      : dirty
+        ? "border-[#d8a05a] bg-[#fff1dc] text-[#7a461f]"
+        : "border-[#9bc278] bg-[#eef8df] text-[#335a2d]";
 
   return (
     <span title={error ?? undefined} className={`rounded-none border-2 px-2.5 py-1 font-mono text-[11px] font-black uppercase tracking-[0.1em] shadow-[0_2px_0_#3b2a14] ${classes}`}>
@@ -941,6 +1245,7 @@ function normalizeSlot(slot: ShopDisplaySlotView) {
 
 function normalizeDetails(details: ShopDetails): ShopDetails {
   return {
+    ...details,
     shopName: details.shopName.slice(0, 60),
     hours: details.hours.slice(0, 80),
     pickupLocation: details.pickupLocation.slice(0, 80),

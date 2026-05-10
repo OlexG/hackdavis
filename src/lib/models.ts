@@ -182,6 +182,17 @@ export type ShopDisplay = {
   updatedAt: Date;
 };
 
+export type FarmReview = {
+  _id: ObjectId;
+  farmUserId: ObjectId;
+  reviewerName: string;
+  rating: number;
+  comment: string;
+  tags: string[];
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type Farm = {
   _id: ObjectId;
   userId: ObjectId;

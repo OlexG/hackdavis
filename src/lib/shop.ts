@@ -21,6 +21,15 @@ const sellableCategories = ["harvest", "preserves"] as const;
 const shopImagesBucket = "shop_images";
 const maxImageBytes = 4 * 1024 * 1024;
 const allowedImageMimeTypes = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+type ShopDetailStringKey =
+  | "shopName"
+  | "hours"
+  | "pickupLocation"
+  | "pickupInstructions"
+  | "paymentOptions"
+  | "contact"
+  | "availabilityNote";
+
 const detailLimits = {
   shopName: 60,
   hours: 80,
@@ -29,7 +38,7 @@ const detailLimits = {
   paymentOptions: 120,
   contact: 100,
   availabilityNote: 160,
-} satisfies Record<keyof ShopDisplayDetails, number>;
+} satisfies Record<ShopDetailStringKey, number>;
 
 export type ShopDisplaySlotView = {
   id: string;
