@@ -15,10 +15,10 @@ export function AppShell({ children, currentUser }: { children: ReactNode; curre
   const userInitial = currentUser.displayName.trim().charAt(0).toUpperCase() || "U";
 
   return (
-    <main className="min-h-screen bg-[#fbf6e8] text-[#2d2313]">
-      <div className="flex min-h-screen max-md:flex-col">
+    <main className="h-screen overflow-hidden bg-[#fbf6e8] text-[#2d2313]">
+      <div className="flex h-screen min-h-0 max-md:flex-col">
         <aside
-          className={`border-r-2 border-[#3b2a14] bg-[#fffdf5] transition-[width] duration-200 max-md:w-full max-md:border-b-2 max-md:border-r-0 ${
+          className={`h-screen shrink-0 overflow-hidden border-r-2 border-[#3b2a14] bg-[#fffdf5] transition-[width] duration-200 max-md:h-auto max-md:w-full max-md:border-b-2 max-md:border-r-0 ${
             collapsed ? "w-[76px]" : "w-64"
           }`}
         >
@@ -136,7 +136,7 @@ export function AppShell({ children, currentUser }: { children: ReactNode; curre
           </div>
         </aside>
 
-        <section className="min-w-0 flex-1">
+        <section className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           <div className="p-6">{children}</div>
         </section>
       </div>
