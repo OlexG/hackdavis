@@ -5,11 +5,13 @@ declare const maplibregl: any;
 const boundaryPoints: Point[] = [];
 let map: any = null;
 
-export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => void): () => void {
+export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => void, options: { bindControls?: boolean } = {}): () => void {
     const controller = new AbortController();
+    const bindControls = options.bindControls !== false;
 
     if (typeof maplibregl === "undefined") {
       ui.mapFallback.classList.remove("hidden");
+      if (bindControls) bindUiControls(ui, onBoundarySaved, controller.signal);
       return () => controller.abort();
     }
 
@@ -64,33 +66,7 @@ export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => vo
       ui.mapFallback.classList.remove("hidden");
     }
 
-    ui.clearBoundary.addEventListener("click", () => {
-      boundaryPoints.length = 0;
-      updateMapSource();
-    }, { signal: controller.signal });
-    ui.useDemoBoundary.addEventListener("click", () => {
-      boundaryPoints.length = 0;
-      boundaryPoints.push(
-        [-121.7471, 38.5484],
-        [-121.7354, 38.5488],
-        [-121.7334, 38.5407],
-        [-121.7462, 38.5399]
-      );
-      updateMapSource();
-    }, { signal: controller.signal });
-    ui.saveBoundary.addEventListener("click", () => {
-      if (boundaryPoints.length < 3) {
-        boundaryPoints.length = 0;
-        boundaryPoints.push(
-          [-121.7471, 38.5484],
-          [-121.7354, 38.5488],
-          [-121.7334, 38.5407],
-          [-121.7462, 38.5399]
-        );
-      }
-      updateMapSource();
-      onBoundarySaved(boundaryPoints.slice());
-    }, { signal: controller.signal });
+    if (bindControls) bindUiControls(ui, onBoundarySaved, controller.signal);
 
     return () => {
       controller.abort();
@@ -103,8 +79,42 @@ export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => vo
 }
 
 export function redraw(): void {
+    clearBoundary();
+}
+
+export function clearBoundary(): void {
     boundaryPoints.length = 0;
     updateMapSource();
+}
+
+export function useDemoBoundary(): void {
+    boundaryPoints.length = 0;
+    boundaryPoints.push(...demoBoundary());
+    updateMapSource();
+}
+
+export function saveBoundary(onBoundarySaved: (points: Point[]) => void): void {
+    if (boundaryPoints.length < 3) {
+      boundaryPoints.length = 0;
+      boundaryPoints.push(...demoBoundary());
+    }
+    updateMapSource();
+    onBoundarySaved(boundaryPoints.slice());
+}
+
+function bindUiControls(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => void, signal: AbortSignal): void {
+    ui.clearBoundary?.addEventListener("click", clearBoundary, { signal });
+    ui.useDemoBoundary?.addEventListener("click", useDemoBoundary, { signal });
+    ui.saveBoundary?.addEventListener("click", () => saveBoundary(onBoundarySaved), { signal });
+}
+
+function demoBoundary(): Point[] {
+    return [
+      [-121.7471, 38.5484],
+      [-121.7354, 38.5488],
+      [-121.7334, 38.5407],
+      [-121.7462, 38.5399]
+    ];
 }
 
 function emptyGeoJsonSource() {

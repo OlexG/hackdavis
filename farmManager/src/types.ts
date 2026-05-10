@@ -175,6 +175,89 @@ export interface FarmManagerSnapshot {
   selectedId: string | null;
 }
 
+export interface FarmManagerChromeState {
+  mode: FarmState["mode"];
+  drawType: DrawType;
+  view: ViewMode;
+  units: Units;
+  onboardingVisible: boolean;
+  setupChoiceVisible: boolean;
+  ready: boolean;
+  backendMessage: string | null;
+  backendError: boolean;
+}
+
+export interface FarmManagerTimelineState {
+  commits: FarmCommit[];
+  commitIndex: number;
+  playing: boolean;
+  snapshotDate: string;
+  snapshotLabel: string;
+}
+
+export interface FarmManagerContentState {
+  selectedObject: FarmObject | null;
+  objects: FarmObject[];
+  timeline: FarmManagerTimelineState;
+  draftCount: number;
+  boundaryPointCount: number;
+  boundarySource: "Map" | "Demo";
+  units: Units;
+  catalog: Catalog;
+  commitModalOpen: boolean;
+  savingCommit: boolean;
+}
+
+export interface FarmManagerActions {
+  setMode: (mode: FarmState["mode"]) => void;
+  setDrawType: (drawType: DrawType) => void;
+  setView: (view: ViewMode) => void;
+  setUnits: (units: Units) => void;
+  finishDraft: () => void;
+  clearDraft: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  rotateView: () => void;
+  resetView: () => void;
+  openBoundarySettings: () => void;
+  useDemoBoundary: () => void;
+  clearBoundary: () => void;
+  saveBoundary: () => void;
+  startManualSetup: () => void;
+  startAiSetup: () => void;
+  loadCommit: (index: number) => void;
+  togglePlayback: () => void;
+  openCommitModal: () => void;
+  closeCommitModal: () => void;
+  saveCommit: (name: string) => Promise<boolean>;
+  renameSelectedObject: (name: string) => void;
+  deleteSelectedObject: () => void;
+  setCropCount: (count: number) => void;
+  setCropType: (cropKey: string) => void;
+  setLivestockSpecies: (speciesKey: string) => void;
+  setLivestockBreed: (breed: string) => void;
+  setStructureType: (structureKey: string) => void;
+  handleCanvasPointerDown: (event: PointerEvent) => void;
+  handleCanvasPointerMove: (event: PointerEvent) => void;
+  handleCanvasPointerUp: (event: PointerEvent) => void;
+  handleCanvasPointerLeave: () => void;
+  handleCanvasClick: (event: MouseEvent) => void;
+  handleCanvasWheel: (event: WheelEvent) => void;
+  handleKeyDown: (event: KeyboardEvent) => void;
+}
+
+export interface FarmManagerMountOptions {
+  onChromeChange?: (state: FarmManagerChromeState) => void;
+  onContentChange?: (state: FarmManagerContentState) => void;
+}
+
+export interface FarmManagerMount {
+  cleanup: () => void;
+  actions: FarmManagerActions;
+  getChromeState: () => FarmManagerChromeState;
+  getContentState: () => FarmManagerContentState;
+}
+
 export interface BBox {
   minX: number;
   maxX: number;
@@ -195,7 +278,7 @@ export interface ZoomLimits {
 export interface BoundaryMapUi {
   boundaryMap: HTMLElement;
   mapFallback: HTMLElement;
-  clearBoundary: HTMLButtonElement;
-  useDemoBoundary: HTMLButtonElement;
-  saveBoundary: HTMLButtonElement;
+  clearBoundary?: HTMLButtonElement;
+  useDemoBoundary?: HTMLButtonElement;
+  saveBoundary?: HTMLButtonElement;
 }

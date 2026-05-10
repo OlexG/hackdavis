@@ -14,44 +14,24 @@ const byId = (root, id) => {
 };
 const createUi = (root) => ({
     canvas: byId(root, "farmCanvas"),
-    selectMode: byId(root, "selectMode"),
-    drawMode: byId(root, "drawMode"),
-    closeShape: byId(root, "closeShape"),
-    clearDraft: byId(root, "clearDraft"),
-    zoomOut: byId(root, "zoomOut"),
-    zoomIn: byId(root, "zoomIn"),
-    rotateView: byId(root, "rotateView"),
-    resetView: byId(root, "resetView"),
-    settingsButton: byId(root, "settingsButton"),
-    timelineInput: byId(root, "timelineInput"),
-    timelineMarkers: byId(root, "timelineMarkers"),
-    playTimeline: byId(root, "playTimeline"),
-    addTimelineEntry: byId(root, "addTimelineEntry"),
-    snapshotDate: byId(root, "snapshotDate"),
-    snapshotLabel: byId(root, "snapshotLabel"),
-    panelKicker: byId(root, "panelKicker"),
-    panelTitle: byId(root, "panelTitle"),
-    objectDetails: byId(root, "objectDetails"),
-    onboarding: byId(root, "onboarding"),
-    setupChoice: byId(root, "setupChoice"),
     boundaryMap: byId(root, "boundaryMap"),
-    mapFallback: byId(root, "mapFallback"),
-    useDemoBoundary: byId(root, "useDemoBoundary"),
-    clearBoundary: byId(root, "clearBoundary"),
-    saveBoundary: byId(root, "saveBoundary"),
-    manualSetup: byId(root, "manualSetup"),
-    aiSetup: byId(root, "aiSetup"),
-    commitModal: byId(root, "commitModal"),
-    commitName: byId(root, "commitName"),
-    skipCommitName: byId(root, "skipCommitName"),
-    saveCommitName: byId(root, "saveCommitName"),
-    backendGate: byId(root, "backendGate")
+    mapFallback: byId(root, "mapFallback")
 });
-let rootElement = document;
 let ui;
-export function mountFarmManager(root = document) {
-    rootElement = root;
+let mountOptions = {};
+let commitModalOpen = false;
+let savingCommit = false;
+let backendMessage = null;
+let backendError = false;
+let onboardingVisible = true;
+let setupChoiceVisible = false;
+export function mountFarmManager(root = document, options = {}) {
+    mountOptions = options;
     ui = createUi(root);
+    commitModalOpen = false;
+    savingCommit = false;
+    onboardingVisible = true;
+    setupChoiceVisible = false;
     const controller = new AbortController();
     let rendererCleanup = null;
     let boundaryCleanup = null;
@@ -70,7 +50,7 @@ export function mountFarmManager(root = document) {
         boundaryCleanup = cleanup.boundaryCleanup;
         hudTimer = cleanup.hudTimer;
     });
-    return () => {
+    const cleanup = () => {
         controller.abort();
         if (hudTimer)
             window.clearInterval(hudTimer);
@@ -80,6 +60,12 @@ export function mountFarmManager(root = document) {
         }
         boundaryCleanup?.();
         rendererCleanup?.();
+    };
+    return {
+        cleanup,
+        actions: createActions(),
+        getChromeState,
+        getContentState
     };
 }
 async function bootFarmManager(signal) {
@@ -97,14 +83,15 @@ async function bootFarmManager(signal) {
             showOnboarding();
         }
         const rendererCleanup = FarmRenderer.init(ui.canvas);
-        const boundaryCleanup = BoundaryMap.init(ui, onBoundarySaved);
-        bindUi(signal);
+        const boundaryCleanup = BoundaryMap.init(ui, onBoundarySaved, { bindControls: false });
         updateDrawControls();
         syncControlState();
         fitFarmToView();
         updateTimeline();
         updatePanel();
         clearBackendGate();
+        emitChromeChange();
+        emitContentChange();
         const hudTimer = window.setInterval(updateHud, 150);
         return { rendererCleanup, boundaryCleanup, hudTimer };
     }
@@ -113,108 +100,20 @@ async function bootFarmManager(signal) {
         return null;
     }
 }
-function bindUi(signal) {
-    const listen = (target, type, listener, options = {}) => {
-        target.addEventListener(type, listener, { ...options, signal });
-    };
-    listen(ui.selectMode, "click", () => setMode("select"));
-    listen(ui.drawMode, "click", () => setMode("draw"));
-    listen(ui.closeShape, "click", finishDraft);
-    listen(ui.clearDraft, "click", clearDraft);
-    listen(ui.zoomIn, "click", () => zoomAtScreenPoint(canvasCenter(), 0.18));
-    listen(ui.zoomOut, "click", () => zoomAtScreenPoint(canvasCenter(), -0.18));
-    listen(ui.rotateView, "click", () => {
-        state.rotation = (state.rotation + 90) % 360;
-        state.zoom = G.clamp(state.zoom, FarmRenderer.getZoomLimits().min, FarmRenderer.getZoomLimits().max);
-    });
-    listen(ui.resetView, "click", () => {
-        state.rotation = 0;
-        fitFarmToView();
-    });
-    listen(ui.settingsButton, "click", () => {
-        BoundaryMap.redraw();
-        ui.onboarding.classList.remove("hidden");
-        ui.setupChoice.classList.add("hidden");
-    });
-    rootElement.querySelectorAll("[data-draw-type]").forEach((button) => {
-        listen(button, "click", () => {
-            state.drawType = button.dataset.drawType;
-            rootElement.querySelectorAll("[data-draw-type]").forEach((item) => item.classList.remove("active"));
-            button.classList.add("active");
-            clearDraft();
-            updateDrawControls();
-        });
-    });
-    rootElement.querySelectorAll("[data-view]").forEach((button) => {
-        listen(button, "click", () => {
-            state.view = button.dataset.view;
-            rootElement.querySelectorAll("[data-view]").forEach((item) => item.classList.remove("active"));
-            button.classList.add("active");
-        });
-    });
-    rootElement.querySelectorAll("[data-units]").forEach((button) => {
-        listen(button, "click", () => {
-            state.units = button.dataset.units;
-            rootElement.querySelectorAll("[data-units]").forEach((item) => item.classList.remove("active"));
-            button.classList.add("active");
-            markPanelDirty();
-        });
-    });
-    listen(ui.manualSetup, "click", () => {
-        DemoState.resetForManualPlan();
-        ui.onboarding.classList.add("hidden");
-        fitFarmToView();
-        updateTimeline();
-        markPanelDirty();
-        setMode("draw");
-    });
-    listen(ui.aiSetup, "click", () => {
-        DemoState.useAiPreset();
-        ui.onboarding.classList.add("hidden");
-        state.selectedId = "squash-slot";
-        updateTimeline();
-        markPanelDirty();
-    });
-    listen(ui.timelineInput, "input", (event) => {
-        DemoState.loadCommit(Number(event.target.value));
-        state.selectedId = DemoState.currentObjects()[0]?.id || null;
-        updateTimeline();
-        markPanelDirty();
-    });
-    listen(ui.playTimeline, "click", togglePlayback);
-    listen(ui.addTimelineEntry, "click", openCommitModal);
-    listen(ui.skipCommitName, "click", () => saveCommit(""));
-    listen(ui.saveCommitName, "click", () => saveCommit(ui.commitName.value.trim()));
-    listen(ui.canvas, "pointerdown", onPointerDown);
-    listen(ui.canvas, "pointermove", onPointerMove);
-    listen(ui.canvas, "pointerup", onPointerUp);
-    listen(ui.canvas, "pointercancel", onPointerUp);
-    listen(ui.canvas, "pointerleave", () => {
-        state.mouse = null;
-        onPointerUp();
-    });
-    listen(ui.canvas, "click", onCanvasClick);
-    listen(ui.canvas, "wheel", (event) => {
-        event.preventDefault();
-        zoomAtCursor(event);
-    }, { passive: false });
-    listen(window, "keydown", onKeyDown);
-    listen(ui.objectDetails, "click", onPanelClick);
-    listen(ui.objectDetails, "input", onPanelInput);
-    listen(ui.objectDetails, "change", onPanelChange);
-    listen(ui.panelTitle, "dblclick", beginRenameSelected);
-}
 function onBoundarySaved(points) {
     DemoState.setBoundaryFromGeo(points);
-    ui.setupChoice.classList.remove("hidden");
+    setupChoiceVisible = true;
+    emitChromeChange();
 }
 function showOnboarding() {
-    ui.onboarding.classList.remove("hidden");
-    ui.setupChoice.classList.add("hidden");
+    onboardingVisible = true;
+    setupChoiceVisible = false;
+    emitChromeChange();
 }
 function hideOnboarding() {
-    ui.onboarding.classList.add("hidden");
-    ui.setupChoice.classList.add("hidden");
+    onboardingVisible = false;
+    setupChoiceVisible = false;
+    emitChromeChange();
 }
 async function persistToBackend() {
     const result = await ApiClient.saveFarmState(DemoState.exportSnapshot());
@@ -226,39 +125,149 @@ async function persistToBackend() {
     return true;
 }
 function setBackendGate(message, isError = false) {
-    ui.backendGate.classList.remove("hidden");
-    ui.backendGate.classList.toggle("backend-error", isError);
-    ui.backendGate.innerHTML = `
-      <div class="backend-card">
-        <span>${isError ? "Backend error" : "Backend"}</span>
-        <strong>${escapeHtml(message)}</strong>
-        ${isError ? "<em>Fix the backend response, then refresh this tab.</em>" : ""}
-      </div>
-    `;
+    backendMessage = message;
+    backendError = isError;
+    emitChromeChange();
 }
 function clearBackendGate() {
-    ui.backendGate.classList.add("hidden");
-    ui.backendGate.classList.remove("backend-error");
-    ui.backendGate.innerHTML = "";
+    backendMessage = null;
+    backendError = false;
+    emitChromeChange();
 }
 function syncControlState() {
-    rootElement.querySelectorAll("[data-view]").forEach((item) => {
-        item.classList.toggle("active", item.dataset.view === state.view);
-    });
-    rootElement.querySelectorAll("[data-units]").forEach((item) => {
-        item.classList.toggle("active", item.dataset.units === state.units);
-    });
+}
+function createActions() {
+    return {
+        setMode,
+        setDrawType,
+        setView,
+        setUnits,
+        finishDraft,
+        clearDraft,
+        zoomIn: () => zoomAtScreenPoint(canvasCenter(), 0.18),
+        zoomOut: () => zoomAtScreenPoint(canvasCenter(), -0.18),
+        rotateView,
+        resetView,
+        openBoundarySettings,
+        useDemoBoundary: BoundaryMap.useDemoBoundary,
+        clearBoundary: BoundaryMap.clearBoundary,
+        saveBoundary: () => BoundaryMap.saveBoundary(onBoundarySaved),
+        startManualSetup,
+        startAiSetup,
+        loadCommit,
+        togglePlayback,
+        openCommitModal,
+        closeCommitModal,
+        saveCommit,
+        renameSelectedObject,
+        deleteSelectedObject,
+        setCropCount,
+        setCropType,
+        setLivestockSpecies,
+        setLivestockBreed,
+        setStructureType,
+        handleCanvasPointerDown: onPointerDown,
+        handleCanvasPointerMove: onPointerMove,
+        handleCanvasPointerUp: onPointerUp,
+        handleCanvasPointerLeave,
+        handleCanvasClick: onCanvasClick,
+        handleCanvasWheel,
+        handleKeyDown: onKeyDown
+    };
+}
+function getChromeState() {
+    return {
+        mode: state.mode,
+        drawType: state.drawType,
+        view: state.view,
+        units: state.units,
+        onboardingVisible,
+        setupChoiceVisible,
+        ready: backendMessage === null,
+        backendMessage,
+        backendError
+    };
+}
+function getContentState() {
+    const commit = state.commits[state.commitIndex];
+    return {
+        selectedObject: state.objects.find((item) => item.id === state.selectedId) || null,
+        objects: DemoState.clone(state.objects),
+        timeline: {
+            commits: DemoState.clone(state.commits),
+            commitIndex: state.commitIndex,
+            playing: state.playing,
+            snapshotDate: commit ? formatDate(commit.timestamp) : "",
+            snapshotLabel: commit?.name || ""
+        },
+        draftCount: state.draft.length,
+        boundaryPointCount: DemoState.activeBoundary().length,
+        boundarySource: state.boundaryGeo ? "Map" : "Demo",
+        units: state.units,
+        catalog: CATALOG,
+        commitModalOpen,
+        savingCommit
+    };
+}
+function emitChromeChange() {
+    syncControlState();
+    mountOptions.onChromeChange?.(getChromeState());
+}
+function emitContentChange() {
+    mountOptions.onContentChange?.(getContentState());
 }
 function setMode(mode) {
     state.mode = mode;
-    ui.selectMode.classList.toggle("active", mode === "select");
-    ui.drawMode.classList.toggle("active", mode === "draw");
     ui.canvas.style.cursor = mode === "draw" ? "crosshair" : "grab";
     updateDrawControls();
+    emitChromeChange();
+}
+function setDrawType(drawType) {
+    state.drawType = drawType;
+    clearDraft();
+    updateDrawControls();
+    emitChromeChange();
+}
+function setView(view) {
+    state.view = view;
+    syncControlState();
+    emitChromeChange();
+}
+function setUnits(units) {
+    state.units = units;
+    markPanelDirty();
+    syncControlState();
+    emitChromeChange();
+}
+function rotateView() {
+    state.rotation = (state.rotation + 90) % 360;
+    state.zoom = G.clamp(state.zoom, FarmRenderer.getZoomLimits().min, FarmRenderer.getZoomLimits().max);
+}
+function resetView() {
+    state.rotation = 0;
+    fitFarmToView();
+}
+function openBoundarySettings() {
+    BoundaryMap.redraw();
+    showOnboarding();
+}
+function startManualSetup() {
+    DemoState.resetForManualPlan();
+    hideOnboarding();
+    fitFarmToView();
+    updateTimeline();
+    markPanelDirty();
+    setMode("draw");
+}
+function startAiSetup() {
+    DemoState.useAiPreset();
+    hideOnboarding();
+    state.selectedId = "squash-slot";
+    updateTimeline();
+    markPanelDirty();
+    emitChromeChange();
 }
 function updateDrawControls() {
-    const pathMode = state.drawType === "path";
-    ui.closeShape.textContent = pathMode ? "Enter" : "Close";
 }
 function onPointerDown(event) {
     state.pointerDown = {
@@ -296,12 +305,21 @@ function onPointerUp() {
         state.isPanning = false;
     }, 0);
 }
+function handleCanvasPointerLeave() {
+    state.mouse = null;
+    onPointerUp();
+    emitContentChange();
+}
 function zoomAtCursor(event) {
     const rect = ui.canvas.getBoundingClientRect();
     zoomAtScreenPoint({
         x: event.clientX - rect.left,
         y: event.clientY - rect.top
     }, event.deltaY < 0 ? 0.18 : -0.18);
+}
+function handleCanvasWheel(event) {
+    event.preventDefault();
+    zoomAtCursor(event);
 }
 function canvasCenter() {
     const rect = ui.canvas.getBoundingClientRect();
@@ -333,20 +351,19 @@ function onCanvasClick(event) {
     if (state.mode === "draw") {
         state.draft.push(world);
         markPanelDirty();
+        emitContentChange();
         return;
     }
     const hits = FarmRenderer.hitTestAll(world);
     state.selectedId = selectFromHitStack(world, hits);
     markPanelDirty();
+    emitContentChange();
 }
 function onKeyDown(event) {
     const target = event.target;
     const isTextInput = target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
-    if (isTextInput) {
-        if (event.key === "Escape" && !ui.commitModal.classList.contains("hidden"))
-            ui.commitModal.classList.add("hidden");
+    if (isTextInput)
         return;
-    }
     if (event.key === "Enter" && state.mode === "draw") {
         event.preventDefault();
         finishDraft();
@@ -378,6 +395,7 @@ function clearDraft() {
     state.draft = [];
     state.mouse = null;
     markPanelDirty();
+    emitContentChange();
 }
 function finishDraft() {
     if (state.drawType === "path") {
@@ -434,8 +452,6 @@ function findContainingCropArea(polygon) {
 }
 function updateHud() {
     const commit = state.commits[state.commitIndex];
-    ui.snapshotDate.textContent = formatDate(commit.timestamp);
-    ui.snapshotLabel.textContent = commit.name;
     const panelKey = [
         state.selectedId,
         state.units,
@@ -451,277 +467,7 @@ function updateHud() {
     }
 }
 function updatePanel() {
-    const object = state.objects.find((item) => item.id === state.selectedId);
-    if (!object) {
-        ui.panelKicker.textContent = "Selection";
-        ui.panelTitle.textContent = "No object selected";
-        ui.objectDetails.innerHTML = `
-        <div class="detail-grid">
-          <div class="detail-item"><span>Timeline</span><strong>${state.commits.length} entries</strong></div>
-          <div class="detail-item"><span>Draft</span><strong>${state.draft.length} points</strong></div>
-          <div class="detail-item"><span>Boundary</span><strong>${DemoState.activeBoundary().length} points</strong></div>
-          <div class="detail-item"><span>Source</span><strong>${state.boundaryGeo ? "Map" : "Demo"}</strong></div>
-        </div>
-        <div class="detail-list"><span>Draw flow</span><ul><li><strong>Enter confirms, Escape cancels</strong><em>all drawing modes</em></li></ul></div>
-      `;
-        return;
-    }
-    ui.panelKicker.textContent = labelForType(object.type);
-    ui.panelTitle.textContent = object.label;
-    if (object.type === "path") {
-        ui.objectDetails.innerHTML = `
-        <div class="detail-grid">
-          <div class="detail-item"><span>Length</span><strong>${formatLength(pathLength(object.points))}</strong></div>
-          <div class="detail-item"><span>Points</span><strong>${object.points.length}</strong></div>
-          <div class="detail-item"><span>Status</span><strong>${object.attrs.status}</strong></div>
-          <div class="detail-item"><span>Material</span><strong>${object.attrs.material}</strong></div>
-        </div>
-        ${deleteControl(object)}
-      `;
-        return;
-    }
-    const common = `
-      <div class="detail-grid">
-        <div class="detail-item"><span>Area</span><strong>${formatArea(G.polygonArea(object.polygon))}</strong></div>
-        <div class="detail-item"><span>Dimensions</span><strong>${formatDimensions(object.polygon)}</strong></div>
-        <div class="detail-item"><span>Status</span><strong>${object.attrs.status}</strong></div>
-        <div class="detail-item"><span>Type</span><strong>${labelForType(object.type)}</strong></div>
-      </div>
-    `;
-    if (object.type === "cropArea") {
-        const children = state.objects.filter((item) => item.type === "cropField" && item.parentId === object.id);
-        ui.objectDetails.innerHTML = `${common}
-        <div class="detail-list">
-          <span>Child crop fields</span>
-          <ul>${children.length ? children.map((child) => `<li><strong>${child.label}</strong><em>${child.attrs.cropName || "Unassigned"}</em></li>`).join("") : "<li><strong>No crop fields yet</strong><em>draw inside area</em></li>"}</ul>
-        </div>
-        <div class="detail-list"><span>Design rule</span><ul><li><strong>One crop per child field</strong><em>clean timeline and spacing</em></li></ul></div>
-        ${deleteControl(object)}
-      `;
-    }
-    else if (object.type === "cropField") {
-        ui.objectDetails.innerHTML = `${common}
-        <div class="detail-grid">
-          <div class="detail-item"><span>Crop</span><strong>${object.attrs.cropName || "Unassigned"}</strong></div>
-          <label class="detail-item"><span>Count</span><input data-role="crop-count" type="number" min="0" step="1" value="${object.attrs.count || 0}" /></label>
-          <div class="detail-item"><span>Parent</span><strong>${parentLabel(object.parentId)}</strong></div>
-          <div class="detail-item"><span>Planted</span><strong>${object.attrs.planted || "Unassigned"}</strong></div>
-        </div>
-        ${cropTypeDropdown(object)}
-        ${deleteControl(object)}
-      `;
-    }
-    else if (object.type === "livestock") {
-        ui.objectDetails.innerHTML = `${common}
-        <div class="detail-grid">
-          <div class="detail-item"><span>Species</span><strong>${object.attrs.species}</strong></div>
-          <div class="detail-item"><span>Breed</span><strong>${object.attrs.breed}</strong></div>
-          <div class="detail-item"><span>Headcount</span><strong>${object.attrs.count}</strong></div>
-          <div class="detail-item"><span>Enclosure</span><strong>Fenced</strong></div>
-        </div>
-        ${livestockDropdowns(object)}
-        ${deleteControl(object)}
-      `;
-    }
-    else if (object.type === "structure") {
-        ui.objectDetails.innerHTML = `${common}
-        <div class="detail-grid">
-          <div class="detail-item"><span>Kind</span><strong>${object.attrs.kind}</strong></div>
-          <div class="detail-item"><span>Material</span><strong>${object.attrs.material}</strong></div>
-          <div class="detail-item"><span>Height</span><strong>${formatLength(object.height)}</strong></div>
-          <div class="detail-item"><span>Footprint</span><strong>${formatArea(G.polygonArea(object.polygon))}</strong></div>
-        </div>
-        ${catalogEditor("structure")}
-        ${deleteControl(object)}
-      `;
-    }
-}
-function beginRenameSelected() {
-    const object = state.objects.find((item) => item.id === state.selectedId);
-    if (!object)
-        return;
-    ui.panelTitle.contentEditable = "true";
-    ui.panelTitle.classList.add("renaming");
-    ui.panelTitle.focus();
-    document.getSelection()?.selectAllChildren(ui.panelTitle);
-    const finish = () => {
-        ui.panelTitle.contentEditable = "false";
-        ui.panelTitle.classList.remove("renaming");
-        const nextName = ui.panelTitle.textContent.trim();
-        if (nextName)
-            object.label = nextName;
-        ui.panelTitle.removeEventListener("blur", finish);
-        ui.panelTitle.removeEventListener("keydown", onRenameKey);
-        markPanelDirty();
-    };
-    const onRenameKey = (event) => {
-        if (event.key === "Enter") {
-            event.preventDefault();
-            ui.panelTitle.blur();
-        }
-        if (event.key === "Escape") {
-            event.preventDefault();
-            ui.panelTitle.textContent = object.label;
-            ui.panelTitle.blur();
-        }
-    };
-    ui.panelTitle.addEventListener("blur", finish);
-    ui.panelTitle.addEventListener("keydown", onRenameKey);
-}
-function deleteControl(object) {
-    const warning = object.type === "cropArea" ? "Deletes child crop fields too" : "Removes this object";
-    return `
-      <div class="slot-actions">
-        <button class="danger-button" data-action="delete-object" type="button">Delete</button>
-        <div class="detail-list"><span>Delete behavior</span><ul><li><strong>${warning}</strong><em>snapshot with + if needed</em></li></ul></div>
-      </div>
-    `;
-}
-function cropTypeDropdown(object) {
-    return `
-      <div class="detail-list">
-        <span>Crop type</span>
-        <label class="select-shell">
-          <select data-role="crop-type">
-            <option value="">Unassigned</option>
-            ${CATALOG.crops.map((crop) => `<option value="${crop.key}" ${object.attrs.cropKey === crop.key ? "selected" : ""}>${crop.name}</option>`).join("")}
-          </select>
-        </label>
-      </div>
-    `;
-}
-function livestockDropdowns(object) {
-    const species = CATALOG.livestock.find((item) => item.name === object.attrs.species) || CATALOG.livestock[0];
-    const breeds = species?.breeds || [object.attrs.breed].filter(Boolean);
-    return `
-      <div class="detail-list">
-        <span>Livestock type</span>
-        <label class="select-shell">
-          <select data-role="livestock-species">
-            ${CATALOG.livestock.map((item) => `<option value="${item.key}" ${item.name === object.attrs.species ? "selected" : ""}>${item.name}</option>`).join("")}
-          </select>
-        </label>
-      </div>
-      <div class="detail-list">
-        <span>Breed</span>
-        <label class="select-shell">
-          <select data-role="livestock-breed">
-            ${breeds.map((breed) => `<option value="${breed}" ${breed === object.attrs.breed ? "selected" : ""}>${breed}</option>`).join("")}
-          </select>
-        </label>
-      </div>
-    `;
-}
-function catalogEditor(mode) {
-    if (state.pendingCatalogMode !== mode) {
-        return `<div class="slot-actions"><button data-action="open-catalog" data-mode="${mode}" type="button">Add / Change ${mode}</button></div>`;
-    }
-    const items = mode === "crop" ? CATALOG.crops : mode === "livestock" ? CATALOG.livestock : CATALOG.structures;
-    return `
-      <div class="detail-list">
-        <span>${mode} catalog</span>
-        <div class="add-entry-row">
-          <input data-role="catalog-search" type="search" placeholder="Search or type custom ${mode}" />
-          <button data-action="custom-entry" data-mode="${mode}" type="button">Custom</button>
-        </div>
-        <div class="catalog-suggestions">
-          ${items.slice(0, 6).map((item) => `<button data-action="select-catalog" data-mode="${mode}" data-key="${item.key}" type="button">${item.name}</button>`).join("")}
-        </div>
-      </div>
-    `;
-}
-function onPanelClick(event) {
-    const button = event.target.closest("button");
-    if (!button)
-        return;
-    const action = button.dataset.action;
-    const mode = button.dataset.mode;
-    const object = state.objects.find((item) => item.id === state.selectedId);
-    if (!object)
-        return;
-    if (action === "open-catalog") {
-        state.pendingCatalogMode = mode;
-        markPanelDirty();
-    }
-    if (action === "select-catalog") {
-        applyCatalogEntry(object, mode, button.dataset.key);
-        state.pendingCatalogMode = null;
-        markPanelDirty();
-    }
-    if (action === "custom-entry") {
-        const input = ui.objectDetails.querySelector("[data-role='catalog-search']");
-        applyCustomEntry(object, mode, input?.value.trim() || `Custom ${mode}`);
-        state.pendingCatalogMode = null;
-        markPanelDirty();
-    }
-    if (action === "delete-object") {
-        DemoState.deleteObject(object.id);
-        state.lastHitCycle = null;
-        markPanelDirty();
-    }
-}
-function onPanelInput(event) {
-    const countInput = event.target.closest("[data-role='crop-count']");
-    if (countInput) {
-        const object = state.objects.find((item) => item.id === state.selectedId);
-        if (object && object.type === "cropField") {
-            object.attrs.count = Math.max(0, Number(countInput.value) || 0);
-        }
-        return;
-    }
-    const input = event.target.closest("[data-role='catalog-search']");
-    if (!input)
-        return;
-    const mode = state.pendingCatalogMode;
-    const list = mode === "crop" ? CATALOG.crops : mode === "livestock" ? CATALOG.livestock : CATALOG.structures;
-    const query = input.value.trim().toLowerCase();
-    const suggestions = ui.objectDetails.querySelector(".catalog-suggestions");
-    if (!suggestions)
-        return;
-    suggestions.innerHTML = list
-        .filter((item) => item.name.toLowerCase().includes(query))
-        .slice(0, 6)
-        .map((item) => `<button data-action="select-catalog" data-mode="${mode}" data-key="${item.key}" type="button">${item.name}</button>`)
-        .join("");
-}
-function onPanelChange(event) {
-    const countInput = event.target.closest("[data-role='crop-count']");
-    const cropType = event.target.closest("[data-role='crop-type']");
-    const livestockSpecies = event.target.closest("[data-role='livestock-species']");
-    const livestockBreed = event.target.closest("[data-role='livestock-breed']");
-    const object = state.objects.find((item) => item.id === state.selectedId);
-    if (!object)
-        return;
-    if (countInput && object.type === "cropField") {
-        object.attrs.count = Math.max(0, Number(countInput.value) || 0);
-        markPanelDirty();
-        return;
-    }
-    if (cropType && object.type === "cropField") {
-        if (!cropType.value) {
-            object.label = "Unpopulated Crop Field";
-            object.attrs.cropKey = null;
-            object.attrs.cropName = "";
-            object.attrs.count = 0;
-            object.attrs.visual = "generic";
-            object.attrs.growth = 0.2;
-            object.attrs.status = "Needs crop details";
-        }
-        else {
-            applyCatalogEntry(object, "crop", cropType.value);
-        }
-        markPanelDirty();
-        return;
-    }
-    if (livestockSpecies && object.type === "livestock") {
-        applyCatalogEntry(object, "livestock", livestockSpecies.value);
-        markPanelDirty();
-        return;
-    }
-    if (livestockBreed && object.type === "livestock") {
-        object.attrs.breed = livestockBreed.value;
-        markPanelDirty();
-    }
+    emitContentChange();
 }
 function applyCatalogEntry(object, mode, key) {
     if (mode === "crop") {
@@ -776,52 +522,118 @@ function applyCustomEntry(object, mode, name) {
         object.attrs.status = "Custom structure";
     }
 }
+function loadCommit(index) {
+    DemoState.loadCommit(index);
+    state.selectedId = DemoState.currentObjects()[0]?.id || null;
+    updateTimeline();
+    markPanelDirty();
+    emitContentChange();
+}
+function renameSelectedObject(name) {
+    const object = state.objects.find((item) => item.id === state.selectedId);
+    const nextName = name.trim();
+    if (!object || !nextName)
+        return;
+    object.label = nextName;
+    markPanelDirty();
+    emitContentChange();
+}
+function deleteSelectedObject() {
+    if (!state.selectedId)
+        return;
+    DemoState.deleteObject(state.selectedId);
+    state.lastHitCycle = null;
+    markPanelDirty();
+    emitContentChange();
+}
+function setCropCount(count) {
+    const object = state.objects.find((item) => item.id === state.selectedId);
+    if (object?.type !== "cropField")
+        return;
+    object.attrs.count = Math.max(0, Number(count) || 0);
+    markPanelDirty();
+    emitContentChange();
+}
+function setCropType(cropKey) {
+    const object = state.objects.find((item) => item.id === state.selectedId);
+    if (object?.type !== "cropField")
+        return;
+    if (!cropKey) {
+        object.label = "Unpopulated Crop Field";
+        object.attrs.cropKey = null;
+        object.attrs.cropName = "";
+        object.attrs.count = 0;
+        object.attrs.visual = "generic";
+        object.attrs.growth = 0.2;
+        object.attrs.status = "Needs crop details";
+    }
+    else {
+        applyCatalogEntry(object, "crop", cropKey);
+    }
+    markPanelDirty();
+    emitContentChange();
+}
+function setLivestockSpecies(speciesKey) {
+    const object = state.objects.find((item) => item.id === state.selectedId);
+    if (object?.type !== "livestock")
+        return;
+    applyCatalogEntry(object, "livestock", speciesKey);
+    markPanelDirty();
+    emitContentChange();
+}
+function setLivestockBreed(breed) {
+    const object = state.objects.find((item) => item.id === state.selectedId);
+    if (object?.type !== "livestock")
+        return;
+    object.attrs.breed = breed;
+    markPanelDirty();
+    emitContentChange();
+}
+function setStructureType(structureKey) {
+    const object = state.objects.find((item) => item.id === state.selectedId);
+    if (object?.type !== "structure")
+        return;
+    applyCatalogEntry(object, "structure", structureKey);
+    markPanelDirty();
+    emitContentChange();
+}
 function updateTimeline() {
-    ui.timelineInput.max = String(Math.max(0, state.commits.length - 1));
-    ui.timelineInput.value = String(state.commitIndex);
-    ui.timelineMarkers.style.setProperty("--marker-count", String(state.commits.length));
-    ui.timelineMarkers.innerHTML = state.commits
-        .map((commit, index) => `<button class="${index === state.commitIndex ? "active" : ""}" data-commit-index="${index}" type="button">${commit.name}</button>`)
-        .join("");
-    ui.timelineMarkers.querySelectorAll("button").forEach((button) => {
-        button.addEventListener("click", () => {
-            DemoState.loadCommit(Number(button.dataset.commitIndex));
-            updateTimeline();
-            markPanelDirty();
-        });
-    });
+    emitContentChange();
 }
 function openCommitModal() {
-    ui.commitName.value = "";
-    ui.commitModal.classList.remove("hidden");
-    ui.commitName.focus();
+    commitModalOpen = true;
+    emitContentChange();
+}
+function closeCommitModal() {
+    commitModalOpen = false;
+    emitContentChange();
 }
 async function saveCommit(name) {
     DemoState.createCommit(name);
     updateTimeline();
     markPanelDirty();
-    ui.skipCommitName.disabled = true;
-    ui.saveCommitName.disabled = true;
+    savingCommit = true;
+    emitContentChange();
     const saved = await persistToBackend();
-    ui.skipCommitName.disabled = false;
-    ui.saveCommitName.disabled = false;
+    savingCommit = false;
     if (saved)
-        ui.commitModal.classList.add("hidden");
+        closeCommitModal();
+    else
+        emitContentChange();
+    return saved;
 }
 function togglePlayback() {
     state.playing = !state.playing;
-    ui.playTimeline.textContent = state.playing ? "Pause" : "Play";
     if (state.playing) {
         state.playTimer = window.setInterval(() => {
-            DemoState.loadCommit((state.commitIndex + 1) % state.commits.length);
-            updateTimeline();
-            markPanelDirty();
+            loadCommit((state.commitIndex + 1) % state.commits.length);
         }, 1200);
     }
     else {
         window.clearInterval(state.playTimer);
         state.playTimer = null;
     }
+    emitContentChange();
 }
 function isInsideFarm(point) {
     return G.pointInPolygon(point, DemoState.activeBoundary());
