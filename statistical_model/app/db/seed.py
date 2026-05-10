@@ -166,7 +166,7 @@ def seed_database(db: Database) -> None:
             "season_year": 2026,
             "period_start": f"2026-W{week:02d}",
             "period_end": f"2026-W{week:02d}",
-            "allocation_acre_feet": 8.5 if 15 <= week <= 38 else 2.2,
+            "allocation_acre_feet": 26.5 if 15 <= week <= 38 else 6.0,
             "cost_usd_per_acre_foot": 82.0,
             "source": seed_source(now),
             "updated_at": now,
@@ -182,7 +182,7 @@ def seed_database(db: Database) -> None:
             "farm_id": "farm_001",
             "season_year": 2026,
             "week": week,
-            "available_hours": 240 if 10 <= week <= 42 else 120,
+            "available_hours": 520 if 10 <= week <= 42 else 240,
             "unit": "hours",
             "source": seed_source(now),
             "updated_at": now,
@@ -345,4 +345,3 @@ def fert(nutrient: str, product: str, price: float, unit: str, now: datetime) ->
 def upsert_many(collection, docs: list[dict]) -> None:
     for doc in docs:
         collection.replace_one({"_id": doc["_id"]}, doc, upsert=True)
-
