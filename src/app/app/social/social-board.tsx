@@ -5,14 +5,51 @@ import { useState } from "react";
 import { PixelGlyph, PixelIcon } from "../_components/icons";
 import { PublicShopfrontPreview } from "../shop/shop-board";
 import type { ShopDisplaySlotView } from "@/lib/shop";
-import type { SocialFarmCard, SocialSnapshot } from "@/lib/social";
+import type { SocialFarmCard, SocialFarmReview, SocialSnapshot } from "@/lib/social";
+
+type ReviewDraft = {
+  reviewerName: string;
+  rating: number;
+  comment: string;
+};
 
 export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [ratings, setRatings] = useState<Record<string, number>>({});
+  const [farms, setFarms] = useState(snapshot.farms);
   const selectedFarm = selectedUserId
-    ? snapshot.farms.find((farm) => farm.userId === selectedUserId)
+    ? farms.find((farm) => farm.userId === selectedUserId)
     : undefined;
+
+  function addReview(farmUserId: string, review: SocialFarmReview, created: boolean) {
+    setFarms((current) =>
+      current
+        .map((farm) => {
+          if (farm.userId !== farmUserId) {
+            return farm;
+          }
+
+          const replaced = farm.reviews.some((item) => item.id === review.id);
+          const reviews = [
+            review,
+            ...farm.reviews.filter((item) => item.id !== review.id),
+          ].slice(0, 6);
+          const reviewCount = created && !replaced ? farm.reviewCount + 1 : farm.reviewCount;
+          const previousRatingTotal = replaced
+            ? farm.rating * farm.reviewCount - (farm.reviews.find((item) => item.id === review.id)?.rating ?? 0)
+            : farm.rating * farm.reviewCount;
+          const rating = Math.round(((previousRatingTotal + review.rating) / Math.max(reviewCount, 1)) * 10) / 10;
+
+          return {
+            ...farm,
+            reviews,
+            reviewCount,
+            rating,
+            tags: Array.from(new Set([...review.tags, ...farm.tags])).slice(0, 4),
+          };
+        })
+        .sort((left, right) => right.rating - left.rating || right.reviewCount - left.reviewCount),
+    );
+  }
 
   if (!snapshot.farms.length) {
     return (
@@ -58,8 +95,7 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
         <PublicShopfrontPreview snapshot={selectedFarm.snapshot} />
         <ReviewPanel
           farm={selectedFarm}
-          personalRating={ratings[selectedFarm.userId] ?? 0}
-          onRate={(rating) => setRatings((current) => ({ ...current, [selectedFarm.userId]: rating }))}
+          onReviewPosted={(review, created) => addReview(selectedFarm.userId, review, created)}
         />
       </div>
     );
@@ -88,14 +124,12 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
         </div>
 
         <div className="grid gap-3 bg-[#fcf6e4] p-3 md:grid-cols-2 xl:grid-cols-3">
-          {snapshot.farms.map((farm) => (
+          {farms.map((farm) => (
             <FarmCard
               key={farm.userId}
               farm={farm}
               selected={false}
-              personalRating={ratings[farm.userId] ?? 0}
               onSelect={() => setSelectedUserId(farm.userId)}
-              onRate={(rating) => setRatings((current) => ({ ...current, [farm.userId]: rating }))}
             />
           ))}
         </div>
@@ -107,15 +141,11 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
 function FarmCard({
   farm,
   selected,
-  personalRating,
   onSelect,
-  onRate,
 }: {
   farm: SocialFarmCard;
   selected: boolean;
-  personalRating: number;
   onSelect: () => void;
-  onRate: (rating: number) => void;
 }) {
   const previewItems = farm.availablePreview.length
     ? farm.availablePreview.join(" · ")
@@ -167,7 +197,13 @@ function FarmCard({
             </span>
           ))}
         </div>
-        <StarPicker value={personalRating} onChange={onRate} label={`Rate ${farm.farmName}`} />
+        <button
+          type="button"
+          onClick={onSelect}
+          className="rounded-none border-2 border-[#3b2a14] bg-[#fff3cf] px-2 py-1 font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#5e4a26] shadow-[0_2px_0_#3b2a14] transition hover:bg-[#ffe89a] active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14]"
+        >
+          Review
+        </button>
       </div>
     </article>
   );
@@ -175,13 +211,45 @@ function FarmCard({
 
 function ReviewPanel({
   farm,
-  personalRating,
-  onRate,
+  onReviewPosted,
 }: {
   farm: SocialFarmCard;
-  personalRating: number;
-  onRate: (rating: number) => void;
+  onReviewPosted: (review: SocialFarmReview, created: boolean) => void;
 }) {
+  const [draft, setDraft] = useState<ReviewDraft>({ reviewerName: "", rating: 5, comment: "" });
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  async function submitReview() {
+    setStatus("saving");
+    setError(null);
+
+    try {
+      const response = await fetch("/api/social/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          farmUserId: farm.userId,
+          reviewerName: draft.reviewerName,
+          rating: draft.rating,
+          comment: draft.comment,
+        }),
+      });
+      const data = (await response.json()) as { review?: SocialFarmReview; created?: boolean; error?: string };
+
+      if (!response.ok || !data.review) {
+        throw new Error(data.error ?? "Unable to post review");
+      }
+
+      onReviewPosted(data.review, data.created ?? true);
+      setDraft({ reviewerName: "", rating: 5, comment: "" });
+      setStatus("saved");
+    } catch (reviewError) {
+      setStatus("error");
+      setError(reviewError instanceof Error ? reviewError.message : "Unable to post review");
+    }
+  }
+
   return (
     <section
       style={{ ["--pixel-frame-bg" as string]: "#fbf6e8" }}
@@ -192,36 +260,96 @@ function ReviewPanel({
         <h2 className="font-mono text-sm font-black uppercase tracking-[0.14em] text-[#6f3f1c]">
           Reviews
         </h2>
-        <div className="ml-auto">
-          <StarPicker value={personalRating} onChange={onRate} label={`Rate ${farm.farmName}`} />
-        </div>
+        <span className="ml-auto rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] px-2 py-0.5 font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#6f3f1c] shadow-[0_1px_0_#3b2a14]">
+          {farm.rating.toFixed(1)} · {farm.reviewCount}
+        </span>
       </div>
 
-      <div className="grid gap-2 bg-[#fcf6e4] p-3 sm:grid-cols-3">
-        {farm.reviews.map((review) => (
-          <article
-            key={review.id}
-            className="rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-2 shadow-[0_2px_0_#b29c66]"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div className="truncate text-sm font-black text-[#2d311f]">{review.reviewerName}</div>
-              <RatingStars rating={review.rating} />
+      <div className="grid gap-3 bg-[#fcf6e4] p-3">
+        <div
+          style={{ ["--pixel-frame-bg" as string]: "#fcf6e4" }}
+          className="pixel-frame grid gap-2 rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] p-3 shadow-[0_3px_0_#8b6f3e]"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-mono text-[11px] font-black uppercase tracking-[0.14em] text-[#6f3f1c]">
+              Leave a review
             </div>
-            <p className="mt-1 text-xs font-semibold leading-snug text-[#6b5a35]">{review.comment}</p>
-            <div className="mt-2 flex flex-wrap gap-1">
-              {review.tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="rounded-none border border-[#9bc278] bg-[#eef8df] px-1.5 py-0.5 font-mono text-[9px] font-black uppercase tracking-[0.08em] text-[#335a2d]"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </article>
-        ))}
+            <StarPicker
+              value={draft.rating}
+              onChange={(rating) => setDraft((current) => ({ ...current, rating }))}
+              label={`Rate ${farm.farmName}`}
+            />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-[180px_1fr]">
+            <input
+              value={draft.reviewerName}
+              onChange={(event) => setDraft((current) => ({ ...current, reviewerName: event.target.value }))}
+              placeholder="Your name"
+              className="h-10 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
+            />
+            <input
+              value={draft.comment}
+              onChange={(event) => setDraft((current) => ({ ...current, comment: event.target.value }))}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && status !== "saving") {
+                  event.preventDefault();
+                  submitReview();
+                }
+              }}
+              placeholder="What was good about this farm?"
+              className="h-10 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
+            />
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className={`font-mono text-[10px] font-black uppercase tracking-[0.1em] ${
+              status === "error" ? "text-[#a8761c]" : "text-[#7a6843]"
+            }`}>
+              {status === "saving"
+                ? "Posting review"
+                : status === "saved"
+                  ? "Review posted"
+                  : error ?? "Reviews are public example community notes"}
+            </p>
+            <button
+              type="button"
+              onClick={submitReview}
+              disabled={status === "saving"}
+              className="rounded-none border-2 border-[#3b2a14] bg-[#fff3cf] px-3 py-1.5 font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#5e4a26] shadow-[0_2px_0_#3b2a14] transition hover:bg-[#ffe89a] active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14] disabled:opacity-60"
+            >
+              {status === "saving" ? "Posting" : "Post review"}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-3">
+          {farm.reviews.map((review) => (
+            <ReviewCard key={review.id} review={review} />
+          ))}
+        </div>
       </div>
     </section>
+  );
+}
+
+function ReviewCard({ review }: { review: SocialFarmReview }) {
+  return (
+    <article className="rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-2 shadow-[0_2px_0_#b29c66]">
+      <div className="flex items-center justify-between gap-2">
+        <div className="truncate text-sm font-black text-[#2d311f]">{review.reviewerName}</div>
+        <RatingStars rating={review.rating} />
+      </div>
+      <p className="mt-1 text-xs font-semibold leading-snug text-[#6b5a35]">{review.comment}</p>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {review.tags.map((tag) => (
+          <span
+            key={tag}
+            className="rounded-none border border-[#9bc278] bg-[#eef8df] px-1.5 py-0.5 font-mono text-[9px] font-black uppercase tracking-[0.08em] text-[#335a2d]"
+          >
+            {tag}
+          </span>
+        ))}
+      </div>
+    </article>
   );
 }
 

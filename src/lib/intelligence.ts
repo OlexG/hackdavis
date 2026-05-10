@@ -10,6 +10,7 @@ const confidenceLevels = ["low", "medium", "high"] as const;
 const effortLevels = ["low", "medium", "high"] as const;
 const costLevels = ["low", "medium", "high"] as const;
 const healthStatuses = ["weak", "okay", "strong"] as const;
+const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 
 export type FarmIntelligenceReport = {
   generatedAt: string;
@@ -22,16 +23,45 @@ export type FarmIntelligenceReport = {
   farmHealth: FarmHealthMetric[];
 };
 
+export type PlanEconomicsProjection = {
+  planName: string;
+  baseYear: number;
+  monthlyPoints: PlanEconomicsPoint[];
+  costSummary: string;
+  productionSummary: string;
+  topOutputs: string[];
+};
+
+export type PlanEconomicsPoint = {
+  year: number;
+  month: number;
+  label: string;
+  operatingCostUsd: number;
+  productionValueUsd: number;
+  productionUnits: number;
+};
+
 export type ProductionForecast = {
   outputId: string;
   outputName: string;
   unit: string;
   currentYearEstimate: number;
+  monthlyTrend: MonthlyForecastPoint[];
   yearlyTrend: YearlyTrendPoint[];
   revenueTrend: RevenueTrendPoint[];
   confidence: ConfidenceLevel;
   trendSummary: string;
   keyDrivers: string[];
+};
+
+export type MonthlyForecastPoint = {
+  year: number;
+  month: number;
+  label: string;
+  expectedAmount: number;
+  expectedValueUsd: number;
+  lowEstimate: number;
+  highEstimate: number;
 };
 
 export type YearlyTrendPoint = {
@@ -96,6 +126,7 @@ export type SavedFarmIntelligence = {
 export type FarmIntelligencePageData = {
   snapshot: InventorySnapshot;
   savedReport?: SavedFarmIntelligence;
+  economics?: PlanEconomicsProjection;
   hasGeminiKey: boolean;
   canPersist: boolean;
 };
@@ -140,13 +171,22 @@ export async function getFarmIntelligencePageData(): Promise<FarmIntelligencePag
       return { snapshot, hasGeminiKey, canPersist: false };
     }
 
-    const savedReport = await db.collection<FarmIntelligenceDocument>("farm_intelligence_reports").findOne({
-      userId: user._id,
-      planId: latestPlan._id,
-    });
+    const sourceIds = latestPlan.objects
+      .map((object) => object.sourceId)
+      .filter((sourceId): sourceId is ObjectId => sourceId instanceof ObjectId);
+    const [savedReport, catalogItems] = await Promise.all([
+      db.collection<FarmIntelligenceDocument>("farm_intelligence_reports").findOne({
+        userId: user._id,
+        planId: latestPlan._id,
+      }),
+      sourceIds.length
+        ? db.collection<CatalogItem>("catalog_items").find({ _id: { $in: sourceIds } }).toArray()
+        : Promise.resolve([]),
+    ]);
 
     return {
       snapshot,
+      economics: buildPlanEconomicsProjection(latestPlan, catalogItems),
       hasGeminiKey,
       canPersist: true,
       savedReport: savedReport ? serializeSavedReport(savedReport) : undefined,
@@ -243,6 +283,179 @@ async function getIntelligencePromptContext(): Promise<IntelligencePromptContext
   }
 }
 
+function buildPlanEconomicsProjection(plan: Plan, catalogItems: CatalogItem[]): PlanEconomicsProjection {
+  const catalogById = new Map(catalogItems.map((item) => [item._id.toString(), item]));
+  const baseYear = new Date(plan.simulation.currentDate).getUTCFullYear();
+  const yearlyCostBreakdown = plan.analytics?.costBreakdown.yearly;
+  const analyticsAnnualCost = typeof yearlyCostBreakdown?.total === "number" ? yearlyCostBreakdown.total : undefined;
+  const baseAnnualCost = Math.max(
+    0,
+    analyticsAnnualCost ??
+      plan.objects.reduce((total, object) => total + (object.recurringCost?.yearly ?? sumMoney(object.costBreakdown)), 0),
+  );
+  const baseProductionValue = Math.max(
+    0,
+    plan.analytics?.revenue.yearly ??
+      plan.objects.reduce((total, object) => total + (object.revenue?.yearly ?? 0), 0),
+  );
+  const baseProductionUnits = Math.max(
+    0,
+    plan.objects.reduce((total, object) => total + estimateProductionUnits(object, catalogById), 0),
+  );
+  const cropRevenue = plan.objects
+    .filter((object) => object.type === "crop")
+    .reduce((total, object) => total + (object.revenue?.yearly ?? 0), 0);
+  const livestockRevenue = plan.objects
+    .filter((object) => object.type === "livestock")
+    .reduce((total, object) => total + (object.revenue?.yearly ?? 0), 0);
+  const cropShare = baseProductionValue ? cropRevenue / baseProductionValue : 0.75;
+  const livestockShare = baseProductionValue ? livestockRevenue / baseProductionValue : 0.15;
+  const otherShare = Math.max(0, 1 - cropShare - livestockShare);
+  const establishmentCost = sumMoney({
+    infrastructure: yearlyCostBreakdown?.infrastructure,
+    seeds: yearlyCostBreakdown?.seeds,
+    starts: yearlyCostBreakdown?.starts,
+  });
+  const topOutputs = plan.objects
+    .filter((object) => (object.revenue?.yearly ?? 0) > 0)
+    .sort((left, right) => (right.revenue?.yearly ?? 0) - (left.revenue?.yearly ?? 0))
+    .slice(0, 4)
+    .map((object) => object.displayName);
+
+  const monthlyPoints = Array.from({ length: 12 }, (_, monthIndex) => {
+    const year = baseYear;
+    const month = monthIndex + 1;
+    const monthLabel = monthLabels[monthIndex]!;
+    const costInflation = 1;
+    const replacementReserve = replacementReserveForMonth(establishmentCost, monthIndex);
+    const productionMultiplier =
+      cropShare * cropMonthMultiplier(monthIndex) +
+      livestockShare * livestockMonthMultiplier(monthIndex) +
+      otherShare * structureMonthMultiplier(monthIndex);
+    const monthlyCost = (baseAnnualCost / 12) * costInflation * costMonthMultiplier(monthIndex) + replacementReserve;
+
+    return {
+      year,
+      month,
+      label: monthLabel,
+      operatingCostUsd: Math.round(monthlyCost * 100) / 100,
+      productionValueUsd: Math.round((baseProductionValue / 12) * productionMultiplier * 100) / 100,
+      productionUnits: Math.round((baseProductionUnits / 12) * productionMultiplier * 10) / 10,
+    };
+  });
+  const annualCost = monthlyPoints.reduce((total, point) => total + point.operatingCostUsd, 0);
+  const annualProduction = monthlyPoints.reduce((total, point) => total + point.productionValueUsd, 0);
+
+  return {
+    planName: plan.name,
+    baseYear,
+    monthlyPoints,
+    costSummary: `Monthly cost uses the plan's $${Math.round(baseAnnualCost).toLocaleString("en-US")} annual operating model, then weights seed, amendment, feed, utility, and reserve pressure by season. Current modeled year total: $${Math.round(annualCost).toLocaleString("en-US")}.`,
+    productionSummary: `Monthly production distributes $${Math.round(annualProduction).toLocaleString("en-US")} of current-plan output by crop harvest windows, livestock steadiness, and stored/preserved value.`,
+    topOutputs: topOutputs.length ? topOutputs : ["Current plan outputs"],
+  };
+}
+
+function estimateProductionUnits(object: Plan["objects"][number], catalogById: Map<string, CatalogItem>) {
+  if (object.type === "crop") {
+    const catalogItem = object.sourceId ? catalogById.get(object.sourceId.toString()) : undefined;
+    const yieldPerSquareFoot =
+      object.crop?.producedMetrics.yieldPerSquareFoot ??
+      catalogItem?.cropProfile?.yieldPerSquareFoot ??
+      0;
+    const failureRate =
+      object.crop?.producedMetrics.cropFailureRate ??
+      catalogItem?.cropProfile?.failureRate ??
+      0;
+
+    return (object.areaSquareFeet ?? 0) * yieldPerSquareFoot * Math.max(0, 1 - failureRate);
+  }
+
+  if (object.type === "livestock") {
+    const catalogItem = object.sourceId ? catalogById.get(object.sourceId.toString()) : undefined;
+    const headCount = object.livestock?.headCount ?? 1;
+    const eggsDozen = ((catalogItem?.livestockProfile?.eggsPerHeadWeek ?? 0) * headCount * 52) / 12;
+    const milkGallons = (catalogItem?.livestockProfile?.milkGallonsPerHeadWeek ?? 0) * headCount * 52;
+
+    return eggsDozen + milkGallons;
+  }
+
+  return 0;
+}
+
+function costMonthMultiplier(index: number) {
+  return [0.82, 0.88, 1.16, 1.18, 1.06, 1.04, 1.1, 1.08, 1.02, 0.95, 0.86, 0.85][index] ?? 1;
+}
+
+function cropMonthMultiplier(index: number) {
+  return [0.08, 0.12, 0.22, 0.55, 0.9, 1.3, 1.62, 1.74, 1.38, 0.82, 0.33, 0.14][index] ?? 1;
+}
+
+function livestockMonthMultiplier(index: number) {
+  return [0.92, 0.95, 1.02, 1.06, 1.08, 1.06, 1.03, 1, 0.98, 0.96, 0.94, 0.92][index] ?? 1;
+}
+
+function structureMonthMultiplier(index: number) {
+  return [0.9, 0.9, 0.96, 1.02, 1.05, 1.08, 1.1, 1.1, 1.06, 1, 0.94, 0.9][index] ?? 1;
+}
+
+function buildMonthlyForecastTrend({
+  year,
+  outputName,
+  annualAmount,
+  annualValueUsd,
+}: {
+  year: number;
+  outputName: string;
+  annualAmount: number;
+  annualValueUsd: number;
+}): MonthlyForecastPoint[] {
+  const weights = monthlyForecastWeights(outputName);
+  const weightTotal = weights.reduce((total, weight) => total + weight, 0) || 1;
+
+  return monthLabels.map((label, index) => {
+    const monthShare = weights[index]! / weightTotal;
+    const expectedAmount = annualAmount * monthShare;
+
+    return {
+      year,
+      month: index + 1,
+      label,
+      expectedAmount: Math.round(expectedAmount * 10) / 10,
+      expectedValueUsd: Math.round(annualValueUsd * monthShare * 100) / 100,
+      lowEstimate: Math.round(expectedAmount * 0.78 * 10) / 10,
+      highEstimate: Math.round(expectedAmount * 1.18 * 10) / 10,
+    };
+  });
+}
+
+function monthlyForecastWeights(outputName: string) {
+  const normalized = outputName.toLowerCase();
+
+  if (/\b(egg|milk|chicken|duck|goat|cow|rabbit|honey)\b/.test(normalized)) {
+    return monthLabels.map((_, index) => livestockMonthMultiplier(index));
+  }
+
+  if (/\b(green|lettuce|spinach|kale|herb|cilantro|parsley|basil)\b/.test(normalized)) {
+    return [0.35, 0.45, 0.9, 1.4, 1.55, 1.25, 0.85, 0.65, 0.9, 1.25, 1.0, 0.55];
+  }
+
+  return monthLabels.map((_, index) => cropMonthMultiplier(index));
+}
+
+function replacementReserveForMonth(establishmentCost: number, index: number) {
+  const reserveMonths = new Set([2, 8, 9]);
+
+  return reserveMonths.has(index) ? establishmentCost * 0.025 : 0;
+}
+
+function sumMoney(value: Record<string, unknown> | undefined): number {
+  return Object.values(value ?? {}).reduce<number>(
+    (total, entry) => total + (typeof entry === "number" && Number.isFinite(entry) ? entry : 0),
+    0,
+  );
+}
+
 async function generateFarmIntelligenceReport({
   apiKey,
   context,
@@ -312,6 +525,7 @@ function buildGeminiPrompt(context: IntelligencePromptContext, currentYear: numb
     `Forecast exactly ${forecastYears} years: ${Array.from({ length: forecastYears }, (_, index) => currentYear + index).join(", ")}.`,
     "Every productionForecast must correspond to one provided plan output. Use the output id exactly.",
     "For each forecast, choose a practical unit such as lb, heads, dozen, jars, bunches, or carts.",
+    "For each productionForecast, include monthlyTrend with exactly 12 entries for Jan through Dec of the current year. Month points should show expectedAmount, expectedValueUsd, lowEstimate, and highEstimate.",
     "Revenue is rough planning value in USD, not guaranteed income.",
     "Create 4 to 6 prioritized suggestions, 3 to 5 scenario cards, 6 monthly surplus entries, and one farmHealth metric for each allowed metric.",
     "Keep copy concise enough for cards in a dashboard.",
@@ -476,16 +690,53 @@ function normalizeFarmIntelligenceReport(raw: unknown, planName: string, current
       return null;
     }
 
+    const currentYearEstimate = roundPositive(forecast.currentYearEstimate);
+    const yearlyTrend = arrayOf(forecast.yearlyTrend, normalizeYearlyTrend).slice(0, forecastYears);
+    const revenueTrend = arrayOf(forecast.revenueTrend, normalizeRevenueTrend).slice(0, forecastYears);
+    const annualRevenue = revenueTrend.find((point) => point.year === currentYear)?.expectedValueUsd ?? revenueTrend[0]?.expectedValueUsd ?? 0;
+    const monthlyTrend = arrayOf(forecast.monthlyTrend, normalizeMonthlyTrend).slice(0, 12);
+
     return {
       outputId,
       outputName,
       unit: text(forecast.unit, "units", 24),
-      currentYearEstimate: roundPositive(forecast.currentYearEstimate),
-      yearlyTrend: arrayOf(forecast.yearlyTrend, normalizeYearlyTrend).slice(0, forecastYears),
-      revenueTrend: arrayOf(forecast.revenueTrend, normalizeRevenueTrend).slice(0, forecastYears),
+      currentYearEstimate,
+      monthlyTrend: monthlyTrend.length
+        ? monthlyTrend
+        : buildMonthlyForecastTrend({
+            year: currentYear,
+            outputName,
+            annualAmount: currentYearEstimate,
+            annualValueUsd: annualRevenue,
+          }),
+      yearlyTrend,
+      revenueTrend,
       confidence: oneOf(forecast.confidence, confidenceLevels, "low"),
       trendSummary: text(forecast.trendSummary, "Projected from the current farm plan.", 260),
       keyDrivers: stringList(forecast.keyDrivers, 5, 110),
+    };
+  }
+
+  function normalizeMonthlyTrend(rawPoint: unknown, index: number): MonthlyForecastPoint | null {
+    if (!rawPoint || typeof rawPoint !== "object") {
+      return null;
+    }
+
+    const point = rawPoint as Partial<MonthlyForecastPoint>;
+    const month = Number(point.month);
+    const normalizedMonth = Number.isInteger(month) && month >= 1 && month <= 12 ? month : index + 1;
+    const expectedAmount = roundPositive(point.expectedAmount);
+    const lowEstimate = roundPositive(point.lowEstimate);
+    const highEstimate = Math.max(expectedAmount, roundPositive(point.highEstimate));
+
+    return {
+      year: currentYear,
+      month: normalizedMonth,
+      label: text(point.label, monthLabels[normalizedMonth - 1] ?? monthLabels[index] ?? "Month", 12),
+      expectedAmount,
+      expectedValueUsd: roundPositive(point.expectedValueUsd),
+      lowEstimate: Math.min(lowEstimate, expectedAmount),
+      highEstimate,
     };
   }
 
@@ -689,6 +940,21 @@ const farmIntelligenceResponseSchema = {
           outputName: { type: "STRING" },
           unit: { type: "STRING" },
           currentYearEstimate: { type: "NUMBER" },
+          monthlyTrend: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                year: { type: "INTEGER" },
+                month: { type: "INTEGER" },
+                label: { type: "STRING" },
+                expectedAmount: { type: "NUMBER" },
+                expectedValueUsd: { type: "NUMBER" },
+                lowEstimate: { type: "NUMBER" },
+                highEstimate: { type: "NUMBER" },
+              },
+            },
+          },
           yearlyTrend: {
             type: "ARRAY",
             items: {

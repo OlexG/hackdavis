@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ObjectId } from "mongodb";
+import { ObjectId, type WithId } from "mongodb";
 import { getMongoDb } from "@/lib/mongodb";
 import type {
   Farm,
@@ -44,6 +44,18 @@ export type SocialFarmReview = {
 export type SocialSnapshot = {
   farms: SocialFarmCard[];
   lastUpdated: string;
+};
+
+export type CreateFarmReviewInput = {
+  farmUserId: string;
+  reviewerName: string;
+  rating: number;
+  comment: string;
+};
+
+export type CreateFarmReviewResult = {
+  review: SocialFarmReview;
+  created: boolean;
 };
 
 export async function getSocialSnapshot(): Promise<SocialSnapshot> {
@@ -136,6 +148,75 @@ export async function getSocialSnapshot(): Promise<SocialSnapshot> {
     };
   } catch {
     return getFallbackSocialSnapshot();
+  }
+}
+
+export async function createFarmReview(input: CreateFarmReviewInput): Promise<CreateFarmReviewResult> {
+  if (!ObjectId.isValid(input.farmUserId)) {
+    throw new SocialReviewError("Choose a valid farm to review");
+  }
+
+  const reviewerName = normalizeReviewText(input.reviewerName, 36);
+  const comment = normalizeReviewText(input.comment, 220);
+  const rating = Math.trunc(Number(input.rating));
+
+  if (!reviewerName) {
+    throw new SocialReviewError("Add your name before posting a review");
+  }
+  if (!comment || comment.length < 8) {
+    throw new SocialReviewError("Write a short review before posting");
+  }
+  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+    throw new SocialReviewError("Choose a 1 to 5 star rating");
+  }
+
+  const db = await getMongoDb();
+  const farmUserId = new ObjectId(input.farmUserId);
+  const [targetUser, display] = await Promise.all([
+    db.collection<User>("users").findOne({ _id: farmUserId, email: { $ne: demoUserEmail } }),
+    db.collection<ShopDisplay>("shop_displays").findOne({ userId: farmUserId }),
+  ]);
+
+  if (!targetUser || !display) {
+    throw new SocialReviewError("That public farm was not found");
+  }
+
+  const now = new Date();
+  const tags = inferReviewTags(comment);
+  const existing = await db.collection<FarmReview>("farm_reviews").findOne({ farmUserId, reviewerName });
+  const review = await db.collection<FarmReview>("farm_reviews").findOneAndUpdate(
+    { farmUserId, reviewerName },
+    {
+      $set: {
+        farmUserId,
+        reviewerName,
+        rating,
+        comment,
+        tags,
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        _id: new ObjectId(),
+        createdAt: now,
+      },
+    },
+    { upsert: true, returnDocument: "after" },
+  );
+
+  if (!review) {
+    throw new Error("Review was saved but could not be loaded");
+  }
+
+  return {
+    review: toSocialReview(review),
+    created: !existing,
+  };
+}
+
+export class SocialReviewError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SocialReviewError";
   }
 }
 
@@ -232,7 +313,7 @@ function buildFarmTags(slots: ShopDisplaySlotView[], reviews: FarmReview[]) {
   return [...categoryTags, ...reviewTags].map(toTitleCase).slice(0, 4);
 }
 
-function toSocialReview(review: FarmReview): SocialFarmReview {
+function toSocialReview(review: FarmReview | WithId<FarmReview>): SocialFarmReview {
   return {
     id: review._id.toString(),
     reviewerName: review.reviewerName,
@@ -241,6 +322,27 @@ function toSocialReview(review: FarmReview): SocialFarmReview {
     tags: review.tags,
     createdAt: review.createdAt.toISOString(),
   };
+}
+
+function normalizeReviewText(value: string, limit: number) {
+  return value.replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function inferReviewTags(comment: string) {
+  const lower = comment.toLowerCase();
+  const tags = [
+    lower.includes("pickup") || lower.includes("easy") ? "easy pickup" : "",
+    lower.includes("fresh") || lower.includes("crisp") || lower.includes("sweet") ? "fresh" : "",
+    lower.includes("tomato") ? "tomatoes" : "",
+    lower.includes("egg") ? "eggs" : "",
+    lower.includes("mushroom") ? "mushrooms" : "",
+    lower.includes("jam") || lower.includes("jar") || lower.includes("sauce") ? "preserves" : "",
+    lower.includes("flower") || lower.includes("bouquet") ? "flowers" : "",
+    lower.includes("herb") || lower.includes("basil") ? "herbs" : "",
+    lower.includes("green") || lower.includes("lettuce") || lower.includes("salad") ? "greens" : "",
+  ].filter(Boolean);
+
+  return Array.from(new Set(tags)).slice(0, 3);
 }
 
 function newestTimestamp(items: InventoryViewItem[], displayUpdatedAt?: Date) {

@@ -3,9 +3,10 @@ import {
   getFarmIntelligencePageData,
   type FarmHealthMetric,
   type FarmIntelligenceReport,
+  type MonthlyForecastPoint,
+  type PlanEconomicsPoint,
+  type PlanEconomicsProjection,
   type ProductionForecast,
-  type RevenueTrendPoint,
-  type YearlyTrendPoint,
 } from "@/lib/intelligence";
 import type { InventorySnapshot } from "@/lib/inventory";
 import { PixelGlyph, type PixelGlyphName } from "../_components/icons";
@@ -66,6 +67,8 @@ export default async function IntelligencePage() {
           isStale={isStale}
         />
 
+        {data.economics ? <PlanEconomicsSection economics={data.economics} /> : null}
+
         <div className="grid gap-3 xl:grid-cols-[1.4fr_1fr]">
           <SuggestionsSection report={report} />
           <HealthSection metrics={report.farmHealth} />
@@ -97,7 +100,7 @@ function IntelligenceHeroBanner({
   isDemoReport: boolean;
   isStale: boolean;
 }) {
-  const statusLabel = isDemoReport ? "Demo preview" : isStale ? "Stale · Inventory changed" : "Saved";
+  const statusLabel = isDemoReport ? "Preview" : isStale ? "Stale · Inventory changed" : "Saved";
   const statusTone = isDemoReport
     ? "border-[#7eb3bd] bg-[#e9fbfb] text-[#245c65]"
     : isStale
@@ -146,7 +149,7 @@ function IntelligenceHeroBanner({
                 {statusLabel}
               </span>
               <span className="font-mono text-[10px] font-black uppercase tracking-[0.12em] text-[#607145]">
-                {generatedAt ? `Generated ${formatShortDateTime(generatedAt)}` : "Not generated yet"}
+                {generatedAt ? `Generated ${formatShortDateTime(generatedAt)}` : "Ready when you are"}
               </span>
             </div>
           </div>
@@ -168,7 +171,7 @@ function OverviewPanel({
 }) {
   const avgHealth = averageHealth(report.farmHealth);
   const noticeTone = isDemoReport
-    ? { class: "border-[#7eb3bd] bg-[#e9fbfb] text-[#245c65]", text: "Generate AI intelligence to replace this demo preview with Gemini forecasts." }
+    ? { class: "border-[#7eb3bd] bg-[#e9fbfb] text-[#245c65]", text: "Preview estimates are based on the current plan. Generate intelligence for a deeper forecast." }
     : isStale
       ? { class: "border-[#d8a05a] bg-[#fff1dc] text-[#7a461f]", text: "Inventory changed after this report. Refresh AI intelligence to resync." }
       : null;
@@ -219,7 +222,7 @@ function ForecastSection({ forecasts }: { forecasts: ProductionForecast[] }) {
         icon="wheat"
         eyebrow="Yield Forecast"
         title="What This Plan Will Grow"
-        subtitle="A five-year yield curve and latest revenue estimate for every output."
+        subtitle="Month-by-month output curves for each plant or producing item in the current plan."
       />
       {forecasts.length ? (
         <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
@@ -235,7 +238,9 @@ function ForecastSection({ forecasts }: { forecasts: ProductionForecast[] }) {
 }
 
 function ForecastCard({ forecast }: { forecast: ProductionForecast }) {
-  const latestRevenue = forecast.revenueTrend.at(-1)?.expectedValueUsd ?? 0;
+  const monthlyTrend = getMonthlyForecastTrend(forecast);
+  const annualAmount = monthlyTrend.reduce((total, point) => total + point.expectedAmount, 0);
+  const annualRevenue = monthlyTrend.reduce((total, point) => total + point.expectedValueUsd, 0);
 
   return (
     <article
@@ -262,24 +267,22 @@ function ForecastCard({ forecast }: { forecast: ProductionForecast }) {
       <div className="grid gap-3 px-3 pb-3">
         <div className="grid grid-cols-2 gap-2">
           <KpiBlock
-            label="This year"
-            value={`${formatCompactNumber(forecast.currentYearEstimate)} ${forecast.unit}`}
+            label="Modeled year"
+            value={`${formatCompactNumber(annualAmount)} ${forecast.unit}`}
             accent="#2f6f4e"
           />
           <KpiBlock
-            label="Year 5 value"
-            value={`$${formatCompactNumber(latestRevenue)}`}
+            label="Annual value"
+            value={`$${formatCompactNumber(annualRevenue)}`}
             accent="#a8761c"
           />
         </div>
-        <MiniLineChart
-          title="Yield curve"
-          series={forecast.yearlyTrend}
-          valueKey="expectedAmount"
+        <MonthlyForecastChart
+          title="Monthly output"
+          points={monthlyTrend}
+          unit={forecast.unit}
           accent="#4e9f5d"
-          valueSuffix={` ${forecast.unit}`}
         />
-        <p className="text-xs leading-5 text-[#5e4a26]">{forecast.trendSummary}</p>
         <TagList items={forecast.keyDrivers} emptyLabel="No drivers returned" />
       </div>
     </article>
@@ -295,6 +298,335 @@ function KpiBlock({ label, value, accent }: { label: string; value: string; acce
       </p>
     </div>
   );
+}
+
+function MonthlyForecastChart({
+  title,
+  points,
+  unit,
+  accent,
+}: {
+  title: string;
+  points: MonthlyForecastPoint[];
+  unit: string;
+  accent: string;
+}) {
+  if (!points.length) {
+    return <EmptyPanel title={title} body="No monthly forecast data is available for this output yet." compact />;
+  }
+
+  const values = points.map((point) => point.expectedAmount);
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const peak = points.reduce((best, point) => (point.expectedAmount > best.expectedAmount ? point : best), points[0]!);
+  const max = Math.max(...points.map((point) => point.highEstimate), 1);
+  const range = Math.max(max, 1);
+  const chartPoints = points.map((point, index) => {
+    const x = 28 + index * (244 / Math.max(points.length - 1, 1));
+    const y = 106 - (point.expectedAmount / range) * 72;
+    const lowY = 106 - (point.lowEstimate / range) * 72;
+    const highY = 106 - (point.highEstimate / range) * 72;
+
+    return { ...point, x, y, lowY, highY };
+  });
+  const linePath = chartPoints
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
+    .join(" ");
+  const bandPath = [
+    ...chartPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.highY.toFixed(1)}`),
+    ...chartPoints.slice().reverse().map((point) => `L ${point.x.toFixed(1)} ${point.lowY.toFixed(1)}`),
+    "Z",
+  ].join(" ");
+  const currentTimeMarker = getCurrentTimeMarker();
+  const currentTimeX = 28 + currentTimeMarker.yearProgress * 244;
+
+  return (
+    <div className="rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-2">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="font-mono text-[10px] font-black uppercase tracking-[0.12em] text-[#607145]">{title}</span>
+        <span className="font-mono text-xs font-black text-[#27351f]">
+          {formatCompactNumber(total)} {unit}
+        </span>
+      </div>
+      <svg className="h-36 w-full" viewBox="0 0 300 142" role="img" aria-label={`${title} monthly forecast chart`} shapeRendering="crispEdges">
+        <path d="M28 106H282" stroke="#a8916a" strokeWidth="2" />
+        <path d="M28 70H282" stroke="#d4c39a" strokeDasharray="4 4" strokeWidth="1.5" />
+        <path d="M28 34H282" stroke="#d4c39a" strokeDasharray="4 4" strokeWidth="1.5" />
+        <path d={bandPath} fill="#eef8df" opacity="0.9" />
+        <path d={linePath} fill="none" stroke={accent} strokeLinejoin="miter" strokeWidth="4" />
+        <path d={`M${currentTimeX.toFixed(1)} 24V106`} stroke="#c3342f" strokeDasharray="5 4" strokeWidth="2" />
+        {chartPoints.map((point) => (
+          <g key={point.label}>
+            <rect x={point.x - 3.5} y={point.y - 3.5} width="7" height="7" fill={accent} stroke="#3b2a14" strokeWidth="1.5" />
+            <text fill="#5e4a26" fontFamily="ui-monospace" fontSize="8" fontWeight="800" textAnchor="middle" x={point.x} y="126">
+              {point.label}
+            </text>
+          </g>
+        ))}
+        <text fill="#c3342f" fontFamily="ui-monospace" fontSize="9" fontWeight="900" textAnchor="middle" x={currentTimeX} y="18">
+          now
+        </text>
+      </svg>
+      <div className="grid grid-cols-3 gap-1.5">
+        <EconomicsMetric label="Peak" value={`${peak.label} ${formatCompactNumber(peak.expectedAmount)}`} accent={accent} />
+        <EconomicsMetric label="Value" value={`$${formatCompactNumber(points.reduce((totalValue, point) => totalValue + point.expectedValueUsd, 0))}`} accent="#a8761c" />
+        <EconomicsMetric label="Mean" value={`${formatCompactNumber(total / points.length)}`} accent="#245c65" />
+      </div>
+    </div>
+  );
+}
+
+function getMonthlyForecastTrend(forecast: ProductionForecast | Omit<ProductionForecast, "monthlyTrend">): MonthlyForecastPoint[] {
+  if ("monthlyTrend" in forecast && forecast.monthlyTrend?.length) {
+    return forecast.monthlyTrend;
+  }
+
+  const currentYear = forecast.yearlyTrend[0]?.year ?? new Date().getFullYear();
+  const annualAmount = forecast.currentYearEstimate;
+  const annualValueUsd = forecast.revenueTrend[0]?.expectedValueUsd ?? 0;
+  const weights = monthNames().map((_, index) => fallbackForecastWeight(forecast.outputName, index));
+  const weightTotal = weights.reduce((total, weight) => total + weight, 0) || 1;
+
+  return monthNames().map((label, index) => {
+    const amount = annualAmount * (weights[index]! / weightTotal);
+
+    return {
+      year: currentYear,
+      month: index + 1,
+      label,
+      expectedAmount: Math.round(amount * 10) / 10,
+      expectedValueUsd: Math.round(annualValueUsd * (weights[index]! / weightTotal) * 100) / 100,
+      lowEstimate: Math.round(amount * 0.78 * 10) / 10,
+      highEstimate: Math.round(amount * 1.18 * 10) / 10,
+    };
+  });
+}
+
+function fallbackForecastWeight(outputName: string, index: number) {
+  const normalized = outputName.toLowerCase();
+
+  if (/\b(egg|milk|chicken|duck|goat|cow|rabbit|honey)\b/.test(normalized)) {
+    return [0.92, 0.95, 1.02, 1.06, 1.08, 1.06, 1.03, 1, 0.98, 0.96, 0.94, 0.92][index] ?? 1;
+  }
+
+  if (/\b(green|lettuce|spinach|kale|herb|cilantro|parsley|basil)\b/.test(normalized)) {
+    return [0.35, 0.45, 0.9, 1.4, 1.55, 1.25, 0.85, 0.65, 0.9, 1.25, 1, 0.55][index] ?? 1;
+  }
+
+  return [0.08, 0.12, 0.22, 0.55, 0.9, 1.3, 1.62, 1.74, 1.38, 0.82, 0.33, 0.14][index] ?? 1;
+}
+
+function monthNames() {
+  return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+}
+
+function PlanEconomicsSection({ economics }: { economics: PlanEconomicsProjection }) {
+  const totalCost = sumEconomicsValues(economics.monthlyPoints, "operatingCostUsd");
+  const totalProduction = sumEconomicsValues(economics.monthlyPoints, "productionValueUsd");
+  const totalUnits = sumEconomicsValues(economics.monthlyPoints, "productionUnits");
+
+  return (
+    <section className="grid gap-3">
+      <SectionHeader
+        icon="ledger"
+        eyebrow="Plan Economics"
+        title="Month-by-Month Cost & Production"
+        subtitle="A granular current-year model from the plan's crop areas, livestock output, expected prices, recurring costs, and seasonal timing."
+      />
+      <div className="grid gap-3 xl:grid-cols-2">
+        <article
+          style={{ ["--pixel-frame-bg" as string]: "#fffdf5" }}
+          className="pixel-frame overflow-hidden rounded-none border-2 border-[#a8916a] bg-[#fffaf0]"
+        >
+          <div className="pixel-gradient-need border-b-2 border-[#a8916a] p-3">
+            <PanelTitle
+              icon="jar"
+              eyebrow="Operating Cost"
+              title="Monthly Cost Model"
+              meta={`Modeled year: $${formatCompactNumber(totalCost)}`}
+            />
+          </div>
+          <div className="grid gap-3 p-3">
+            <DetailedEconomicsChart
+              title="Operating cost by month"
+              points={economics.monthlyPoints}
+              valueKey="operatingCostUsd"
+              accent="#c46a1d"
+              fill="#fff1dc"
+              valuePrefix="$"
+            />
+          </div>
+        </article>
+
+        <article
+          style={{ ["--pixel-frame-bg" as string]: "#fffdf5" }}
+          className="pixel-frame overflow-hidden rounded-none border-2 border-[#a8916a] bg-[#fffaf0]"
+        >
+          <div className="pixel-gradient-sell border-b-2 border-[#a8916a] p-3">
+            <PanelTitle
+              icon="basket"
+              eyebrow="Production"
+              title="Monthly Output Model"
+              meta={`Modeled year: $${formatCompactNumber(totalProduction)} · ${formatCompactNumber(totalUnits)} units`}
+            />
+          </div>
+          <div className="grid gap-3 p-3">
+            <DetailedEconomicsChart
+              title="Production value by month"
+              points={economics.monthlyPoints}
+              valueKey="productionValueUsd"
+              accent="#2f6f4e"
+              fill="#eef8df"
+              valuePrefix="$"
+            />
+            <TagList items={economics.topOutputs} emptyLabel="No producing objects yet" compact />
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function DetailedEconomicsChart({
+  title,
+  points,
+  valueKey,
+  accent,
+  fill,
+  valuePrefix = "",
+}: {
+  title: string;
+  points: PlanEconomicsPoint[];
+  valueKey: "operatingCostUsd" | "productionValueUsd";
+  accent: string;
+  fill: string;
+  valuePrefix?: string;
+}) {
+  if (!points.length) {
+    return <EmptyPanel title={title} body="No monthly economics data is available for this plan yet." compact />;
+  }
+
+  const values = points.map((point) => point[valueKey]);
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const mean = points.length ? total / points.length : 0;
+  const variance = points.length
+    ? values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / points.length
+    : 0;
+  const volatility = mean ? (Math.sqrt(variance) / mean) * 100 : 0;
+  const firstPoint = points[0]!;
+  const peak = points.reduce((best, point) => (point[valueKey] > best[valueKey] ? point : best), firstPoint);
+  const low = points.reduce((best, point) => (point[valueKey] < best[valueKey] ? point : best), firstPoint);
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const paddedMax = max * 1.12;
+  const range = Math.max(paddedMax - min, 1);
+  const chartPoints = points.map((point, index) => {
+    const x = 54 + index * (340 / Math.max(points.length - 1, 1));
+    const y = 174 - ((point[valueKey] - min) / range) * 128;
+
+    return { ...point, x, y, value: point[valueKey] };
+  });
+  const linePath = chartPoints
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
+    .join(" ");
+  const firstChartPoint = chartPoints[0]!;
+  const lastChartPoint = chartPoints.at(-1)!;
+  const areaPath = `${linePath} L ${lastChartPoint.x.toFixed(1)} 174 L ${firstChartPoint.x.toFixed(1)} 174 Z`;
+  const currentTimeMarker = getCurrentTimeMarker();
+  const currentTimeX = 54 + currentTimeMarker.yearProgress * 340;
+  const yTicks = Array.from({ length: 5 }, (_, index) => {
+    const value = min + (range * (4 - index)) / 4;
+    const y = 174 - ((value - min) / range) * 128;
+
+    return { value, y };
+  });
+
+  return (
+    <div className="rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] p-2 shadow-[0_2px_0_#3b2a14]">
+      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="font-mono text-[10px] font-black uppercase tracking-[0.14em] text-[#607145]">{title}</p>
+          <p className="mt-0.5 font-mono text-sm font-black text-[#27351f]">
+            {valuePrefix}
+            {formatCompactNumber(total)} total · {valuePrefix}
+            {formatCompactNumber(mean)} mean
+          </p>
+        </div>
+        <span className="rounded-none border-2 border-[#c9b88a] bg-[#fff8dc] px-2 py-1 font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#5e4a26]">
+          CV {volatility.toFixed(1)}%
+        </span>
+      </div>
+
+      <svg className="h-60 w-full" viewBox="0 0 420 220" role="img" aria-label={`${title} monthly chart`} shapeRendering="crispEdges">
+        <rect x="0" y="0" width="420" height="220" fill="#fffdf5" />
+        {yTicks.map((tick) => (
+          <g key={tick.y}>
+            <path d={`M54 ${tick.y.toFixed(1)}H394`} stroke="#d4c39a" strokeDasharray="4 4" strokeWidth="1.5" />
+            <text fill="#6c614d" fontFamily="ui-monospace" fontSize="10" fontWeight="700" textAnchor="end" x="48" y={tick.y + 3}>
+              {valuePrefix}
+              {formatCompactNumber(tick.value)}
+            </text>
+          </g>
+        ))}
+        <path d="M54 34V174H398" fill="none" stroke="#3b2a14" strokeWidth="2" />
+        <path d={areaPath} fill={fill} stroke="none" />
+        <path d={linePath} fill="none" stroke={accent} strokeLinejoin="miter" strokeWidth="4" />
+        <path d={`M54 ${174 - ((mean - min) / range) * 128}H398`} stroke="#245c65" strokeDasharray="7 5" strokeWidth="2" />
+        <g>
+          <path d={`M${currentTimeX.toFixed(1)} 28V174`} stroke="#c3342f" strokeDasharray="6 5" strokeWidth="2" />
+          <rect x={currentTimeX - 13} y="203" width="26" height="13" fill="#fffdf5" stroke="#c3342f" strokeWidth="1.5" />
+          <text fill="#c3342f" fontFamily="ui-monospace" fontSize="9" fontWeight="900" textAnchor="middle" x={currentTimeX} y="213">
+            now
+          </text>
+        </g>
+        {chartPoints.map((point) => (
+          <g key={point.label}>
+            <rect x={point.x - 4} y={point.y - 4} width="8" height="8" fill={accent} stroke="#3b2a14" strokeWidth="2" />
+            <text fill="#5e4a26" fontFamily="ui-monospace" fontSize="9" fontWeight="800" textAnchor="middle" x={point.x} y="194">
+              {point.label}
+            </text>
+          </g>
+        ))}
+        <g>
+          <path d={`M${54 + (peak.month - 1) * (340 / 11)} 28V174`} stroke={accent} strokeDasharray="3 5" strokeWidth="1.5" />
+          <text fill={accent} fontFamily="ui-monospace" fontSize="10" fontWeight="900" textAnchor="middle" x={54 + (peak.month - 1) * (340 / 11)} y="22">
+            peak {peak.label}
+          </text>
+        </g>
+      </svg>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <EconomicsMetric label="Peak" value={`${peak.label} ${valuePrefix}${formatCompactNumber(peak[valueKey])}`} accent={accent} />
+        <EconomicsMetric label="Low" value={`${low.label} ${valuePrefix}${formatCompactNumber(low[valueKey])}`} accent="#245c65" />
+        <EconomicsMetric label="Range" value={`${valuePrefix}${formatCompactNumber(peak[valueKey] - low[valueKey])}`} accent="#a8761c" />
+        <EconomicsMetric label="Mean" value={`${valuePrefix}${formatCompactNumber(mean)}`} accent="#2f6f4e" />
+      </div>
+    </div>
+  );
+}
+
+function getCurrentTimeMarker() {
+  const now = new Date();
+  const monthIndex = now.getMonth();
+  const daysInMonth = new Date(now.getFullYear(), monthIndex + 1, 0).getDate();
+  const monthProgress = daysInMonth ? (now.getDate() - 1) / daysInMonth : 0;
+  const yearProgress = Math.min(1, Math.max(0, (monthIndex + monthProgress) / 11));
+
+  return { yearProgress };
+}
+
+function EconomicsMetric({ label, value, accent }: { label: string; value: string; accent: string }) {
+  return (
+    <div className="rounded-none border-2 border-[#c9b88a] bg-[#fff8dc] px-2 py-1">
+      <p className="font-mono text-[9px] font-black uppercase tracking-[0.1em] text-[#607145]">{label}</p>
+      <p className="mt-0.5 truncate font-mono text-xs font-black" style={{ color: accent }}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function sumEconomicsValues(points: PlanEconomicsPoint[], valueKey: "operatingCostUsd" | "productionValueUsd" | "productionUnits") {
+  return points.reduce((total, point) => total + point[valueKey], 0);
 }
 
 function SuggestionsSection({ report }: { report: FarmIntelligenceReport }) {
@@ -437,10 +769,10 @@ function SurplusSection({ report }: { report: FarmIntelligenceReport }) {
           report.surplusCalendar.map((month, index) => (
             <article
               key={`${month.month}-${index}`}
-              className="grid gap-2 rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-3 sm:grid-cols-[68px_1fr]"
+              className="grid gap-2 rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-3 sm:grid-cols-[96px_1fr]"
             >
-              <div className="grid place-items-center rounded-none border-2 border-[#3b2a14] bg-[#fff8dc] py-2 shadow-[0_2px_0_#3b2a14]">
-                <span className="font-mono text-sm font-black uppercase tracking-[0.08em] text-[#27351f]">
+              <div className="grid place-items-center rounded-none border-2 border-[#3b2a14] bg-[#fff8dc] px-1.5 py-2 shadow-[0_2px_0_#3b2a14]">
+                <span className="block w-full text-center font-mono text-[11px] font-black uppercase tracking-[0.04em] text-[#27351f]">
                   {month.month}
                 </span>
               </div>
@@ -527,61 +859,6 @@ function SectionHeader({
   );
 }
 
-function MiniLineChart<T extends YearlyTrendPoint | RevenueTrendPoint>({
-  title,
-  series,
-  valueKey,
-  accent,
-  valuePrefix = "",
-  valueSuffix = "",
-}: {
-  title: string;
-  series: T[];
-  valueKey: keyof T;
-  accent: string;
-  valuePrefix?: string;
-  valueSuffix?: string;
-}) {
-  const values = series.map((point) => Number(point[valueKey]) || 0);
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const range = Math.max(max - min, 1);
-  const points = series.map((point, index) => {
-    const x = 18 + index * (264 / Math.max(series.length - 1, 1));
-    const y = 116 - ((Number(point[valueKey]) - min) / range) * 78;
-    return { x, y, year: point.year, value: Number(point[valueKey]) || 0 };
-  });
-  const polylinePoints = points.map(({ x, y }) => `${x},${y}`).join(" ");
-  const latest = points.at(-1)?.value ?? 0;
-
-  return (
-    <div className="rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-2">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="font-mono text-[10px] font-black uppercase tracking-[0.12em] text-[#607145]">{title}</span>
-        <span className="font-mono text-xs font-black text-[#27351f]">
-          {valuePrefix}
-          {formatCompactNumber(latest)}
-          {valueSuffix}
-        </span>
-      </div>
-      <svg className="h-32 w-full" viewBox="0 0 300 132" role="img" aria-label={`${title} forecast chart`} shapeRendering="crispEdges">
-        <path d="M18 120H286" stroke="#a8916a" strokeWidth="2" />
-        <path d="M18 76H286" stroke="#d4c39a" strokeWidth="2" strokeDasharray="4 4" />
-        <path d="M18 34H286" stroke="#d4c39a" strokeWidth="2" strokeDasharray="4 4" />
-        <polyline fill="none" points={polylinePoints} stroke={accent} strokeLinecap="square" strokeLinejoin="miter" strokeWidth="4" />
-        {points.map(({ x, y, year }) => (
-          <g key={year}>
-            <rect x={x - 4} y={y - 4} width="8" height="8" fill={accent} stroke="#3b2a14" strokeWidth="2" />
-            <text fill="#5e4a26" fontFamily="ui-monospace" fontSize="9" fontWeight="700" textAnchor="middle" x={x} y="130">
-              {String(year).slice(2)}
-            </text>
-          </g>
-        ))}
-      </svg>
-    </div>
-  );
-}
-
 function TinyBadge({ label }: { label: string }) {
   return (
     <span className="rounded-none border-2 border-[#c9b88a] bg-[#fff8dc] px-2 py-0.5 font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#5e4a26]">
@@ -642,12 +919,24 @@ function buildDemoReport(snapshot: InventorySnapshot): FarmIntelligenceReport {
   const forecasts = outputs.map((output, index) => {
     const unit = output.category === "livestock" ? "dozen" : output.name.toLowerCase().includes("lettuce") ? "heads" : "lb";
     const baseAmount = output.category === "livestock" ? 18 : output.name.toLowerCase().includes("lettuce") ? 36 : 42 + index * 8;
+    const currentYearValue = baseAmount * (output.category === "livestock" ? 6 : 4);
 
     return {
       outputId: output.id,
       outputName: output.name,
       unit,
       currentYearEstimate: baseAmount,
+      monthlyTrend: getMonthlyForecastTrend({
+        outputId: output.id,
+        outputName: output.name,
+        unit,
+        currentYearEstimate: baseAmount,
+        yearlyTrend: [{ year: baseYear, expectedAmount: baseAmount, lowEstimate: baseAmount * 0.78, highEstimate: baseAmount * 1.18 }],
+        revenueTrend: [{ year: baseYear, expectedValueUsd: currentYearValue }],
+        confidence: "medium" as const,
+        trendSummary: "",
+        keyDrivers: [],
+      }),
       yearlyTrend: Array.from({ length: 5 }, (_, yearIndex) => {
         const expectedAmount = Math.round((baseAmount * (1 + yearIndex * 0.12 - Math.max(0, yearIndex - 2) * 0.04)) * 10) / 10;
 
@@ -663,7 +952,7 @@ function buildDemoReport(snapshot: InventorySnapshot): FarmIntelligenceReport {
         expectedValueUsd: Math.round(baseAmount * (output.category === "livestock" ? 6 : 4) * (1 + yearIndex * 0.1)),
       })),
       confidence: "medium" as const,
-      trendSummary: "Demo curve based on the current plan output. Generate AI intelligence for a Gemini-specific forecast.",
+      trendSummary: "Plan-based estimate using current outputs, timing, and expected harvest cadence.",
       keyDrivers: ["soil improvement", "water timing", "harvest cadence"],
     };
   });
@@ -672,7 +961,7 @@ function buildDemoReport(snapshot: InventorySnapshot): FarmIntelligenceReport {
     generatedAt: new Date().toISOString(),
     planName: snapshot.plan?.name ?? "Demo farm plan",
     executiveSummary:
-      "Generate AI intelligence to turn the latest farm plan into full yield forecasts, improvement suggestions, scenario cards, and risk diagnostics.",
+      "Plan-based preview of likely outputs, improvement ideas, scenarios, and risk diagnostics.",
     productionForecasts: forecasts,
     aiSuggestions: [
       {
