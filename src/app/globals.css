@@ -103,6 +103,216 @@ html {
   }
 }
 
+/* ── Magic generate overlay ────────────────────────────────────────────── */
+
+.magic-backdrop {
+  background:
+    /* dither overlay */
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06) 25%, transparent 25% 50%, rgba(0, 0, 0, 0.18) 50% 75%, transparent 75%),
+    /* sky stair-step */
+    linear-gradient(180deg,
+      #1c2c4a 0 14%,
+      #2b3f5e 14% 28%,
+      #3a4f6e 28% 42%,
+      #4d6585 42% 56%,
+      #6e7e9a 56% 70%,
+      #a8826b 70% 82%,
+      #d39a18 82% 92%,
+      #ffe89a 92% 100%);
+  background-size: 4px 4px, 100% 100%;
+  animation: magic-backdrop-fade 240ms steps(6, end) both;
+}
+
+.magic-stars {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(rgba(255, 253, 245, 0.95) 1px, transparent 1px),
+    radial-gradient(rgba(255, 232, 154, 0.85) 1px, transparent 1px),
+    radial-gradient(rgba(255, 253, 245, 0.6) 1px, transparent 1px);
+  background-size: 64px 64px, 96px 96px, 48px 48px;
+  background-position: 12px 18px, 30px 60px, 48px 24px;
+  animation: magic-twinkle 2.4s steps(2, end) infinite;
+}
+
+.magic-rays {
+  position: absolute;
+  inset: -40%;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg,
+    rgba(255, 232, 154, 0) 0deg,
+    rgba(255, 232, 154, 0.4) 12deg,
+    rgba(255, 232, 154, 0) 30deg,
+    rgba(255, 232, 154, 0) 60deg,
+    rgba(255, 232, 154, 0.32) 72deg,
+    rgba(255, 232, 154, 0) 96deg,
+    rgba(255, 232, 154, 0) 132deg,
+    rgba(255, 232, 154, 0.36) 144deg,
+    rgba(255, 232, 154, 0) 168deg,
+    rgba(255, 232, 154, 0) 204deg,
+    rgba(255, 232, 154, 0.32) 216deg,
+    rgba(255, 232, 154, 0) 240deg,
+    rgba(255, 232, 154, 0) 276deg,
+    rgba(255, 232, 154, 0.36) 288deg,
+    rgba(255, 232, 154, 0) 312deg,
+    rgba(255, 232, 154, 0) 360deg
+  );
+  filter: blur(0.5px);
+  animation: magic-rays-spin 12s steps(24, end) infinite;
+}
+
+.magic-sun-core {
+  background: #ffe89a;
+  box-shadow:
+    inset 0 4px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -8px 0 rgba(168, 118, 28, 0.4),
+    0 0 0 4px #3b2a14,
+    0 0 0 10px rgba(255, 232, 154, 0.55),
+    0 0 0 18px rgba(255, 232, 154, 0.28),
+    0 0 0 28px rgba(255, 232, 154, 0.14);
+  animation: magic-sun-pulse 1.6s steps(8, end) infinite;
+}
+
+.magic-spark {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: #fffdf5;
+  pointer-events: none;
+  animation: magic-spark-rise 3.4s steps(12, end) infinite;
+}
+
+.magic-spark-gold {
+  background: #ffe89a;
+}
+
+.magic-spark-pink {
+  background: #f6c0d4;
+}
+
+.magic-progress {
+  position: relative;
+  height: 12px;
+  border: 2px solid #3b2a14;
+  background: #fff8dc;
+  box-shadow: inset 0 2px 0 rgba(95, 80, 43, 0.18);
+  overflow: hidden;
+}
+
+.magic-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 30%;
+  background: repeating-linear-gradient(
+    90deg,
+    #7da854 0 8px,
+    #9bc278 8px 16px
+  );
+  animation: magic-progress-bounce 1.8s steps(36, end) infinite;
+}
+
+.magic-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0 2px,
+    rgba(0, 0, 0, 0.08) 2px 3px
+  );
+  mix-blend-mode: multiply;
+}
+
+@keyframes magic-backdrop-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes magic-twinkle {
+  0%, 100% {
+    opacity: 0.32;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+@keyframes magic-rays-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes magic-sun-pulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.06);
+    filter: brightness(1.15);
+  }
+}
+
+@keyframes magic-spark-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(20px) scale(0.6);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  80% {
+    opacity: 1;
+    transform: translateY(-160px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-200px) scale(0.6);
+  }
+}
+
+@keyframes magic-progress-bounce {
+  0% {
+    transform: translateX(-30%);
+  }
+  50% {
+    transform: translateX(330%);
+  }
+  100% {
+    transform: translateX(-30%);
+  }
+}
+
+@keyframes magic-panel-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.94);
+  }
+  60% {
+    transform: translateY(-2px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.magic-panel-pop {
+  animation: magic-panel-pop 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* Subtle pixel-dot tile for panel interiors. */
 .pixel-dots {
   background-image:

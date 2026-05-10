@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { PixelGlyph } from "../_components/icons";
+import { MagicGenerateOverlay } from "./magic-generate-overlay";
 
 export function IntelligenceGenerateButton({
   hasGeminiKey,
@@ -57,6 +58,7 @@ export function IntelligenceGenerateButton({
         <p className="max-w-xs text-xs font-semibold text-[#8a3f2a]">Add GEMINI_API_KEY to generate intelligence.</p>
       ) : null}
       {error ? <p className="max-w-xs text-xs font-semibold text-[#8a3f2a]">{error}</p> : null}
+      <MagicGenerateOverlay visible={isGenerating} />
     </div>
   );
 }
