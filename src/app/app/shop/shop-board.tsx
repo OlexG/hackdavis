@@ -233,7 +233,15 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
   );
 }
 
-export function PublicShopfrontPreview({ snapshot }: { snapshot: ShopSnapshot }) {
+export function PublicShopfrontPreview({
+  snapshot,
+  onSlotSelect,
+  selectedSlotId,
+}: {
+  snapshot: ShopSnapshot;
+  onSlotSelect?: (slot: ShopDisplaySlotView) => void;
+  selectedSlotId?: string;
+}) {
   const visibleSlots = snapshot.slots
     .filter((slot) => slot.visible)
     .sort((left, right) => left.position - right.position);
@@ -262,6 +270,8 @@ export function PublicShopfrontPreview({ snapshot }: { snapshot: ShopSnapshot })
       onUpdate={noop}
       onUpload={noopAsync}
       onHide={noop}
+      onSlotSelect={onSlotSelect}
+      selectedSlotId={selectedSlotId}
     />
   );
 }
@@ -318,6 +328,8 @@ function FarmStandPanel({
   onUpdate,
   onUpload,
   onHide,
+  onSlotSelect,
+  selectedSlotId,
 }: {
   displayName: string;
   details: ShopDetails;
@@ -338,6 +350,8 @@ function FarmStandPanel({
   onUpdate: (itemId: string, patch: Partial<ShopDisplaySlotView>) => void;
   onUpload: (itemId: string, file: File) => Promise<void>;
   onHide: (itemId: string) => void;
+  onSlotSelect?: (slot: ShopDisplaySlotView) => void;
+  selectedSlotId?: string;
 }) {
   const isEditing = mode === "edit";
   const shopName = details.shopName || displayName;
@@ -436,6 +450,8 @@ function FarmStandPanel({
                 onUpdate={onUpdate}
                 onUpload={onUpload}
                 onHide={() => onHide(slot.inventoryItemId)}
+                onSelect={onSlotSelect ? () => onSlotSelect(slot) : undefined}
+                selected={selectedSlotId === slot.inventoryItemId}
               />
             ))}
           </div>
@@ -901,6 +917,8 @@ function ShopShelfCard({
   onUpdate,
   onUpload,
   onHide,
+  onSelect,
+  selected = false,
 }: {
   slot: ShopDisplaySlotView;
   mode: ShopViewMode;
@@ -911,6 +929,8 @@ function ShopShelfCard({
   onUpdate: (itemId: string, patch: Partial<ShopDisplaySlotView>) => void;
   onUpload: (itemId: string, file: File) => Promise<void>;
   onHide: () => void;
+  onSelect?: () => void;
+  selected?: boolean;
 }) {
   const isEditing = mode === "edit";
   const freshness = getFreshnessLabel(slot);
@@ -920,6 +940,19 @@ function ShopShelfCard({
   return (
     <article
       draggable={isEditing}
+      role={!isEditing && onSelect ? "button" : undefined}
+      tabIndex={!isEditing && onSelect ? 0 : undefined}
+      aria-pressed={!isEditing && onSelect ? selected : undefined}
+      onClick={() => {
+        if (!isEditing) onSelect?.();
+      }}
+      onKeyDown={(event) => {
+        if (isEditing || !onSelect) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
       onDragStart={() => isEditing && onDragStart(slot.inventoryItemId)}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
@@ -932,6 +965,8 @@ function ShopShelfCard({
       style={{ ["--pixel-frame-bg" as string]: "#fcf6e4" }}
       className={`pixel-frame grid gap-2 rounded-none border-2 border-[#a8916a] bg-[#fffdf5] p-2.5 shadow-[0_3px_0_#8b6f3e] ${
         isEditing ? "cursor-grab transition hover:-translate-y-0.5 active:cursor-grabbing" : ""
+      } ${!isEditing && onSelect ? "cursor-pointer transition hover:-translate-y-0.5 hover:border-[#3b2a14]" : ""} ${
+        selected ? "border-[#3b2a14] shadow-[0_4px_0_#3b2a14] outline outline-2 outline-offset-2 outline-[#7da854]" : ""
       }`}
     >
       <ImageSlot
