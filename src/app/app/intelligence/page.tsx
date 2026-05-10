@@ -9,7 +9,7 @@ import {
 } from "@/lib/intelligence";
 import type { InventorySnapshot } from "@/lib/inventory";
 import { PixelGlyph, type PixelGlyphName } from "../_components/icons";
-import { IntelligenceGenerateButton } from "./intelligence-actions";
+import { StatModelButton } from "./stat-model-panel";
 import { YieldForecastSelector } from "./yield-forecast-selector";
 
 export default async function IntelligencePage() {
@@ -27,14 +27,14 @@ export default async function IntelligencePage() {
       <IntelligenceHeroBanner
         planName={planName}
         generatedAt={data.savedReport?.generatedAt}
-        hasReport={Boolean(data.savedReport)}
-        hasBackupModelKey={data.hasBackupModelKey}
         isDemoReport={isDemoReport}
         isStale={isStale}
       />
 
       <div className="grid gap-3 p-3">
         {data.economics ? <PlanEconomicsSection economics={data.economics} /> : null}
+
+        <StatModelButton />
 
         <YieldForecastSelector forecasts={report.productionForecasts} />
       </div>
@@ -45,15 +45,11 @@ export default async function IntelligencePage() {
 function IntelligenceHeroBanner({
   planName,
   generatedAt,
-  hasReport,
-  hasBackupModelKey,
   isDemoReport,
   isStale,
 }: {
   planName?: string;
   generatedAt?: string;
-  hasReport: boolean;
-  hasBackupModelKey: boolean;
   isDemoReport: boolean;
   isStale: boolean;
 }) {
@@ -111,7 +107,6 @@ function IntelligenceHeroBanner({
             </div>
           </div>
         </div>
-        <IntelligenceGenerateButton hasBackupModelKey={hasBackupModelKey} hasReport={hasReport} />
       </div>
     </div>
   );

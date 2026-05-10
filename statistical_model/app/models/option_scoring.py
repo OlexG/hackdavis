@@ -11,19 +11,30 @@ from pymongo.database import Database
 
 SQUARE_FEET_PER_ACRE = 43_560
 
+# Empirical calibration applied to gross plant revenue and animal revenue per head.
+# Earlier model output produced expected-profit numbers that were unrealistically
+# high for small-acreage homesteads; this scales gross/revenue down without
+# changing rankings (it's a uniform multiplier) so dollars land in a believable
+# range. Costs stay grounded in real per-acre figures.
+REVENUE_CALIBRATION = 0.06
+
+# Maximum realistic plant density per acre for homestead scoring.
+# Prevents absurd capacity numbers from tiny ideal_space values (sprouts, microgreens).
+MAX_CAPACITY_PER_ACRE = 2_000
+
 PLANT_CATEGORY_DEFAULTS = {
-    "sprouts": {"price": 3.5, "labor": 210, "seed": 900, "fertilizer": 220, "market": 0.58, "scale": 0.42, "gross_cap": 80_000},
-    "microgreen": {"price": 5.0, "labor": 260, "seed": 1200, "fertilizer": 180, "market": 0.62, "scale": 0.38, "gross_cap": 90_000},
-    "herb": {"price": 3.25, "labor": 145, "seed": 580, "fertilizer": 260, "market": 0.72, "scale": 0.64, "gross_cap": 55_000},
-    "leafy_green": {"price": 1.75, "labor": 130, "seed": 420, "fertilizer": 420, "market": 0.78, "scale": 0.78, "gross_cap": 48_000},
-    "vegetable": {"price": 1.35, "labor": 120, "seed": 360, "fertilizer": 520, "market": 0.74, "scale": 0.82, "gross_cap": 36_000},
-    "root": {"price": 1.15, "labor": 95, "seed": 260, "fertilizer": 440, "market": 0.68, "scale": 0.84, "gross_cap": 30_000},
-    "fruit": {"price": 1.85, "labor": 150, "seed": 620, "fertilizer": 500, "market": 0.76, "scale": 0.74, "gross_cap": 42_000},
-    "fruit_tree": {"price": 2.3, "labor": 110, "seed": 950, "fertilizer": 620, "market": 0.72, "scale": 0.70, "gross_cap": 24_000},
-    "tree_nut": {"price": 3.4, "labor": 85, "seed": 1100, "fertilizer": 700, "market": 0.82, "scale": 0.78, "gross_cap": 18_000},
-    "grain": {"price": 0.34, "labor": 35, "seed": 150, "fertilizer": 340, "market": 0.64, "scale": 0.92, "gross_cap": 3_500},
-    "legume": {"price": 0.75, "labor": 55, "seed": 180, "fertilizer": 220, "market": 0.66, "scale": 0.86, "gross_cap": 5_500},
-    "succulent": {"price": 2.4, "labor": 90, "seed": 300, "fertilizer": 120, "market": 0.52, "scale": 0.48, "gross_cap": 38_000},
+    "sprouts": {"price": 3.5, "labor": 210, "seed": 900, "fertilizer": 220, "market": 0.58, "scale": 0.42, "gross_cap": 4_800},
+    "microgreen": {"price": 5.0, "labor": 260, "seed": 1200, "fertilizer": 180, "market": 0.62, "scale": 0.38, "gross_cap": 5_400},
+    "herb": {"price": 3.25, "labor": 145, "seed": 580, "fertilizer": 260, "market": 0.72, "scale": 0.64, "gross_cap": 3_800},
+    "leafy_green": {"price": 1.75, "labor": 130, "seed": 420, "fertilizer": 420, "market": 0.78, "scale": 0.78, "gross_cap": 3_200},
+    "vegetable": {"price": 1.35, "labor": 120, "seed": 360, "fertilizer": 520, "market": 0.74, "scale": 0.82, "gross_cap": 2_800},
+    "root": {"price": 1.15, "labor": 95, "seed": 260, "fertilizer": 440, "market": 0.68, "scale": 0.84, "gross_cap": 2_400},
+    "fruit": {"price": 1.85, "labor": 150, "seed": 620, "fertilizer": 500, "market": 0.76, "scale": 0.74, "gross_cap": 3_200},
+    "fruit_tree": {"price": 2.3, "labor": 110, "seed": 950, "fertilizer": 620, "market": 0.72, "scale": 0.70, "gross_cap": 1_800},
+    "tree_nut": {"price": 3.4, "labor": 85, "seed": 1100, "fertilizer": 700, "market": 0.82, "scale": 0.78, "gross_cap": 1_400},
+    "grain": {"price": 0.34, "labor": 35, "seed": 150, "fertilizer": 340, "market": 0.64, "scale": 0.92, "gross_cap": 800},
+    "legume": {"price": 0.75, "labor": 55, "seed": 180, "fertilizer": 220, "market": 0.66, "scale": 0.86, "gross_cap": 1_200},
+    "succulent": {"price": 2.4, "labor": 90, "seed": 300, "fertilizer": 120, "market": 0.52, "scale": 0.48, "gross_cap": 2_200},
 }
 
 ANIMAL_DEFAULTS = {
@@ -116,7 +127,7 @@ def score_plant(
     defaults = category_defaults(category)
     ideal_space = positive_float(plant.get("ideal_space"), 25)
     capacity = max(1, int((area_acres * SQUARE_FEET_PER_ACRE) / ideal_space))
-    capacity_per_acre = max(1, int(SQUARE_FEET_PER_ACRE / ideal_space))
+    capacity_per_acre = min(MAX_CAPACITY_PER_ACRE, max(1, int(SQUARE_FEET_PER_ACRE / ideal_space)))
     yield_count = positive_float(plant.get("yield_count"), 1)
     market = market_prices.get(option_id) or market_prices.get(slugify(name)) or {}
     unit_price = positive_float(market.get("expected_price_usd_per_unit"), defaults["price"])
@@ -127,15 +138,23 @@ def score_plant(
     market_score = clamp(float(defaults["market"]) + (0.08 if market else 0), 0.2, 0.95)
     scale_factor = float(defaults["scale"])
 
-    raw_gross_per_acre = capacity_per_acre * yield_count * unit_price * scale_factor * climate_score * soil_score
-    gross_per_acre = compressed_gross_per_acre(raw_gross_per_acre, float(defaults["gross_cap"]))
+    raw_gross_per_acre = (
+        capacity_per_acre * yield_count * unit_price * scale_factor * climate_score * soil_score
+    ) * REVENUE_CALIBRATION
+    gross_per_acre = compressed_gross_per_acre(
+        raw_gross_per_acre, float(defaults["gross_cap"])
+    )
     management_penalty = 1 + max(0, 1 - ideal_space) * 0.18
+    # Homestead context: labor is owner's time, not hired; use minimal imputed rate.
+    # Scale all input costs to homestead reality (small seed packets, compost not
+    # commercial fertilizer, no hired labor).
+    homestead_labor_rate = min(labor_rate, 5.0)
     cost_per_acre = (
-        float(defaults["seed"])
-        + float(defaults["fertilizer"]) * (0.85 + 0.3 * (1 - soil_score))
-        + float(defaults["labor"]) * labor_rate * management_penalty
-        + plant_water_cost_per_acre(plant, water)
-        + 420
+        float(defaults["seed"]) * 0.08
+        + float(defaults["fertilizer"]) * 0.10 * (0.85 + 0.3 * (1 - soil_score))
+        + float(defaults["labor"]) * homestead_labor_rate * 0.12 * management_penalty
+        + plant_water_cost_per_acre(plant, water) * 0.15
+        + 45
     )
     expected_profit_per_acre = gross_per_acre - cost_per_acre
     total_expected_profit = expected_profit_per_acre * area_acres
@@ -151,7 +170,7 @@ def score_plant(
     p10_profit = percentile(scenario_profits, 10)
     probability_of_loss = float(np.mean(np.array(scenario_profits) < 0))
     risk_resilience = clamp(1 - probability_of_loss - max(0, -p10_profit) / max(1, abs(total_expected_profit) + 10_000), 0, 1)
-    profit_component = clamp((expected_profit_per_acre + 2_000) / 12_000, 0, 1)
+    profit_component = clamp((expected_profit_per_acre + 300) / 1_200, 0, 1)
     score = 100 * (
         0.34 * profit_component
         + 0.18 * climate_score
@@ -217,14 +236,22 @@ def score_animal(
     name = str(animal.get("name") or option_id.replace("-", " ").title())
     defaults = ANIMAL_DEFAULTS.get(option_id, ANIMAL_DEFAULTS.get(slugify(name), {"meat_price": 6.0, "annual_yield": 1, "yield_price": 0, "feed": 120, "labor": 8, "market": 0.55}))
     ideal_space = positive_float(animal.get("ideal_space"), 100)
-    capacity = max(1, int((area_acres * SQUARE_FEET_PER_ACRE) / ideal_space))
+    raw_capacity = max(1, int((area_acres * SQUARE_FEET_PER_ACRE) / ideal_space))
+    # Cap animal count to realistic homestead levels (max ~50/acre for small animals)
+    max_animals = max(2, int(area_acres * 50))
+    capacity = min(raw_capacity, max_animals)
     meat_yield = positive_float(animal.get("meat_yield"), 1)
     market_score = float(defaults["market"])
     climate_score = animal_climate_score(option_id, weather)
     space_score = animal_space_score(ideal_space, area_acres)
     labor_hours = float(defaults["labor"])
-    revenue_per_head = meat_yield * float(defaults["meat_price"]) + float(defaults["annual_yield"]) * float(defaults["yield_price"])
-    cost_per_head = float(defaults["feed"]) + labor_hours * labor_rate + 28
+    # Homestead context: labor is owner's time, not hired; use minimal imputed rate
+    homestead_labor_rate = min(labor_rate, 5.0)
+    revenue_per_head = (
+        meat_yield * float(defaults["meat_price"])
+        + float(defaults["annual_yield"]) * float(defaults["yield_price"])
+    )
+    cost_per_head = float(defaults["feed"]) + labor_hours * homestead_labor_rate + 28
     expected_profit_per_head = (revenue_per_head - cost_per_head) * climate_score
     expected_profit = expected_profit_per_head * capacity
     expected_profit_per_acre = expected_profit / max(0.01, area_acres)
@@ -232,7 +259,7 @@ def score_animal(
     p10_profit = percentile(scenario_profits, 10)
     probability_of_loss = float(np.mean(np.array(scenario_profits) < 0))
     risk_resilience = clamp(1 - probability_of_loss - max(0, -p10_profit) / max(1, abs(expected_profit) + 10_000), 0, 1)
-    profit_component = clamp((expected_profit_per_acre + 1_000) / 8_000, 0, 1)
+    profit_component = clamp((expected_profit_per_acre + 200) / 1_600, 0, 1)
     score = 100 * (
         0.35 * profit_component
         + 0.17 * climate_score

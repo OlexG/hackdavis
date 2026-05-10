@@ -46,6 +46,25 @@ export type RegisterPushTokenInput = {
   deviceName?: string;
 };
 
+type ExpoPushMessage = {
+  to: string;
+  sound: "default";
+  title: string;
+  body: string;
+  channelId?: string;
+  priority?: "default" | "normal" | "high";
+  data: Record<string, string>;
+};
+
+type ExpoPushTicket = {
+  status?: "ok" | "error";
+  id?: string;
+  message?: string;
+  details?: {
+    error?: string;
+  };
+};
+
 export type CreateSocialOfferNotificationInput = {
   offerId: string;
   inventoryItemId?: string;
@@ -273,23 +292,17 @@ export async function sendOfferNotification({
     sound: "default",
     title: "New Sunpatch offer",
     body: `${senderName} sent an offer for ${itemName}.`,
+    channelId: "default",
+    priority: "high",
     data: {
       type: "social_offer",
       offerId,
     },
-  }));
+  }) satisfies ExpoPushMessage);
+  const result = await sendExpoPushMessages(messages);
+  await pruneInvalidPushTokens(result.invalidTokens);
 
-  const response = await fetch(expoPushEndpoint, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Accept-Encoding": "gzip, deflate",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(messages.length === 1 ? messages[0] : messages),
-  }).catch(() => null);
-
-  return { sent: response?.ok ? messages.length : 0 };
+  return { sent: result.sent };
 }
 
 export class PushTokenError extends Error {
@@ -330,24 +343,95 @@ async function sendPushNotificationToUserUuid(
     ...savedTokens.map((token) => token.token),
     ...(recipient.pushTokens ?? []),
   ].filter(isLikelyExpoPushToken);
+  const uniqueTokens = Array.from(new Set(tokens));
 
-  if (!tokens.length) {
+  if (!uniqueTokens.length) {
     return { sent: 0 };
+  }
+
+  const messages = uniqueTokens.map((to) => ({
+    to,
+    sound: "default",
+    channelId: "default",
+    priority: "high",
+    ...message,
+  }) satisfies ExpoPushMessage);
+  const result = await sendExpoPushMessages(messages);
+  await pruneInvalidPushTokens(result.invalidTokens);
+
+  return { sent: result.sent };
+}
+
+async function sendExpoPushMessages(messages: ExpoPushMessage[]) {
+  if (!messages.length) {
+    return { sent: 0, invalidTokens: [] as string[] };
   }
 
   const response = await fetch(expoPushEndpoint, {
     method: "POST",
     headers: {
       Accept: "application/json",
+      "Accept-Encoding": "gzip, deflate",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(tokens.map((to) => ({ to, sound: "default", ...message }))),
+    body: JSON.stringify(messages.length === 1 ? messages[0] : messages),
   }).catch((error) => {
-    console.warn("[notifications] Expo push failed:", error);
+    console.warn("[notifications] Expo push request failed:", error);
     return null;
   });
 
-  return { sent: response?.ok ? tokens.length : 0 };
+  if (!response?.ok) {
+    const status = response ? `${response.status} ${response.statusText}` : "network failure";
+    const body = response ? await response.text().catch(() => "") : "";
+    console.warn("[notifications] Expo push request rejected:", status, body.slice(0, 300));
+    return { sent: 0, invalidTokens: [] as string[] };
+  }
+
+  const payload = await response.json().catch((error) => {
+    console.warn("[notifications] Expo push response was not JSON:", error);
+    return null;
+  });
+  const tickets: ExpoPushTicket[] = Array.isArray(payload?.data)
+    ? payload.data
+    : payload?.data
+      ? [payload.data]
+      : [];
+  const invalidTokens: string[] = [];
+  let sent = 0;
+
+  tickets.forEach((ticket, index) => {
+    if (ticket.status === "ok") {
+      sent += 1;
+      return;
+    }
+
+    const token = messages[index]?.to;
+    if (token && ticket.details?.error === "DeviceNotRegistered") {
+      invalidTokens.push(token);
+    }
+
+    console.warn("[notifications] Expo push ticket failed:", ticket.message ?? "Unknown Expo push error", ticket.details);
+  });
+
+  return { sent, invalidTokens };
+}
+
+async function pruneInvalidPushTokens(tokens: string[]) {
+  const uniqueTokens = Array.from(new Set(tokens.filter(isLikelyExpoPushToken)));
+
+  if (!uniqueTokens.length) {
+    return;
+  }
+
+  const db = await getMongoDb();
+
+  await Promise.all([
+    db.collection<PushDeviceToken>("push_device_tokens").deleteMany({ token: { $in: uniqueTokens } }),
+    db.collection<{ pushTokens?: string[] }>("users").updateMany(
+      { pushTokens: { $in: uniqueTokens } },
+      { $pull: { pushTokens: { $in: uniqueTokens } } },
+    ),
+  ]);
 }
 
 function toOfferNotificationView(doc: OfferNotification): OfferNotificationView {

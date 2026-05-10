@@ -42,6 +42,13 @@ The Market screen shows a status chip that reads `Live from MongoDB`,
 `Fallback dataset`, or `Offline (cached)` so you can tell at a glance whether
 the device actually fetched from your API.
 
+## Push notifications
+
+Expo SDK 54 requires an EAS project ID before it can mint an Expo push token.
+Set `EXPO_PUBLIC_EAS_PROJECT_ID` when starting Expo, or add the same value to
+`extra.eas.projectId` in `mobile/app.json`. Use a development build for the
+most reliable push behavior; Expo Go has notification limitations.
+
 ## What lives where
 
 - `lib/api.ts` — base URL resolution + typed fetch wrapper.

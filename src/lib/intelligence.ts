@@ -273,10 +273,10 @@ function buildPlanEconomicsProjection(plan: FarmV2Plan): PlanEconomicsProjection
   const structures = plan.objects.filter((object) => object.type === "structure");
   const cropArea = cropFields.reduce((total, object) => total + ("polygon" in object ? Math.max(1, object.polygon.length * 24) : 0), 0);
   const baseAnnualCost = cropFields.length * 38 + livestock.reduce((total, object) => total + Number(object.attrs.count) * 140, 0) + structures.length * 180;
-  const baseProductionValue = cropFields.length * 180 + livestock.reduce((total, object) => total + Number(object.attrs.count) * 55, 0);
+  const baseProductionValue = cropFields.length * 65 + livestock.reduce((total, object) => total + Number(object.attrs.count) * 22, 0);
   const baseProductionUnits = cropArea + livestock.reduce((total, object) => total + Number(object.attrs.count) * 52, 0);
-  const cropShare = baseProductionValue ? (cropFields.length * 180) / baseProductionValue : 0.75;
-  const livestockShare = baseProductionValue ? (livestock.reduce((total, object) => total + Number(object.attrs.count) * 55, 0)) / baseProductionValue : 0.15;
+  const cropShare = baseProductionValue ? (cropFields.length * 65) / baseProductionValue : 0.75;
+  const livestockShare = baseProductionValue ? (livestock.reduce((total, object) => total + Number(object.attrs.count) * 22, 0)) / baseProductionValue : 0.15;
   const otherShare = Math.max(0, 1 - cropShare - livestockShare);
   const establishmentCost = structures.length * 180 + cropFields.length * 12;
   const topOutputs = [...cropFields, ...livestock]

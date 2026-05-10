@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   ActivityIndicator,
@@ -32,7 +32,7 @@ import {
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
 import MapView, { Marker, UrlTile, type Region } from "react-native-maps";
-import { registerForPushNotifications } from "./lib/notifications";
+import { registerForPushNotifications, registerPushToken } from "./lib/notifications";
 import sunpatchLogo from "./assets/sunpatch-logo.png";
 import basketIcon from "./assets/app-icons/basket.png";
 import leafIcon from "./assets/app-icons/leaf.png";
@@ -125,6 +125,38 @@ export default function App() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [activeTab, setActiveTab] = useState<MainTab>("social");
   const [loadState, setLoadState] = useState<LoadState>({ status: "idle" });
+  const knownOfferIdsRef = useRef<Set<string>>(new Set());
+  const offersBaselineReadyRef = useRef(false);
+  const lastPushRefreshAtRef = useRef(0);
+
+  const rememberOfferSnapshot = useCallback((offers: SocialOffer[], notifyForNewOffers: boolean) => {
+    const knownOfferIds = knownOfferIdsRef.current;
+    const newOffers = offers.filter((offer) => !knownOfferIds.has(offer.id));
+    const hadBaseline = offersBaselineReadyRef.current;
+
+    knownOfferIdsRef.current = new Set(offers.map((offer) => offer.id));
+    offersBaselineReadyRef.current = true;
+
+    if (!notifyForNewOffers || !hadBaseline || !newOffers.length) {
+      return;
+    }
+
+    if (Date.now() - lastPushRefreshAtRef.current < 5_000) {
+      return;
+    }
+
+    const newestOffer = newOffers[0];
+    Notifications.scheduleNotificationAsync({
+      content: {
+        title: "New Sunpatch offer",
+        body: `${newestOffer.senderName} sent an offer for ${newestOffer.itemName}.`,
+        data: { type: "social_offer", offerId: newestOffer.id },
+      },
+      trigger: null,
+    }).catch((error) => {
+      console.warn("[notifications] Local offer notification failed:", error);
+    });
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoadState((current) => (current.status === "ready" ? current : { status: "loading" }));
@@ -135,6 +167,7 @@ export default function App() {
         fetchShopSnapshot(),
         fetchSocialOffers("inbox"),
       ]);
+      rememberOfferSnapshot(offers.offers, false);
       setLoadState({ status: "ready", social, shop, offers: offers.offers });
     } catch (error) {
       setLoadState((current) => ({
@@ -145,14 +178,88 @@ export default function App() {
         offers: "offers" in current ? current.offers : undefined,
       }));
     }
-  }, []);
+  }, [rememberOfferSnapshot]);
+
+  useEffect(() => {
+    if (!user) {
+      knownOfferIdsRef.current = new Set();
+      offersBaselineReadyRef.current = false;
+      lastPushRefreshAtRef.current = 0;
+    }
+  }, [user]);
 
   useEffect(() => {
     if (user) {
       loadData();
-      registerForPushNotifications().catch(() => undefined);
+      registerForPushNotifications()
+        .then((result) => {
+          if (!result.ok && result.reason !== "web") {
+            console.warn("[notifications] Push registration skipped:", result.message ?? result.reason);
+          }
+        })
+        .catch((error) => {
+          console.warn("[notifications] Push registration failed:", error);
+        });
     }
   }, [loadData, user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const subscription = Notifications.addPushTokenListener((token) => {
+      registerPushToken(token.data).catch((error) => {
+        console.warn("[notifications] Push token refresh failed:", error);
+      });
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [user]);
+
+  // Listen for incoming push notifications and refresh offers
+  useEffect(() => {
+    if (!user) return;
+
+    const receivedSub = Notifications.addNotificationReceivedListener(() => {
+      lastPushRefreshAtRef.current = Date.now();
+      loadData();
+    });
+
+    const responseSub = Notifications.addNotificationResponseReceivedListener(() => {
+      lastPushRefreshAtRef.current = Date.now();
+      loadData();
+    });
+
+    return () => {
+      receivedSub.remove();
+      responseSub.remove();
+    };
+  }, [user, loadData]);
+
+  // Poll for new offers every second while the app is active
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (!user) return;
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const result = await fetchSocialOffers("inbox");
+        rememberOfferSnapshot(result.offers, true);
+        setLoadState((current) => {
+          if (current.status !== "ready") return current;
+          // Always update with latest offers from the database
+          return { ...current, offers: result.offers };
+        });
+      } catch {
+        // Silently ignore poll failures
+      }
+    }, 1_000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [user, rememberOfferSnapshot]);
 
   async function handleLogout() {
     await logout();
@@ -1210,8 +1317,8 @@ function RemoteProduceImage({ imageUri }: { imageUri: string }) {
         source={{ uri: imageUri }}
         style={styles.producePhoto}
         resizeMode="cover"
-        onLoadStart={() => setIsLoadingImage(true)}
-        onLoadEnd={() => setIsLoadingImage(false)}
+        onLoad={() => setIsLoadingImage(false)}
+        onError={() => setIsLoadingImage(false)}
       />
       {isLoadingImage ? (
         <View style={styles.producePhotoLoading}>

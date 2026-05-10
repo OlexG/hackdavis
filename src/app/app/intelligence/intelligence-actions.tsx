@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { PixelGlyph } from "../_components/icons";
 import { MagicGenerateOverlay } from "./magic-generate-overlay";
 
 export function IntelligenceGenerateButton({
@@ -51,7 +50,6 @@ export function IntelligenceGenerateButton({
         disabled={isGenerating || !hasBackupModelKey}
         className="pixel-frame inline-flex items-center justify-center gap-2 rounded-none border-2 border-[#3b2a14] bg-[#ffd667] px-3 py-2 font-mono text-xs font-black uppercase tracking-[0.12em] text-[#3b2a14] shadow-[0_3px_0_#3b2a14] transition active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14] disabled:cursor-not-allowed disabled:bg-[#d8cfaa] disabled:text-[#746850] disabled:shadow-none"
       >
-        <PixelGlyph name="sparkle" className="size-4" />
         {isGenerating ? "Generating..." : hasReport ? "Refresh AI" : "Generate AI"}
       </button>
       {!hasBackupModelKey ? (
