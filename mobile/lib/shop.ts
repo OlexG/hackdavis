@@ -67,3 +67,30 @@ export type ShopSnapshot = {
 export async function fetchShopSnapshot() {
   return apiFetch<ShopSnapshot>("/api/shop/display");
 }
+
+export type UploadedShopImage = {
+  imageId: string;
+  imageUrl: string;
+  contentType: string;
+  size: number;
+};
+
+export async function uploadShopImage(input: {
+  inventoryItemId: string;
+  uri: string;
+  fileName: string;
+  mimeType: string;
+}) {
+  const formData = new FormData();
+  formData.append("inventoryItemId", input.inventoryItemId);
+  formData.append("file", {
+    uri: input.uri,
+    name: input.fileName,
+    type: input.mimeType,
+  } as unknown as Blob);
+
+  return apiFetch<UploadedShopImage>("/api/shop/display/image", {
+    method: "POST",
+    body: formData,
+  });
+}
