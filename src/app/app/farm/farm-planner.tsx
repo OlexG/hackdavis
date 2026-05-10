@@ -77,6 +77,9 @@ export function FarmPlanner() {
   const finishDraftFromPointsRef = useRef<(points: LocalPoint[]) => void>(() => {});
   const pointerRef = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
   const hitCycleRef = useRef<{ key: string; index: number; world: LocalPoint } | null>(null);
+  const [satellite, setSatellite] = useState<{ image: HTMLImageElement; localWidth: number; localHeight: number } | null>(null);
+  const satelliteRef = useRef(satellite);
+  satelliteRef.current = satellite;
   const [plans, setPlans] = useState<SavedFarmV2Plan[]>([]);
   const [activePlan, setActivePlan] = useState<SavedFarmV2Plan | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -146,7 +149,7 @@ export function FarmPlanner() {
         // Substitute the displayed objects without touching live state.
         return { ...plan, objects: viewedObjects(plan) };
       },
-      () => ({ draft, mouse, drawType: drawTypeRef.current }),
+      () => ({ draft, mouse, drawType: drawTypeRef.current, satellite: satelliteRef.current }),
     );
     rendererRef.current = renderer;
     return () => {
@@ -155,6 +158,54 @@ export function FarmPlanner() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePlan, draft, mouse]);
+
+  // Fetch a satellite image of the boundary's geographic bbox when the user
+  // flips to Satellite view. The image is cached by geo signature so toggling
+  // back and forth doesn't re-fetch.
+  useEffect(() => {
+    if (!activePlan || activePlan.view !== "satellite") {
+      return;
+    }
+    const geo = activePlan.boundary.geo;
+    if (!geo || geo.length < 3) {
+      setSatellite(null);
+      return;
+    }
+    const lngs = geo.map((point) => point[0]);
+    const lats = geo.map((point) => point[1]);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const lngSpan = maxLng - minLng;
+    const latSpan = maxLat - minLat;
+    if (lngSpan <= 0 || latSpan <= 0) {
+      setSatellite(null);
+      return;
+    }
+    const midLat = ((minLat + maxLat) / 2) * (Math.PI / 180);
+    const feetPerDegLat = 364000;
+    const feetPerDegLng = Math.max(1, feetPerDegLat * Math.cos(midLat));
+    const localWidth = lngSpan * feetPerDegLng;
+    const localHeight = latSpan * feetPerDegLat;
+    const aspect = localHeight / localWidth;
+    const pixelWidth = 1024;
+    const pixelHeight = Math.max(64, Math.round(pixelWidth * aspect));
+    const url = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${minLng},${minLat},${maxLng},${maxLat}&bboxSR=4326&imageSR=4326&size=${pixelWidth},${pixelHeight}&format=png&f=image`;
+    let cancelled = false;
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => {
+      if (!cancelled) setSatellite({ image, localWidth, localHeight });
+    };
+    image.onerror = () => {
+      if (!cancelled) setSatellite(null);
+    };
+    image.src = url;
+    return () => {
+      cancelled = true;
+    };
+  }, [activePlan?.boundary.geo, activePlan?.view]);
 
   useEffect(() => {
     if (!playing || !activePlan?.commits.length) return;
@@ -469,47 +520,61 @@ export function FarmPlanner() {
           </div>
         </div>
         <div className="farmv2-toolbar">
-          <Segmented options={["select", "draw"]} value={mode} labels={{ select: "Select", draw: "Draw" }} onChange={(value) => setMode(value as InteractionMode)} />
-          <Segmented options={["cropArea", "cropField", "livestock", "structure", "path"]} value={drawType} labels={typeLabels} onChange={(value) => {
-            setDrawType(value as DrawType);
-            draftRef.current = [];
-            setDraft([]);
-            // Picking a draw type implies you want to draw — flip to Draw mode
-            // so the canvas is immediately in the right interaction state.
-            setMode("draw");
-          }} />
-          <button type="button" onClick={() => finishCurrentDraft()}>{drawType === "path" ? "Enter" : "Close"}</button>
-          <button type="button" onClick={() => {
-            draftRef.current = [];
-            setDraft([]);
-            setMouse(null);
-          }}>Clear</button>
+          <div className="farmv2-toolgroup">
+            <span className="farmv2-toolgroup-label">Mode</span>
+            <Segmented options={["select", "draw"]} value={mode} labels={{ select: "Select", draw: "Draw" }} onChange={(value) => setMode(value as InteractionMode)} />
+          </div>
+          <div className="farmv2-toolgroup">
+            <span className="farmv2-toolgroup-label">Draw</span>
+            <Segmented options={["cropArea", "cropField", "livestock", "structure", "path"]} value={drawType} labels={typeLabels} onChange={(value) => {
+              setDrawType(value as DrawType);
+              draftRef.current = [];
+              setDraft([]);
+              // Picking a draw type implies you want to draw — flip to Draw
+              // mode so the canvas is immediately in the right interaction state.
+              setMode("draw");
+            }} />
+            <button type="button" onClick={() => finishCurrentDraft()}>{drawType === "path" ? "Enter" : "Close"}</button>
+            <button type="button" onClick={() => {
+              draftRef.current = [];
+              setDraft([]);
+              setMouse(null);
+            }}>Clear</button>
+          </div>
         </div>
         <div className="farmv2-toolbar farmv2-toolbar-right">
           {error ? <span className="farmv2-error">{error}</span> : null}
-          <Segmented options={["grid", "satellite"]} value={activePlan?.view ?? "grid"} labels={{ grid: "Grid", satellite: "Satellite" }} onChange={(value) => updatePlan((plan) => ({ ...plan, view: value as "grid" | "satellite" }))} />
-          <Segmented options={["ft", "m"]} value={activePlan?.units ?? "ft"} labels={{ ft: "ft", m: "m" }} onChange={(value) => updatePlan((plan) => ({ ...plan, units: value as "ft" | "m" }))} />
-          <button type="button" onClick={() => updatePlan((plan) => {
-            const renderer = rendererRef.current;
-            if (!renderer) return plan;
-            const size = renderer.size();
-            const next = renderer.zoomAtScreenPoint({ x: size.width / 2, y: size.height / 2 }, -0.18, plan);
-            return { ...plan, camera: { ...plan.camera, ...next } };
-          })}>-</button>
-          <button type="button" onClick={() => updatePlan((plan) => {
-            const renderer = rendererRef.current;
-            if (!renderer) return plan;
-            const size = renderer.size();
-            const next = renderer.zoomAtScreenPoint({ x: size.width / 2, y: size.height / 2 }, 0.18, plan);
-            return { ...plan, camera: { ...plan.camera, ...next } };
-          })}>+</button>
-          <button type="button" onClick={() => updatePlan((plan) => {
-            const limits = rendererRef.current?.getZoomLimits();
-            const nextZoom = limits ? clamp(plan.camera.zoom, limits.min, limits.max) : plan.camera.zoom;
-            return { ...plan, camera: { ...plan.camera, rotation: (plan.camera.rotation + 90) % 360, zoom: nextZoom } };
-          })}>Rotate</button>
-          <button type="button" onClick={() => updatePlan((plan) => ({ ...plan, camera: { zoom: rendererRef.current?.getZoomLimits().min ?? 1, panX: 0, panY: -18, rotation: 0 } }))}>Reset</button>
-          <button type="button" onClick={() => setOnboardingOpen(true)}>Settings</button>
+          <div className="farmv2-toolgroup">
+            <span className="farmv2-toolgroup-label">View</span>
+            <Segmented options={["grid", "satellite"]} value={activePlan?.view ?? "grid"} labels={{ grid: "Grid", satellite: "Sat" }} onChange={(value) => updatePlan((plan) => ({ ...plan, view: value as "grid" | "satellite" }))} />
+            <Segmented options={["ft", "m"]} value={activePlan?.units ?? "ft"} labels={{ ft: "ft", m: "m" }} onChange={(value) => updatePlan((plan) => ({ ...plan, units: value as "ft" | "m" }))} />
+          </div>
+          <div className="farmv2-toolgroup">
+            <span className="farmv2-toolgroup-label">Camera</span>
+            <button type="button" aria-label="Zoom out" onClick={() => updatePlan((plan) => {
+              const renderer = rendererRef.current;
+              if (!renderer) return plan;
+              const size = renderer.size();
+              const next = renderer.zoomAtScreenPoint({ x: size.width / 2, y: size.height / 2 }, -0.18, plan);
+              return { ...plan, camera: { ...plan.camera, ...next } };
+            })}>−</button>
+            <button type="button" aria-label="Zoom in" onClick={() => updatePlan((plan) => {
+              const renderer = rendererRef.current;
+              if (!renderer) return plan;
+              const size = renderer.size();
+              const next = renderer.zoomAtScreenPoint({ x: size.width / 2, y: size.height / 2 }, 0.18, plan);
+              return { ...plan, camera: { ...plan.camera, ...next } };
+            })}>+</button>
+            <button type="button" onClick={() => updatePlan((plan) => {
+              const limits = rendererRef.current?.getZoomLimits();
+              const nextZoom = limits ? clamp(plan.camera.zoom, limits.min, limits.max) : plan.camera.zoom;
+              return { ...plan, camera: { ...plan.camera, rotation: (plan.camera.rotation + 90) % 360, zoom: nextZoom } };
+            })}>Rotate</button>
+            <button type="button" onClick={() => updatePlan((plan) => ({ ...plan, camera: { zoom: rendererRef.current?.getZoomLimits().min ?? 1, panX: 0, panY: -18, rotation: 0 } }))}>Reset</button>
+          </div>
+          <div className="farmv2-toolgroup">
+            <button type="button" onClick={() => setOnboardingOpen(true)}>Settings</button>
+          </div>
         </div>
       </header>
 
@@ -843,7 +908,12 @@ function Segmented({ options, value, labels, onChange }: { options: string[]; va
 function createFarmV2Renderer(
   canvas: HTMLCanvasElement,
   getPlan: () => SavedFarmV2Plan,
-  getDraft: () => { draft: LocalPoint[]; mouse: LocalPoint | null; drawType: DrawType },
+  getDraft: () => {
+    draft: LocalPoint[];
+    mouse: LocalPoint | null;
+    drawType: DrawType;
+    satellite: { image: HTMLImageElement; localWidth: number; localHeight: number } | null;
+  },
 ): FarmV2Renderer {
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canvas unavailable");
@@ -1419,6 +1489,7 @@ function createFarmV2Renderer(
     gradient.addColorStop(1, "#101511");
     context.fillStyle = gradient;
     context.fillRect(0, 0, logicalWidth, logicalHeight);
+    const viewExtras = getDraft();
     drawPolygon(plan.boundary.local, plan.view === "satellite" ? "#5c7c4c" : "#496b47", "#203029", 0);
     // Clip ground textures to the boundary so grid lines / terrain patches
     // never spill onto the dark backdrop.
@@ -1431,8 +1502,28 @@ function createFarmV2Renderer(
     boundaryClip.closePath();
     context.save();
     context.clip(boundaryClip);
-    if (plan.view === "satellite") drawTerrainPatches(plan.boundary.local);
-    else drawGridLines(plan.boundary.local);
+    if (plan.view === "satellite") {
+      const sat = viewExtras.satellite;
+      if (sat) {
+        // Affine-warp the satellite raster onto the iso board: image (0,0)
+        // maps to local (0,0), (W,0) → (localWidth, 0), (0,H) → (0, localHeight).
+        const pNW = project([0, 0], 0.04);
+        const pNE = project([sat.localWidth, 0], 0.04);
+        const pSW = project([0, sat.localHeight], 0.04);
+        const a = (pNE.x - pNW.x) / sat.image.width;
+        const b = (pNE.y - pNW.y) / sat.image.width;
+        const c = (pSW.x - pNW.x) / sat.image.height;
+        const d = (pSW.y - pNW.y) / sat.image.height;
+        context.save();
+        context.transform(a, b, c, d, pNW.x, pNW.y);
+        context.drawImage(sat.image, 0, 0);
+        context.restore();
+      } else {
+        drawTerrainPatches(plan.boundary.local);
+      }
+    } else {
+      drawGridLines(plan.boundary.local);
+    }
     context.restore();
     drawFence(plan.boundary.local, "#d4b16b", 0.25);
     // Sort objects per legacy: paths first (lowest layer), then crop areas,
@@ -1507,7 +1598,7 @@ function createFarmV2Renderer(
       context.textAlign = "center";
       context.fillText(object.label.slice(0, 18), p.x, p.y - 5);
     });
-    const { draft, mouse, drawType } = getDraft();
+    const { draft, mouse, drawType } = viewExtras;
     if (draft.length || mouse) {
       const points = mouse ? [...draft, mouse] : draft;
       const isPath = drawType === "path";
@@ -1688,7 +1779,11 @@ function formatError(error: unknown) {
 function FarmV2Styles() {
   return (
     <style jsx global>{`
-      .farmv2-shell{--panel:rgba(21,29,26,.9);--border:rgba(218,229,206,.16);--text:#edf4e7;--muted:#9fb09f;--accent:#f0c35a;position:relative;display:grid;grid-template-rows:auto 1fr auto;height:calc(100vh - 7rem);min-height:720px;overflow:hidden;border:1px solid var(--border);border-radius:8px;background:#111714;color:var(--text)}
+      .farmv2-shell{--panel:rgba(21,29,26,.86);--border:rgba(218,229,206,.16);--text:#edf4e7;--muted:#9fb09f;--accent:#f0c35a;position:absolute;inset:0;display:grid;grid-template-rows:auto 1fr auto;overflow:hidden;background:#111714;color:var(--text)}
+      .farmv2-toolgroup{display:flex;align-items:center;gap:6px;padding:0 6px;border-right:2px dashed #c9b88a}
+      .farmv2-toolgroup:last-child{border-right:0}
+      .farmv2-toolgroup-label{display:none}
+      @media(min-width:1180px){.farmv2-toolgroup-label{display:block;align-self:center;color:#7a6843;font-family:var(--font-geist-mono),ui-monospace,monospace;font-size:9px;font-weight:900;letter-spacing:.16em;text-transform:uppercase;padding-right:2px}}
       .farmv2-shell button,.farmv2-shell input,.farmv2-shell select{font:inherit}
       .farmv2-shell button{height:34px;min-width:38px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.07);color:var(--text);cursor:pointer}
       .farmv2-shell button:hover{background:rgba(255,255,255,.12)}

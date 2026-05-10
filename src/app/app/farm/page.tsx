@@ -7,5 +7,12 @@ export const metadata: Metadata = {
 };
 
 export default function FarmPage() {
-  return <FarmPlanner />;
+  // Escape the app-shell's p-6 padding so the planner is full-bleed across
+  // the entire content area (sidebar untouched). The shell itself uses
+  // position:absolute;inset:0 against the relative #app-main parent.
+  return (
+    <div className="-m-6">
+      <FarmPlanner />
+    </div>
+  );
 }
