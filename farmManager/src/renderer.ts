@@ -52,15 +52,22 @@ export function init(targetCanvas: HTMLCanvasElement): () => void {
   }
 
 export function resize(): void {
+    const previousWidth = logicalWidth;
+    const previousHeight = logicalHeight;
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(rect.width * dpr);
     canvas.height = Math.round(rect.height * dpr);
-    canvas.style.width = `${rect.width}px`;
-    canvas.style.height = `${rect.height}px`;
+    canvas.style.width = rect.width + "px";
+    canvas.style.height = rect.height + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     logicalWidth = rect.width;
     logicalHeight = rect.height;
+
+    if (previousWidth > 0 && previousHeight > 0) {
+      state.panX += (logicalWidth - previousWidth) * 0.01;
+      state.panY += (logicalHeight - previousHeight) * 0.52;
+    }
   }
 
 export function project(point: Point, height = 0): ScreenPoint {
