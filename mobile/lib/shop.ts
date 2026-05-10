@@ -32,6 +32,7 @@ export type InventoryViewItem = {
 export type ShopDisplaySlotView = {
   id: string;
   inventoryItemId: string;
+  listingId: string;
   position: number;
   displayAmount: number;
   displayUnit: string;
@@ -71,6 +72,7 @@ export async function fetchShopSnapshot() {
 export type UploadedShopImage = {
   imageId: string;
   imageUrl: string;
+  listingId: string;
   contentType: string;
   size: number;
 };
@@ -80,9 +82,13 @@ export async function uploadShopImage(input: {
   uri: string;
   fileName: string;
   mimeType: string;
+  listingId?: string;
 }) {
   const formData = new FormData();
   formData.append("inventoryItemId", input.inventoryItemId);
+  if (input.listingId) {
+    formData.append("listingId", input.listingId);
+  }
   formData.append("file", {
     uri: input.uri,
     name: input.fileName,

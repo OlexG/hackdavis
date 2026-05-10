@@ -767,7 +767,7 @@ function ShopScreen({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
-  const [imageOverrides, setImageOverrides] = useState<Record<string, { imageId: string; imageUrl: string }>>({});
+  const [imageOverrides, setImageOverrides] = useState<Record<string, { imageId: string; imageUrl: string; listingId: string }>>({});
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
   const slots = useMemo(
@@ -820,6 +820,7 @@ function ShopScreen({
       setUploadingItemId(slot.inventoryItemId);
       const uploaded = await uploadShopImage({
         inventoryItemId: slot.inventoryItemId,
+        listingId: slot.listingId,
         uri: asset.uri,
         fileName: asset.fileName ?? buildShopImageFileName(slot, mimeType),
         mimeType,
@@ -827,7 +828,11 @@ function ShopScreen({
 
       setImageOverrides((current) => ({
         ...current,
-        [slot.inventoryItemId]: { imageId: uploaded.imageId, imageUrl: uploaded.imageUrl },
+        [slot.inventoryItemId]: {
+          imageId: uploaded.imageId,
+          imageUrl: uploaded.imageUrl,
+          listingId: uploaded.listingId,
+        },
       }));
     } catch (error) {
       setImageError(error instanceof Error ? error.message : "Unable to update shop image");

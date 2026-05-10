@@ -263,7 +263,7 @@ function buildShopSlots(
       continue;
     }
 
-    slots.push(toShopSlotView(item, undefined, slots.length));
+    slots.push(toShopSlotView(item, offeringByItemId.get(item.id), slots.length));
   }
 
   return slots.map((slot, index) => ({ ...slot, position: index }));
@@ -852,6 +852,17 @@ export async function uploadShopImage({
         $set: {
           imageId: uploadStream.id,
           imageMimeType: mimeType,
+          updatedAt: new Date(),
+        },
+      },
+    ),
+    db.collection<ShopDisplay>("shop_displays").updateOne(
+      { userId: currentUser.userId, "slots.inventoryItemId": item._id },
+      {
+        $set: {
+          "slots.$.listingId": normalizedListingId,
+          "slots.$.imageId": uploadStream.id,
+          "slots.$.imageMimeType": mimeType,
           updatedAt: new Date(),
         },
       },
