@@ -226,6 +226,33 @@ export type FarmReview = {
   updatedAt: Date;
 };
 
+export type SocialOfferStatus = "sent" | "accepted" | "declined" | "cancelled";
+
+export type SocialOffer = {
+  _id: ObjectId;
+  farmUserId: ObjectId;
+  senderUserId: ObjectId;
+  senderName: string;
+  inventoryItemId?: ObjectId;
+  itemName: string;
+  quantity: string;
+  priceCents?: number;
+  message: string;
+  status: SocialOfferStatus;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type PushDeviceToken = {
+  _id: ObjectId;
+  userId: ObjectId;
+  token: string;
+  platform?: string;
+  deviceName?: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type Farm = {
   _id: ObjectId;
   userId?: ObjectId;

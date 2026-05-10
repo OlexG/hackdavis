@@ -497,10 +497,12 @@ function ShopDetailsEditor({
 
   return (
     <div className="grid gap-2 bg-[#fffaf0] p-3">
-      <div className="grid gap-2 lg:grid-cols-2">
-        <SimpleDetailEditor field={shopNameField} details={details} onChange={onChange} />
-        <SimpleDetailEditor field={contactField} details={details} onChange={onChange} />
-      </div>
+      <ShopIdentityCard
+        shopNameField={shopNameField}
+        contactField={contactField}
+        details={details}
+        onChange={onChange}
+      />
 
       <div style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }} className={cardClass}>
         <HoursSelector
@@ -565,6 +567,79 @@ function SimpleDetailEditor({
           className="h-9 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
         />
       )}
+    </label>
+  );
+}
+
+function ShopIdentityCard({
+  shopNameField,
+  contactField,
+  details,
+  onChange,
+}: {
+  shopNameField: SimpleDetailField;
+  contactField: SimpleDetailField;
+  details: ShopDetails;
+  onChange: (patch: Partial<ShopDetails>) => void;
+}) {
+  return (
+    <section
+      style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
+      className="pixel-frame border-2 border-[#c9b88a] bg-[#fffdf5] shadow-[0_2px_0_#b29c66]"
+    >
+      <header className="flex items-center gap-2 border-b-2 border-[#c9b88a] bg-[#fff3cf] px-3 py-1.5">
+        <span className="grid size-6 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#ffe89a] text-[#5e4a26] shadow-[0_1px_0_#3b2a14]">
+          <PixelGlyph name="leaf" className="size-3.5" />
+        </span>
+        <h3 className="font-mono text-[10px] font-black uppercase tracking-[0.16em] text-[#5e4a26]">
+          Shop identity
+        </h3>
+      </header>
+      <div className="grid gap-2 px-3 py-2.5 sm:grid-cols-[2fr_1.4fr] sm:gap-3">
+        <IdentityField
+          label={shopNameField.label}
+          glyph={shopNameField.glyph}
+          value={details.shopName}
+          placeholder="e.g. Oleks farm"
+          onChange={(value) => onChange({ shopName: value })}
+        />
+        <IdentityField
+          label={contactField.label}
+          glyph={contactField.glyph}
+          value={details.contact}
+          placeholder="phone, email, or @handle"
+          onChange={(value) => onChange({ contact: value })}
+        />
+      </div>
+    </section>
+  );
+}
+
+function IdentityField({
+  label,
+  glyph,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  glyph: DetailGlyph;
+  value: string;
+  placeholder?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="grid min-w-0 gap-1">
+      <span className="flex items-center gap-1.5 font-mono text-[10px] font-black uppercase tracking-[0.12em] text-[#7a6843]">
+        <PixelGlyph name={glyph} className="size-3.5" />
+        {label}
+      </span>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="h-9 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-sm font-bold text-[#365833] outline-none transition placeholder:font-normal placeholder:text-[#b29c66] focus:border-[#9bb979] focus:bg-[#fffdf5]"
+      />
     </label>
   );
 }
