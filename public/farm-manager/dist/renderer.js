@@ -7,6 +7,8 @@ const HEIGHT_SCALE = 5.2;
 const BOARD_WIDTH = 108;
 const BOARD_HEIGHT = 82;
 const BOARD_CENTER = [BOARD_WIDTH / 2, BOARD_HEIGHT / 2];
+const FIT_PADDING = 1.14;
+const FIT_VERTICAL_TARGET = 0.62;
 const palette = {
     cropArea: "#496b47",
     cropAreaSide: "#314c37",
@@ -29,30 +31,43 @@ let logicalWidth = 0;
 let logicalHeight = 0;
 let animationFrame = 0;
 let isRendering = false;
+let resizeObserver = null;
 export function init(targetCanvas) {
     canvas = targetCanvas;
     ctx = canvas.getContext("2d");
     isRendering = true;
     window.addEventListener("resize", resize);
+    if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver(() => resize());
+        resizeObserver.observe(canvas);
+        if (canvas.parentElement)
+            resizeObserver.observe(canvas.parentElement);
+    }
     resize();
     animationFrame = requestAnimationFrame(render);
     return () => {
         isRendering = false;
         window.removeEventListener("resize", resize);
+        resizeObserver?.disconnect();
+        resizeObserver = null;
         cancelAnimationFrame(animationFrame);
         canvas = null;
         ctx = null;
     };
 }
 export function resize() {
+    if (!canvas || !ctx)
+        return;
     const previousWidth = logicalWidth;
     const previousHeight = logicalHeight;
     const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0)
+        return;
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(rect.width * dpr);
     canvas.height = Math.round(rect.height * dpr);
-    canvas.style.width = rect.width + "px";
-    canvas.style.height = rect.height + "px";
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     logicalWidth = rect.width;
     logicalHeight = rect.height;
@@ -127,7 +142,7 @@ function projectedBoundaryBounds(zoom = 1) {
 }
 export function getZoomLimits() {
     const size = projectedBoundaryBounds(1);
-    const minZoom = Math.min(logicalWidth / Math.max(1, size.width * 1.25), logicalHeight / Math.max(1, size.height * 1.25));
+    const minZoom = Math.min(logicalWidth / Math.max(1, size.width * FIT_PADDING), logicalHeight / Math.max(1, size.height * FIT_PADDING));
     const transform = getWorldTransform();
     const base25Feet = 25 * transform.scale * Math.hypot(TILE_X, TILE_Y);
     const maxZoom = Math.max(minZoom * 1.4, (Math.min(logicalWidth, logicalHeight) * 0.65) / Math.max(1, base25Feet));
@@ -142,7 +157,7 @@ export function getCenteredPan(zoom = state.zoom) {
     const boundaryCenterY = (bounds.minY + bounds.maxY) / 2;
     return {
         x: logicalWidth * 0.5 - logicalWidth * 0.49 - boundaryCenterX,
-        y: logicalHeight * 0.52 - 92 - boundaryCenterY
+        y: logicalHeight * FIT_VERTICAL_TARGET - 92 - boundaryCenterY
     };
 }
 function render() {

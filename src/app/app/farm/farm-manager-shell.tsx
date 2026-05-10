@@ -93,6 +93,12 @@ type FarmCatalog = {
   structures: Array<{ key: string; name: string }>;
 };
 
+type CatalogSearchItem = {
+  key: string;
+  name: string;
+  subtitle?: string;
+};
+
 type FarmManagerContentState = {
   selectedObject: FarmObject | null;
   objects: FarmObject[];
@@ -892,17 +898,20 @@ function ObjectDetails({ object, content, actions }: { object: FarmObject; conte
           <DetailItem label="Harvest cycles" value={formatNumber(crop?.harvestCycles ?? numberAttr(object, "harvestCycles"), "Unknown")} />
         </div>
         {capacity.isOver ? <CapacityWarning message={`Over recommended density by ${capacity.overBy} ${capacity.overBy === 1 ? "plant" : "plants"}.`} /> : null}
-        <div className="detail-list">
-          <span>Crop type</span>
-          <label className="select-shell">
-            <select value={stringAttr(object, "cropKey")} onChange={(event) => handleCropSelect(event.target.value, actions)}>
-              <option value="">Unassigned</option>
-              {stringAttr(object, "cropKey") === "custom" ? <option value="custom">Custom: {stringAttr(object, "cropName")}</option> : null}
-              {content.catalog.crops.map((crop) => <option key={crop.key} value={crop.key}>{crop.name}</option>)}
-              <option value="__custom">Custom crop...</option>
-            </select>
-          </label>
-        </div>
+        <CatalogSearchPicker
+          label="Crop type"
+          placeholder="Search crops..."
+          selectedName={crop ? crop.name : stringAttr(object, "cropName")}
+          items={content.catalog.crops.map((item) => ({
+            key: item.key,
+            name: item.name,
+            subtitle: [item.cropCategory, item.scientificName].filter(Boolean).join(" - "),
+          }))}
+          customLabel="Custom crop"
+          onClear={() => actions?.setCropType("")}
+          onCustom={(name) => actions?.setCustomCropName(name)}
+          onSelect={(key) => actions?.setCropType(key)}
+        />
         <CatalogGuidance
           title={crop ? crop.name : stringAttr(object, "cropName") || "Custom crop"}
           subtitle={crop?.scientificName || crop?.cropCategory || "No catalog match"}
@@ -949,17 +958,20 @@ function ObjectDetails({ object, content, actions }: { object: FarmObject; conte
           <DetailItem label="Yield types" value={species?.yieldTypes?.join(", ") || "Unknown"} />
         </div>
         {capacity.isOver ? <CapacityWarning message={`Over recommended density by ${capacity.overBy} ${capacity.overBy === 1 ? "animal" : "animals"}.`} /> : null}
-        <div className="detail-list">
-          <span>Livestock type</span>
-          <label className="select-shell">
-            <select value={species?.key ?? stringAttr(object, "speciesKey")} onChange={(event) => handleLivestockSelect(event.target.value, actions)}>
-              <option value="">Unassigned</option>
-              {stringAttr(object, "speciesKey") === "custom" ? <option value="custom">Custom: {stringAttr(object, "species")}</option> : null}
-              {content.catalog.livestock.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
-              <option value="__custom">Custom livestock...</option>
-            </select>
-          </label>
-        </div>
+        <CatalogSearchPicker
+          label="Livestock type"
+          placeholder="Search livestock..."
+          selectedName={species ? species.name : stringAttr(object, "species")}
+          items={content.catalog.livestock.map((item) => ({
+            key: item.key,
+            name: item.name,
+            subtitle: item.description,
+          }))}
+          customLabel="Custom livestock"
+          onClear={() => actions?.setLivestockSpecies("")}
+          onCustom={(name) => actions?.setCustomLivestockName(name)}
+          onSelect={(key) => actions?.setLivestockSpecies(key)}
+        />
         <div className="detail-list">
           <span>Breed</span>
           <label className="select-shell">
@@ -1008,6 +1020,136 @@ function ObjectDetails({ object, content, actions }: { object: FarmObject; conte
 
 function DetailItem({ label, value }: { label: string; value: string }) {
   return <div className="detail-item"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function CatalogSearchPicker({
+  label,
+  placeholder,
+  selectedName,
+  items,
+  customLabel,
+  onSelect,
+  onCustom,
+  onClear,
+}: {
+  label: string;
+  placeholder: string;
+  selectedName: string;
+  items: CatalogSearchItem[];
+  customLabel: string;
+  onSelect: (key: string) => void;
+  onCustom: (name: string) => void;
+  onClear: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const trimmedQuery = query.trim();
+  const normalizedQuery = trimmedQuery.toLowerCase();
+  const matches = items
+    .filter((item) => {
+      if (!normalizedQuery) return true;
+      return `${item.name} ${item.subtitle ?? ""}`.toLowerCase().includes(normalizedQuery);
+    })
+    .slice(0, 10);
+  const exactMatch = items.some((item) => item.name.toLowerCase() === normalizedQuery);
+  const inputValue = open ? query : selectedName;
+
+  function selectItem(key: string) {
+    onSelect(key);
+    setQuery("");
+    setOpen(false);
+  }
+
+  function useCustomName(name: string) {
+    const nextName = name.trim();
+    if (!nextName) return;
+    onCustom(nextName);
+    setQuery("");
+    setOpen(false);
+  }
+
+  return (
+    <div className="detail-list catalog-search">
+      <span>{label}</span>
+      <div className="catalog-search-box">
+        <input
+          type="search"
+          value={inputValue}
+          placeholder={placeholder}
+          onBlur={() => setOpen(false)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => {
+            setQuery("");
+            setOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setQuery("");
+              setOpen(false);
+            }
+            if (event.key === "Enter") {
+              event.preventDefault();
+              if (matches[0]) selectItem(matches[0].key);
+              else useCustomName(trimmedQuery);
+            }
+          }}
+        />
+        {open ? (
+          <div className="catalog-search-menu">
+            <button
+              type="button"
+              className="catalog-search-option muted"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                onClear();
+                setQuery("");
+                setOpen(false);
+              }}
+            >
+              <strong>Unassigned</strong>
+              <em>clear selection</em>
+            </button>
+            {matches.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className="catalog-search-option"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  selectItem(item.key);
+                }}
+              >
+                <strong>{item.name}</strong>
+                {item.subtitle ? <em>{truncateText(item.subtitle, 78)}</em> : null}
+              </button>
+            ))}
+            {trimmedQuery && !exactMatch ? (
+              <button
+                type="button"
+                className="catalog-search-option custom"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  useCustomName(trimmedQuery);
+                }}
+              >
+                <strong>{customLabel}</strong>
+                <em>{trimmedQuery}</em>
+              </button>
+            ) : null}
+            {!matches.length && !trimmedQuery ? (
+              <div className="catalog-search-empty">Start typing to filter results</div>
+            ) : null}
+            {!matches.length && trimmedQuery && exactMatch ? (
+              <div className="catalog-search-empty">No additional matches</div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function CapacityWarning({ message }: { message: string }) {
@@ -1123,26 +1265,6 @@ function stringAttr(object: FarmObject, key: string) {
 function numberAttr(object: FarmObject, key: string) {
   const value = Number(object.attrs[key]);
   return Number.isFinite(value) ? value : 0;
-}
-
-function handleCropSelect(value: string, actions?: FarmManagerActions) {
-  if (value === "__custom") {
-    const name = window.prompt("Crop name");
-    if (name?.trim()) actions?.setCustomCropName(name.trim());
-    return;
-  }
-
-  if (value !== "custom") actions?.setCropType(value);
-}
-
-function handleLivestockSelect(value: string, actions?: FarmManagerActions) {
-  if (value === "__custom") {
-    const name = window.prompt("Livestock name");
-    if (name?.trim()) actions?.setCustomLivestockName(name.trim());
-    return;
-  }
-
-  if (value !== "custom") actions?.setLivestockSpecies(value);
 }
 
 function getCapacityStatus({ area, count, idealSpace }: { area: number; count: number; idealSpace: number }) {
