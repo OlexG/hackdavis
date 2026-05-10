@@ -852,9 +852,14 @@ function listingImage(name, category, fallbackImage) {
   const slug = slugify(name);
 
   return {
-    key: `listing-v3-${slug}`,
+    key: `listing-v4-${slug}`,
     fileName: `${slug}.jpg`,
-    searchQuery: `${imageSearchTerm(name, category)} ${name} farm stand`,
+    searchQueries: [
+      `${name} farm stand`,
+      `${imageSearchTerm(name, category)} farm stand`,
+      `${imageSearchTerm(name, category)} farmers market`,
+      imageSearchTerm(name, category),
+    ],
     fallbackDownloadUrl: fallbackImage?.downloadUrl,
     fallbackSourcePage: fallbackImage?.sourcePage,
   };
@@ -865,11 +870,11 @@ function imageSearchTerm(name, category) {
 
   if (normalized.includes("egg")) return "fresh eggs carton";
   if (normalized.includes("mushroom")) return "fresh mushrooms";
-  if (normalized.includes("strawberr") || normalized.includes("berry")) return "fresh strawberries";
-  if (normalized.includes("tomato") || normalized.includes("salsa") || normalized.includes("chutney")) return "fresh tomatoes";
-  if (normalized.includes("lettuce") || normalized.includes("kale") || normalized.includes("greens") || normalized.includes("salad")) return "fresh lettuce greens";
+  if (normalized.includes("strawberr") || normalized.includes("berry")) return "strawberries";
+  if (normalized.includes("tomato") || normalized.includes("salsa") || normalized.includes("chutney")) return "tomatoes";
+  if (normalized.includes("lettuce") || normalized.includes("kale") || normalized.includes("greens") || normalized.includes("salad")) return "lettuce greens";
   if (normalized.includes("cilantro") || normalized.includes("basil") || normalized.includes("herb") || normalized.includes("sage") || normalized.includes("rosemary") || normalized.includes("thyme")) return "fresh herbs";
-  if (normalized.includes("flower") || normalized.includes("posies") || normalized.includes("bouquet") || normalized.includes("marigold")) return "garden flowers";
+  if (normalized.includes("flower") || normalized.includes("posies") || normalized.includes("bouquet") || normalized.includes("marigold")) return "flowers";
   if (normalized.includes("pepper")) return "fresh peppers";
   if (normalized.includes("jam") || normalized.includes("sauce") || normalized.includes("shrub") || normalized.includes("salt")) return "homemade jam jars";
   if (category === "preserves") return "preserve jars";
@@ -926,15 +931,24 @@ async function ensureSeedShopImage(db, userId, inventoryItemId, image) {
 }
 
 async function resolveSeedImage(image) {
-  if (!image.searchQuery) {
+  if (!image.searchQueries?.length) {
     return image;
   }
 
-  const results = await searchUnsplashPhotos(image.searchQuery);
-  const result =
-    results.find((photo) => !usedUnsplashPhotoIds.has(photo.id) && !usedUnsplashSourceUrls.has(photo.urls?.raw)) ??
-    results.find((photo) => !usedUnsplashSourceUrls.has(photo.urls?.raw)) ??
-    results[0];
+  let result = null;
+  let fallbackResult = null;
+
+  for (const query of image.searchQueries) {
+    const results = await searchUnsplashPhotos(query);
+    fallbackResult ??= results[0] ?? null;
+    result = results.find((photo) => !usedUnsplashPhotoIds.has(photo.id) && !usedUnsplashSourceUrls.has(photo.urls?.raw));
+
+    if (result) {
+      break;
+    }
+  }
+
+  result ??= fallbackResult;
 
   if (!result) {
     return {

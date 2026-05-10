@@ -76,7 +76,7 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
 
   if (selectedFarm) {
     return (
-      <div className="mx-auto grid w-full max-w-5xl gap-3">
+      <div className="mx-auto grid h-full min-h-0 w-full max-w-5xl grid-rows-[auto_1fr] gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <button
             type="button"
@@ -96,11 +96,15 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
           </div>
         </div>
 
-        <PublicShopfrontPreview snapshot={selectedFarm.snapshot} />
-        <ReviewPanel
-          farm={selectedFarm}
-          onReviewPosted={(review, created) => addReview(selectedFarm.userId, review, created)}
-        />
+        <div className="min-h-0 overflow-y-auto pr-1">
+          <div className="grid gap-3 pb-1">
+            <PublicShopfrontPreview snapshot={selectedFarm.snapshot} />
+            <ReviewPanel
+              farm={selectedFarm}
+              onReviewPosted={(review, created) => addReview(selectedFarm.userId, review, created)}
+            />
+          </div>
+        </div>
       </div>
     );
   }
@@ -112,12 +116,12 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
   );
 
   return (
-    <div className="mx-auto w-full max-w-6xl">
+    <div className="mx-auto h-full min-h-0 w-full max-w-6xl">
       <section
         style={{ ["--pixel-frame-bg" as string]: "#fbf6e8" }}
-        className="pixel-frame overflow-hidden rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] shadow-[0_4px_0_#3b2a14]"
+        className="pixel-frame flex h-full min-h-0 flex-col overflow-hidden rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] shadow-[0_4px_0_#3b2a14]"
       >
-        <div className="pixel-gradient-meadow border-b-2 border-[#3b2a14] p-4">
+        <div className="pixel-gradient-meadow shrink-0 border-b-2 border-[#3b2a14] p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <span className="grid size-12 shrink-0 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#fff8dc] text-[#c95b76] shadow-[0_2px_0_#3b2a14]">
@@ -139,7 +143,7 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
         </div>
 
         {view === "list" ? (
-          <div className="grid gap-5 bg-[#fcf6e4] p-4 md:grid-cols-2 md:gap-6 xl:grid-cols-3">
+          <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto bg-[#fcf6e4] p-4 md:grid-cols-2 md:gap-6 xl:grid-cols-3">
             {farms.map((farm) => (
               <FarmCard
                 key={farm.userId}
@@ -150,11 +154,13 @@ export function SocialBoard({ snapshot }: { snapshot: SocialSnapshot }) {
             ))}
           </div>
         ) : (
-          <FarmsMapView
-            farms={farmsWithCoords}
-            allFarmsCount={farms.length}
-            onSelect={(userId) => setSelectedUserId(userId)}
-          />
+          <div className="min-h-0 flex-1 overflow-y-auto bg-[#fcf6e4]">
+            <FarmsMapView
+              farms={farmsWithCoords}
+              allFarmsCount={farms.length}
+              onSelect={(userId) => setSelectedUserId(userId)}
+            />
+          </div>
         )}
       </section>
     </div>

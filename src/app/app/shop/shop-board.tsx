@@ -115,12 +115,6 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
       return;
     }
 
-    if (!dragged.imageId) {
-      flashAction(`Add a photo of ${dragged.item.name} before placing it on the stand.`);
-      setDraggedItemId(null);
-      return;
-    }
-
     markEdited();
     setSlots((current) => reorderSlots(current, draggedItemId, targetItemId, true));
     setDraggedItemId(null);
@@ -156,11 +150,6 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
     const slot = findSlot(itemId);
 
     if (!slot) {
-      return;
-    }
-
-    if (!slot.imageId) {
-      flashAction(`Add a photo of ${slot.item.name} first — every farm-stand item needs one.`);
       return;
     }
 
@@ -853,7 +842,7 @@ function BackStockPanel({
             Back Stock
           </div>
           <div className="text-[10px] font-semibold text-[#7a6843]">
-            Add a photo · drag onto the shelf when ready
+            Drag onto the shelf when ready
           </div>
         </div>
         <span className="ml-auto rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] px-2 py-0.5 font-mono text-xs font-bold text-[#5e4a26] shadow-[0_1px_0_#3b2a14]">
@@ -1046,18 +1035,12 @@ function BackStockCard({
   onMoveToShelf: () => void;
   onUpload: (itemId: string, file: File) => Promise<void>;
 }) {
-  const ready = Boolean(slot.imageId);
-
   return (
     <div
-      draggable={ready}
-      onDragStart={() => ready && onDragStart(slot.inventoryItemId)}
+      draggable
+      onDragStart={() => onDragStart(slot.inventoryItemId)}
       style={{ ["--pixel-frame-bg" as string]: "#fcf6e4" }}
-      className={`pixel-frame grid gap-2 rounded-none border-2 p-2 shadow-[0_2px_0_#b29c66] ${
-        ready
-          ? "cursor-grab border-[#c9b88a] bg-[#fffdf5]"
-          : "cursor-default border-[#d8a05a] bg-[#fff7e3]"
-      }`}
+      className="pixel-frame grid cursor-grab gap-2 rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-2 shadow-[0_2px_0_#b29c66] active:cursor-grabbing"
     >
       <ImageSlot
         slot={slot}
@@ -1077,15 +1060,10 @@ function BackStockCard({
       <button
         type="button"
         onClick={onMoveToShelf}
-        disabled={!ready}
-        className={`flex h-8 items-center justify-center gap-1.5 rounded-none border-2 font-mono text-[11px] font-black uppercase tracking-[0.1em] shadow-[0_2px_0_#3b2a14] transition active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14] ${
-          ready
-            ? "border-[#3b2a14] bg-[#fff3cf] text-[#5e4a26] hover:bg-[#ffe89a]"
-            : "cursor-not-allowed border-[#a8916a] bg-[#f1e4c2] text-[#7a6843] opacity-70"
-        }`}
+        className="flex h-8 items-center justify-center gap-1.5 rounded-none border-2 border-[#3b2a14] bg-[#fff3cf] font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#5e4a26] shadow-[0_2px_0_#3b2a14] transition hover:bg-[#ffe89a] active:translate-y-0.5 active:shadow-[0_1px_0_#3b2a14]"
       >
         <PixelGlyph name="wagon" className="size-3.5" />
-        {ready ? "Send to shelf" : "Add a photo first"}
+        Send to shelf
       </button>
     </div>
   );

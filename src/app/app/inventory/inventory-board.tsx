@@ -4,7 +4,8 @@ import Image from "next/image";
 import type { DragEvent } from "react";
 import { useMemo, useState } from "react";
 import { PixelGlyph, type PixelGlyphName } from "../_components/icons";
-import type { InventoryViewItem } from "@/lib/inventory";
+import type { InventoryPlanOutput, InventoryViewItem } from "@/lib/inventory";
+import { yieldForecastDragType } from "./drag-types";
 
 type InventoryColumn = "sell" | "need";
 
@@ -15,6 +16,11 @@ type InputPlan = {
   currentDate: string;
   objectsCount: number;
   summary: string;
+};
+
+type InventoryItemResponse = {
+  item?: InventoryViewItem;
+  error?: string;
 };
 
 const categoryLabels: Record<InventoryViewItem["category"], string> = {
@@ -128,16 +134,45 @@ export function InventoryBoard({ initialItems }: { initialItems: InventoryViewIt
     }
   }
 
-  function moveItem(id: string, column: InventoryColumn) {
-    moveItemInState(id, column);
+  async function moveItem(id: string, column: InventoryColumn, targetId?: string) {
+    const currentItem = items.find((item) => item.id === id);
+    if (!currentItem) {
+      return;
+    }
+
+    const patch = columnToPatch(column);
+    moveItemInState(id, column, targetId);
+
+    if (!isPersistedInventoryId(id)) {
+      return;
+    }
+
+    setDeleteError(null);
+
+    try {
+      const saved = await patchInventoryItem(id, patch);
+      setItems((current) => mergeInventoryItems(current, [saved]));
+    } catch (error) {
+      setDeleteError(formatClientError(error));
+      setItems((current) => mergeInventoryItems(current, [currentItem]));
+    }
   }
 
-  function handleDrop(column: InventoryColumn) {
+  async function handleDrop(column: InventoryColumn, event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    const forecastOutput = readForecastDrop(event);
+
+    if (forecastOutput && column === "sell") {
+      await createForecastInventoryItem(forecastOutput);
+      setDraggedId(null);
+      return;
+    }
+
     if (!draggedId) {
       return;
     }
 
-    moveItem(draggedId, column);
+    await moveItem(draggedId, column);
     setDraggedId(null);
   }
 
@@ -167,12 +202,22 @@ export function InventoryBoard({ initialItems }: { initialItems: InventoryViewIt
     });
   }
 
-  function handleDropOnItem(column: InventoryColumn, targetId: string) {
+  async function handleDropOnItem(column: InventoryColumn, targetId: string, event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const forecastOutput = readForecastDrop(event);
+
+    if (forecastOutput && column === "sell") {
+      await createForecastInventoryItem(forecastOutput, targetId);
+      setDraggedId(null);
+      return;
+    }
+
     if (!draggedId) {
       return;
     }
 
-    moveItemInState(draggedId, column, targetId);
+    await moveItem(draggedId, column, targetId);
     setDraggedId(null);
   }
 
@@ -183,6 +228,26 @@ export function InventoryBoard({ initialItems }: { initialItems: InventoryViewIt
 
     moveItemInState(draggedId, undefined, targetId);
     setDraggedId(null);
+  }
+
+  async function createForecastInventoryItem(output: InventoryPlanOutput, targetId?: string) {
+    setDeleteError(null);
+    const optimisticItem = optimisticForecastInventoryItem(output);
+    setItems((current) => insertOrMergeInventoryItem(current, optimisticItem, targetId));
+
+    try {
+      const saved = await postInventoryItem(forecastToInventoryItem(output));
+      setItems((current) =>
+        insertOrMergeInventoryItem(
+          current.filter((item) => item.id !== optimisticItem.id),
+          saved,
+          targetId,
+        ),
+      );
+    } catch (error) {
+      setDeleteError(formatClientError(error));
+      setItems((current) => current.filter((item) => item.id !== optimisticItem.id));
+    }
   }
 
   async function openInputPanel() {
@@ -385,8 +450,8 @@ function InventoryColumn({
   items: InventoryViewItem[];
   draggedId: string | null;
   setDraggedId: (id: string | null) => void;
-  onDropColumn: (column: InventoryColumn) => void;
-  onDropItem: (column: InventoryColumn, targetId: string) => void;
+  onDropColumn: (column: InventoryColumn, event: DragEvent<HTMLElement>) => void;
+  onDropItem: (column: InventoryColumn, targetId: string, event: DragEvent<HTMLElement>) => void;
   onUpdateItem: (id: string, patch: Partial<InventoryViewItem>) => void;
   onUpdateQuantity: (id: string, patch: Partial<InventoryViewItem["quantity"]>) => void;
   onDeleteItem: (id: string) => void;
@@ -412,7 +477,7 @@ function InventoryColumn({
   return (
     <section
       onDragOver={(event) => event.preventDefault()}
-      onDrop={() => onDropColumn(column)}
+      onDrop={(event) => onDropColumn(column, event)}
       style={{ ["--pixel-frame-bg" as string]: "#fffdf5" }}
       className={`pixel-frame overflow-hidden rounded-none border-2 border-[#a8916a] bg-[#fffaf0] transition ${
         draggedId ? "outline outline-2 outline-offset-2 outline-[#e8d690]" : ""
@@ -462,7 +527,7 @@ function InventoryColumn({
             item={item}
             sellMode={column === "sell"}
             setDraggedId={setDraggedId}
-            onDropItem={() => onDropItem(column, item.id)}
+            onDropItem={(event) => onDropItem(column, item.id, event)}
             onUpdateItem={onUpdateItem}
             onUpdateQuantity={onUpdateQuantity}
             onDeleteItem={onDeleteItem}
@@ -670,7 +735,7 @@ function InventoryCard({
   item: InventoryViewItem;
   sellMode: boolean;
   setDraggedId: (id: string | null) => void;
-  onDropItem: () => void;
+  onDropItem: (event: DragEvent<HTMLElement>) => void;
   onUpdateItem: (id: string, patch: Partial<InventoryViewItem>) => void;
   onUpdateQuantity: (id: string, patch: Partial<InventoryViewItem["quantity"]>) => void;
   onDeleteItem: (id: string) => void;
@@ -691,7 +756,7 @@ function InventoryCard({
       onDrop={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        onDropItem();
+        onDropItem(event);
       }}
       style={{ ["--pixel-frame-bg" as string]: "#fcf6e4" }}
       className="pixel-frame group grid cursor-grab grid-cols-[auto_auto_1fr_auto] items-center gap-2 rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] px-2 py-1.5 shadow-[0_2px_0_#b29c66] transition hover:-translate-y-0.5 hover:border-[#a78c52] hover:shadow-[0_3px_0_#8b6f3e] active:cursor-grabbing"
@@ -1033,6 +1098,102 @@ function iconForItem(item: InventoryViewItem) {
   }
 
   return "/inventory-icons/potato.png";
+}
+
+function columnToPatch(column: InventoryColumn): Partial<InventoryViewItem> {
+  return column === "sell"
+    ? { category: "harvest", status: "ready" }
+    : { category: "seeds", status: "low" };
+}
+
+function readForecastDrop(event: DragEvent<HTMLElement>) {
+  const raw = event.dataTransfer.getData(yieldForecastDragType);
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<InventoryPlanOutput>;
+
+    if (typeof parsed.id !== "string" || typeof parsed.name !== "string") {
+      return null;
+    }
+
+    return parsed as InventoryPlanOutput;
+  } catch {
+    return null;
+  }
+}
+
+function forecastToInventoryItem(output: InventoryPlanOutput) {
+  return {
+    name: output.name,
+    category: "harvest" as const,
+    status: "ready" as const,
+    quantity: {
+      amount: 1,
+      unit: output.category === "livestock" ? "dozen" : "basket",
+    },
+    location: "harvest station",
+    source: output.source || "yield forecast",
+    notes: `Added from today's yield forecast. ${output.note}`.trim(),
+    color: output.color || "#6f8f55",
+  };
+}
+
+function optimisticForecastInventoryItem(output: InventoryPlanOutput): InventoryViewItem {
+  const now = new Date().toISOString();
+  const item = forecastToInventoryItem(output);
+
+  return {
+    id: `optimistic-${output.id}-${Date.now()}`,
+    ...item,
+    acquiredAt: now,
+    updatedAt: now,
+  };
+}
+
+async function postInventoryItem(payload: ReturnType<typeof forecastToInventoryItem>) {
+  const response = await fetch("/api/inventory/items", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = (await response.json()) as InventoryItemResponse;
+
+  if (!response.ok || !data.item) {
+    throw new Error(data.error ?? "Unable to add inventory item");
+  }
+
+  return data.item;
+}
+
+async function patchInventoryItem(id: string, patch: Partial<InventoryViewItem>) {
+  const response = await fetch(`/api/inventory/items/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const data = (await response.json()) as InventoryItemResponse;
+
+  if (!response.ok || !data.item) {
+    throw new Error(data.error ?? "Unable to update inventory item");
+  }
+
+  return data.item;
+}
+
+function insertOrMergeInventoryItem(current: InventoryViewItem[], item: InventoryViewItem, targetId?: string) {
+  const withoutItem = current.filter((currentItem) => currentItem.id !== item.id);
+  const targetIndex = targetId ? withoutItem.findIndex((currentItem) => currentItem.id === targetId) : -1;
+  const insertIndex = targetIndex >= 0 ? targetIndex : withoutItem.length;
+
+  return [
+    ...withoutItem.slice(0, insertIndex),
+    item,
+    ...withoutItem.slice(insertIndex),
+  ];
 }
 
 function mergeInventoryItems(current: InventoryViewItem[], next: InventoryViewItem[]) {

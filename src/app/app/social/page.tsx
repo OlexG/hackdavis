@@ -7,7 +7,7 @@ export default async function SocialPage() {
   const snapshot = await getSocialSnapshot();
 
   return (
-    <section className="min-h-[calc(100vh-7rem)] text-[#2d2313]">
+    <section className="h-[calc(100vh-7rem)] min-h-0 overflow-hidden text-[#2d2313]">
       <SocialBoard snapshot={snapshot} />
     </section>
   );

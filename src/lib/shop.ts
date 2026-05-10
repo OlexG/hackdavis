@@ -254,7 +254,7 @@ function toShopSlotView(item: InventoryViewItem, savedSlot: ShopDisplaySlot | un
     displayUnit: savedSlot?.displayUnit || item.quantity.unit,
     priceCents: normalizePrice(savedSlot?.priceCents ?? suggestedPriceCents(item)),
     signText: savedSlot?.signText?.trim() || suggestedSignText(item),
-    visible: savedSlot?.visible ?? false,
+    visible: savedSlot?.visible ?? true,
     imageId,
     imageUrl: imageId ? `/api/shop/image/${imageId}` : undefined,
     item,
@@ -459,12 +459,6 @@ function normalizeSaveSlot(
     : undefined;
   const visible = slot.visible ?? false;
 
-  if (visible && !imageId) {
-    throw new ShopValidationError(
-      `Add a photo for ${item.name} before placing it on the farm stand.`,
-    );
-  }
-
   return {
     inventoryItemId: new ObjectId(slot.inventoryItemId),
     position: Number.isFinite(slot.position) ? Number(slot.position) : index,
@@ -660,17 +654,30 @@ export async function openShopImageStream(imageId: string): Promise<ShopImageStr
 
   const db = await getMongoDb();
   const currentUser = await requireUserSession();
+  const objectId = new ObjectId(imageId);
   const bucket = new GridFSBucket(db, { bucketName: shopImagesBucket });
   const file = await db
     .collection<{ _id: ObjectId; length: number; metadata?: { contentType?: string; userId?: ObjectId } }>(`${shopImagesBucket}.files`)
-    .findOne({ _id: new ObjectId(imageId), "metadata.userId": currentUser.userId });
+    .findOne({ _id: objectId });
 
   if (!file) {
     return null;
   }
 
+  const ownsImage = file.metadata?.userId?.equals(currentUser.userId);
+
+  if (!ownsImage) {
+    const publicDisplay = await db.collection<ShopDisplay>("shop_displays").findOne({
+      slots: { $elemMatch: { imageId: objectId, visible: true } },
+    });
+
+    if (!publicDisplay) {
+      return null;
+    }
+  }
+
   return {
-    stream: bucket.openDownloadStream(new ObjectId(imageId)),
+    stream: bucket.openDownloadStream(objectId),
     contentType: file.metadata?.contentType ?? "application/octet-stream",
     contentLength: file.length,
   };
