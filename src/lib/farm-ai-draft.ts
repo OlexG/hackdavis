@@ -235,7 +235,16 @@ export async function generateAiFarmPlan({
   const intent = planner.intent;
   const generated = createObjectsFromIntent(local, intent, crops, livestock, structures);
   const objects = generated.objects;
-  const score = scorePlan(intent, objects, preferences, areaSquareFeet, generated.assessment);
+  const estimatedWeeklyHours = estimatePlanWeeklyHours(objects, crops, livestock);
+  intent.optimization.expectedWeeklyHours = estimatedWeeklyHours;
+  if (estimatedWeeklyHours > preferences.weeklyHours) {
+    intent.optimization.tradeoffs = [
+      `Estimated weekly work is ${estimatedWeeklyHours} hours against a ${preferences.weeklyHours} hour target.`,
+      ...intent.optimization.tradeoffs,
+    ].slice(0, 5);
+  }
+  intent.summary.maintenanceLevel = maintenanceLevelForHours(estimatedWeeklyHours);
+  const score = scorePlan(intent, objects, preferences, areaSquareFeet, generated.assessment, estimatedWeeklyHours);
   const commit = createFarmV2Commit("Gemini AI draft", objects, now);
 
   return {
@@ -273,6 +282,7 @@ export async function generateAiFarmPlan({
         plannerSource: planner.source,
         plannerError: planner.error,
         estimatedSetupCostCents: intent.budget.estimatedSetupCostCents,
+        estimatedWeeklyHours,
         objective: intent.optimization.objective,
         tradeoffs: intent.optimization.tradeoffs,
         layoutAssessment: generated.assessment,
@@ -417,6 +427,7 @@ function plannerPrompt(input: {
     "You are designing an optimized editable homestead farm plan.",
     "Return only data that matches the schema. Use only cropKey, livestockKey, and structureKey values from the allowed lists.",
     "Optimize for real farm usefulness: budget, weekly labor, crop diversity, water fit, household food value, maintenance level, and usable access.",
+    "Treat weeklyHours as a real capacity limit. Low-hour plans should use fewer crop fields, lower-touch crops, compact livestock only when labor fits, and maintenanceLevel/expectedWeeklyHours must not imply work above the user's capacity.",
     "Do not invent crop names. Prefer popular homestead staples that match the goal, season, location climate, labor, water, household size, and budget. Avoid niche medicinal, ornamental, sprout, orchard, tropical, and slow perennial crops unless the user's goals, site climate, and site size clearly justify them.",
     "Use the siteContext climate and selected season as hard agronomic constraints. Candidate crops were pre-scored for local seasonal temperature, annual heat/cold risk, rainfall, and water fit; stay within those candidate keys.",
     "For livestock, match animal size and heat/cold/water tolerance to the selected land, local climate, season, and budget: small sites should use compact animals like quail, chickens, rabbits, or ducks only when climate supports them; larger sites can use pigs, sheep, goats, and only very large well-funded sites should use cows.",
@@ -725,10 +736,11 @@ function ensureCropAssignments(
   siteContext: SiteGrowingContext,
   areaSquareFeet: number,
 ): GeminiFarmIntent["cropAssignments"] {
-  const targetCount = areaSquareFeet < 700 ? 2 : areaSquareFeet < 1500 ? 3 : areaSquareFeet < 2500 ? 4 : areaSquareFeet < 7000 ? 6 : 8;
+  const targetCount = targetCropCountForLabor(areaSquareFeet, preferences);
   const assignmentMap = new Map(assignments.map((assignment) => [assignment.cropKey, assignment]));
+  const maxCropCount = maxCropCountForLabor(preferences);
   const selected = selectDiverseCrops(candidateCrops, preferences, siteContext, Math.min(12, Math.max(targetCount + 4, assignments.length)), areaSquareFeet);
-  const merged = selected.slice(0, Math.max(targetCount, Math.min(8, selected.length))).map((crop) => {
+  const merged = selected.slice(0, Math.min(maxCropCount, Math.max(targetCount, Math.min(8, selected.length)))).map((crop) => {
     const existing = assignmentMap.get(crop.key);
     return {
       cropKey: crop.key,
@@ -758,6 +770,19 @@ function structureAreaRatio(structureKey: string) {
     default:
       return 0.025;
   }
+}
+
+function targetCropCountForLabor(areaSquareFeet: number, preferences: FarmAiDraftPreferences) {
+  const base = areaSquareFeet < 700 ? 2 : areaSquareFeet < 1500 ? 3 : areaSquareFeet < 2500 ? 4 : areaSquareFeet < 7000 ? 6 : 8;
+  return Math.max(2, Math.min(base, maxCropCountForLabor(preferences)));
+}
+
+function maxCropCountForLabor(preferences: FarmAiDraftPreferences) {
+  if (preferences.weeklyHours <= 3) return 2;
+  if (preferences.weeklyHours <= 5) return 3;
+  if (preferences.weeklyHours <= 8) return 5;
+  if (preferences.weeklyHours <= 12) return 7;
+  return 9;
 }
 
 function createObjectsFromIntent(
@@ -1632,9 +1657,11 @@ function diversifyScoredCrops(scored: ScoredCrop[], limit: number) {
 function cropScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences, siteContext: SiteGrowingContext, preferred: boolean, areaSquareFeet = 2500) {
   let score = preferred ? 100 : 0;
   const text = `${crop.name} ${crop.cropCategory} ${crop.lightRequirement} ${crop.howToGrow} ${crop.tips}`.toLowerCase();
+  const weeklyMinutes = cropWeeklyMinutes(crop);
   score += popularCropScore(crop);
   score += categoryBaselineScore(crop);
   score += cropSiteFitScore(crop, preferences, siteContext);
+  score += cropLaborFitScore(crop, preferences, weeklyMinutes);
   if (isNicheCrop(crop)) score -= 36;
   if (isTreeOrOrchardCrop(crop) && areaSquareFeet < 7000) score -= 42;
   if (isTreeOrOrchardCrop(crop) && preferences.budgetCents < 150_000) score -= 20;
@@ -1654,6 +1681,8 @@ function cropScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences, siteC
   if (preferences.goal === "profit" && /\b(herb|berry|tomato|pepper|greens|micro|sprout)\b/.test(text)) score += 24;
   if (preferences.goal === "low-maintenance" && crop.lifeSpan === "perennial") score += 16;
   if (preferences.weeklyHours <= 4 && /\b(sprout|microgreen|daily|trellis)\b/.test(text)) score -= 12;
+  if (preferences.weeklyHours <= 4 && weeklyMinutes > 40) score -= 18;
+  if (preferences.weeklyHours <= 8 && weeklyMinutes <= 24) score += 8;
   if (preferences.experience === "beginner" && /\b(trellis|prune|graft|daily|greenhouse)\b/.test(text)) score -= 8;
   if (preferences.householdSize >= 5 && /\b(potato|corn|bean|pea|squash|cabbage|kale|tomato)\b/.test(text)) score += 8;
   if (preferences.budgetCents <= 75_000 && crop.idealSpaceSqft && crop.idealSpaceSqft > 60) score -= 8;
@@ -1708,6 +1737,47 @@ function cropSiteFitScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences
   if (tropical && siteContext.frostRisk !== "low") score -= 34;
 
   return score;
+}
+
+function cropLaborFitScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences, weeklyMinutes: number) {
+  let score = 0;
+  const weeklyHoursPerBlock = weeklyMinutes / 60;
+  const text = cropText(crop);
+
+  if (preferences.weeklyHours <= 3) {
+    score += weeklyHoursPerBlock <= 0.35 ? 18 : -Math.min(42, weeklyHoursPerBlock * 24);
+  } else if (preferences.weeklyHours <= 6) {
+    score += weeklyHoursPerBlock <= 0.5 ? 12 : -Math.min(28, weeklyHoursPerBlock * 14);
+  } else if (preferences.weeklyHours >= 12) {
+    if (weeklyHoursPerBlock >= 0.65 && preferences.goal !== "low-maintenance") score += 8;
+  }
+
+  if (preferences.goal === "low-maintenance" && weeklyHoursPerBlock > 0.45) score -= 14;
+  if (/\b(trellis|prune|pinch|daily|successive|succession|blanch|hand pollinat)\b/.test(text)) {
+    score -= preferences.weeklyHours <= 5 ? 16 : 4;
+  }
+  if (/\b(perennial|rosemary|sage|thyme|oregano|mint|chard|kale|potato|garlic|onion)\b/.test(text)) {
+    score += preferences.weeklyHours <= 6 ? 10 : 3;
+  }
+
+  return score;
+}
+
+function cropWeeklyMinutes(crop: AiDraftCrop) {
+  const text = cropText(crop);
+  let minutes = 28;
+
+  if (/\b(sprout|microgreen|daily|mushroom)\b/.test(text)) minutes += 42;
+  if (/\b(tomato|pepper|eggplant|cucumber|bean|pea|trellis|vine)\b/.test(text)) minutes += 28;
+  if (/\b(lettuce|spinach|arugula|cilantro|basil|greens|radish)\b/.test(text)) minutes += 18;
+  if (/\b(potato|garlic|onion|shallot|carrot|beet|turnip|rutabaga)\b/.test(text)) minutes -= 8;
+  if (/\b(rosemary|sage|thyme|oregano|mint|perennial)\b/.test(text)) minutes -= 10;
+  if (isTreeOrOrchardCrop(crop)) minutes += 16;
+  if (crop.harvestCycles && crop.harvestCycles > 3) minutes += 10;
+  if (crop.idealSpaceSqft && crop.idealSpaceSqft <= 1) minutes += 12;
+  if (crop.waterConsumptionMl && crop.waterConsumptionMl > 900) minutes += 8;
+
+  return Math.max(12, minutes);
 }
 
 function popularCropScore(crop: AiDraftCrop) {
@@ -1807,6 +1877,7 @@ function livestockScore(
   const setupCost = livestockSetupCostCents(animal);
   const laborHours = livestockWeeklyHours(animal);
   const waterDemand = livestockWaterDemand(animal);
+  const laborShare = laborHours / Math.max(1, preferences.weeklyHours);
   let score = preferredKey === animal.key ? 6 : 0;
 
   score -= Math.abs(Math.log2(idealSpace / targetSpace)) * 22;
@@ -1826,6 +1897,9 @@ function livestockScore(
   if (preferences.budgetCents < setupCost * 0.75) score -= 80;
   if (preferences.weeklyHours >= laborHours) score += 12;
   else score -= (laborHours - preferences.weeklyHours) * 10;
+  if (laborShare > 0.75) score -= 34;
+  if (laborShare <= 0.45) score += 8;
+  if (preferences.weeklyHours <= 4 && laborHours > 2.5) score -= 30;
 
   if (preferences.experience === "beginner" && idealSpace >= 80) score -= 16;
   if (preferences.experience === "beginner" && idealSpace >= 180) score -= 18;
@@ -1936,7 +2010,7 @@ function livestockCountForSite(animal: AiDraftLivestock, preferences: FarmAiDraf
   const idealSpace = livestockIdealSpace(animal);
   const paddockArea = areaSquareFeet * livestockAreaRatioForSite(animal, areaSquareFeet);
   const capacity = Math.max(1, Math.floor(paddockArea / Math.max(1, idealSpace)));
-  const laborCap = Math.max(1, Math.floor(preferences.weeklyHours / Math.max(1.5, livestockWeeklyHours(animal) / 3)));
+  const laborCap = Math.max(1, Math.floor(preferences.weeklyHours / Math.max(1, livestockWeeklyHours(animal) / 2)));
   return Math.max(1, Math.min(animal.defaultCount || 2, capacity, laborCap, idealSpace >= 80 ? 3 : 12));
 }
 
@@ -1981,17 +2055,53 @@ function scorePlan(
   preferences: FarmAiDraftPreferences,
   area: number,
   assessment?: LayoutAssessment,
+  estimatedWeeklyHours = intent.optimization.expectedWeeklyHours,
 ) {
   let score = 0.55;
   const uniqueCrops = new Set(intent.cropAssignments.map((item) => item.cropKey)).size;
   score += Math.min(0.18, uniqueCrops * 0.018);
   if (intent.budget.estimatedSetupCostCents <= preferences.budgetCents) score += 0.12;
   else score -= Math.min(0.2, (intent.budget.estimatedSetupCostCents - preferences.budgetCents) / Math.max(1, preferences.budgetCents));
-  if (intent.optimization.expectedWeeklyHours <= preferences.weeklyHours) score += 0.08;
+  if (estimatedWeeklyHours <= preferences.weeklyHours) score += 0.08;
+  else score -= Math.min(0.2, (estimatedWeeklyHours - preferences.weeklyHours) / Math.max(1, preferences.weeklyHours) * 0.12);
   if (objects.length >= 8) score += 0.04;
   if (area >= 500 && intent.structures.length > 0) score += 0.03;
   if (assessment) score = score * 0.72 + assessment.score * 0.28;
   return clampScore(score);
+}
+
+function estimatePlanWeeklyHours(objects: FarmV2Object[], crops: AiDraftCrop[], livestock: AiDraftLivestock[]) {
+  const cropHours = objects.reduce((sum, object) => {
+    if (object.type !== "cropField") return sum;
+    const cropKey = typeof object.attrs.cropKey === "string" ? object.attrs.cropKey : "";
+    const cropName = typeof object.attrs.cropName === "string" ? object.attrs.cropName : "";
+    const crop = crops.find((item) => item.key === cropKey) ?? {
+      key: cropKey || cropName,
+      name: cropName || cropKey || "Crop",
+      visual: "generic",
+      defaultCount: 12,
+    };
+    const countScale = Math.min(1.7, Math.max(0.65, Number(object.attrs.count || 12) / Math.max(1, crop.defaultCount || 12)));
+    return sum + cropWeeklyMinutes(crop) * countScale / 60;
+  }, 0);
+
+  const livestockHours = objects.reduce((sum, object) => {
+    if (object.type !== "livestock") return sum;
+    const species = typeof object.attrs.species === "string" ? object.attrs.species : "";
+    const animal = livestock.find((item) => item.name === species || item.key === species.toLowerCase());
+    const count = Math.max(1, Number(object.attrs.count) || 1);
+    const baseHours = animal ? livestockWeeklyHours(animal) : 4;
+    return sum + baseHours * Math.min(1.8, Math.max(0.65, count / Math.max(1, animal?.defaultCount || 2)));
+  }, 0);
+
+  const structureHours = objects.filter((object) => object.type === "structure").length * 0.15;
+  return Math.round((cropHours + livestockHours + structureHours) * 10) / 10;
+}
+
+function maintenanceLevelForHours(weeklyHours: number): GeminiFarmIntent["summary"]["maintenanceLevel"] {
+  if (weeklyHours <= 5) return "low";
+  if (weeklyHours <= 12) return "medium";
+  return "high";
 }
 
 function createCatalogFallbackIntent(input: {
@@ -2002,7 +2112,7 @@ function createCatalogFallbackIntent(input: {
   livestock: AiDraftLivestock[];
   structures: AiDraftStructure[];
 }): GeminiFarmIntent {
-  const cropCount = input.areaSquareFeet < 2500 ? 5 : input.areaSquareFeet < 7000 ? 7 : 9;
+  const cropCount = Math.min(targetCropCountForLabor(input.areaSquareFeet, input.preferences), input.areaSquareFeet < 2500 ? 5 : input.areaSquareFeet < 7000 ? 7 : 9);
   const selectedCrops = input.candidateCrops.slice(0, Math.max(3, cropCount));
   const selectedLivestockAnimal = input.preferences.includeLivestock && input.areaSquareFeet >= 650
     ? selectLivestockForSite(input.livestock, input.preferences, input.siteContext, input.areaSquareFeet)
