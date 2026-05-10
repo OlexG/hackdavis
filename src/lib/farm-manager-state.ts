@@ -58,7 +58,7 @@ export function normalizeFarmManagerSnapshot(raw: unknown): FarmManagerSnapshot 
     commits,
     commitIndex: clampInteger(candidate.commitIndex, 0, maxCommitIndex),
     units: candidate.units === "m" ? "m" : "ft",
-    view: candidate.view === "satellite" ? "satellite" : "grid",
+    view: candidate.view === "grid" ? "grid" : "satellite",
     selectedId: typeof candidate.selectedId === "string" ? candidate.selectedId.slice(0, 120) : null,
   };
 }

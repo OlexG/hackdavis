@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { PixelGlyph, type PixelGlyphName } from "../_components/icons";
 import styles from "./farm-manager-shell.module.css";
 
 type FarmManagerChromeState = {
@@ -144,10 +145,11 @@ export function FarmManagerShell() {
   const mountRef = useRef<FarmManagerMount | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [commitName, setCommitName] = useState("");
+  const [actions, setActions] = useState<FarmManagerActions | undefined>(undefined);
   const [chrome, setChrome] = useState<FarmManagerChromeState>({
     mode: "select",
     drawType: "cropArea",
-    view: "grid",
+    view: "satellite",
     units: "ft",
     onboardingVisible: true,
     setupChoiceVisible: false,
@@ -174,6 +176,7 @@ export function FarmManagerShell() {
           onContentChange: setContent,
         });
         mountRef.current = mount;
+        setActions(mount.actions);
         setChrome(mount.getChromeState());
         setContent(mount.getContentState());
       } catch (error) {
@@ -187,6 +190,7 @@ export function FarmManagerShell() {
       cancelled = true;
       mountRef.current?.cleanup();
       mountRef.current = null;
+      setActions(undefined);
     };
   }, []);
 
@@ -199,8 +203,6 @@ export function FarmManagerShell() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const actions = mountRef.current?.actions;
-
   async function handleSaveCommit(name: string) {
     const saved = await actions?.saveCommit(name);
     if (saved) setCommitName("");
@@ -209,11 +211,10 @@ export function FarmManagerShell() {
   return (
     <div ref={rootRef} className={`farm-manager-root ${styles.host}`}>
       <div className="app-shell">
-        <header className="topbar">
+        <header className="topbar pixel-gradient-sky">
           <div className="brand">
-            <span className="brand-mark" aria-hidden="true" />
             <div>
-              <span className="eyebrow">Orchard Ridge</span>
+              <span className="eyebrow">Farm Space Studio</span>
               <strong>Homestead Map</strong>
             </div>
           </div>
@@ -237,25 +238,27 @@ export function FarmManagerShell() {
           </div>
 
           <div className="toolbar-group right">
-            <div className="segmented" aria-label="Map view">
-              <button data-view="grid" className={chrome.view === "grid" ? "active" : ""} type="button" onClick={() => actions?.setView("grid")}>Grid</button>
-              <button data-view="satellite" className={chrome.view === "satellite" ? "active" : ""} type="button" onClick={() => actions?.setView("satellite")}>Satellite</button>
-            </div>
-
             <div className="segmented" aria-label="Measurement units">
               <button data-units="ft" className={chrome.units === "ft" ? "active" : ""} type="button" onClick={() => actions?.setUnits("ft")}>ft</button>
               <button data-units="m" className={chrome.units === "m" ? "active" : ""} type="button" onClick={() => actions?.setUnits("m")}>m</button>
             </div>
 
-            <button id="zoomOut" type="button" onClick={() => actions?.zoomOut()}>-</button>
-            <button id="zoomIn" type="button" onClick={() => actions?.zoomIn()}>+</button>
-            <button id="rotateView" type="button" onClick={() => actions?.rotateView()}>Rotate</button>
-            <button id="resetView" type="button" onClick={() => actions?.resetView()}>Reset</button>
-            <button id="settingsButton" type="button" onClick={() => actions?.openBoundarySettings()}>Settings</button>
+            <div className="zoom-split" aria-label="Zoom controls">
+              <button id="zoomOut" className="zoom-split-button zoom-out" type="button" aria-label="Zoom out" onClick={() => actions?.zoomOut()}>
+                <span aria-hidden="true">-</span>
+              </button>
+              <button id="zoomIn" className="zoom-split-button zoom-in" type="button" aria-label="Zoom in" onClick={() => actions?.zoomIn()}>
+                <span aria-hidden="true">+</span>
+              </button>
+            </div>
+            <button id="rotateView" className="icon-button" type="button" aria-label="Rotate view" title="Rotate" onClick={() => actions?.rotateView()}>
+              <RotateIcon />
+            </button>
+            <button id="settingsButton" type="button" onClick={() => actions?.openBoundarySettings()}>Reset Farm</button>
           </div>
         </header>
 
-        <main className="stage">
+        <main className="stage pixel-dots">
           <canvas
             id="farmCanvas"
             aria-label="Interactive low-poly farm map"
@@ -268,7 +271,7 @@ export function FarmManagerShell() {
             onWheel={(event) => actions?.handleCanvasWheel(event.nativeEvent)}
           />
 
-          <aside className="object-panel" aria-live="polite">
+          <aside className="object-panel pixel-frame" aria-live="polite">
             <FarmObjectPanel content={content} actions={actions} />
           </aside>
 
@@ -278,7 +281,11 @@ export function FarmManagerShell() {
           </div>
         </main>
 
-        <footer className="timeline">
+        <footer className="timeline pixel-gradient-meadow">
+          <div className="timeline-label">
+            <PixelGlyph name="ledger" className="button-icon" />
+            <span>Timeline</span>
+          </div>
           <button id="playTimeline" type="button" onClick={() => actions?.togglePlayback()}>
             {content.timeline.playing ? "Pause" : "Play"}
           </button>
@@ -423,8 +430,13 @@ function FarmObjectPanel({ content, actions }: { content: FarmManagerContentStat
     return (
       <>
         <div className="panel-header">
-          <span id="panelKicker">Selection</span>
-          <strong id="panelTitle">No object selected</strong>
+          <span className="panel-token" aria-hidden="true">
+            <PixelGlyph name="leaf" className="panel-token-icon" />
+          </span>
+          <div>
+            <span id="panelKicker">Selection</span>
+            <strong id="panelTitle">No object selected</strong>
+          </div>
         </div>
         <div id="objectDetails" className="details">
           <div className="detail-grid">
@@ -445,23 +457,28 @@ function FarmObjectPanel({ content, actions }: { content: FarmManagerContentStat
   return (
     <>
       <div className="panel-header">
-        <span id="panelKicker">{labelForType(object.type)}</span>
-        {renaming ? (
-          <input
-            id="panelTitle"
-            className="renaming"
-            value={draftName}
-            autoFocus
-            onBlur={() => finishRename(true)}
-            onChange={(event) => setDraftName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") finishRename(true);
-              if (event.key === "Escape") finishRename(false);
-            }}
-          />
-        ) : (
-          <strong id="panelTitle" onDoubleClick={startRename}>{object.label}</strong>
-        )}
+        <span className="panel-token" aria-hidden="true">
+          <PixelGlyph name={glyphForType(object.type)} className="panel-token-icon" />
+        </span>
+        <div>
+          <span id="panelKicker">{labelForType(object.type)}</span>
+          {renaming ? (
+            <input
+              id="panelTitle"
+              className="renaming"
+              value={draftName}
+              autoFocus
+              onBlur={() => finishRename(true)}
+              onChange={(event) => setDraftName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") finishRename(true);
+                if (event.key === "Escape") finishRename(false);
+              }}
+            />
+          ) : (
+            <strong id="panelTitle" onDoubleClick={startRename}>{object.label}</strong>
+          )}
+        </div>
       </div>
       <div id="objectDetails" className="details">
         <ObjectDetails object={object} content={content} actions={actions} />
@@ -604,10 +621,45 @@ function DeleteControl({ object, actions }: { object: FarmObject; actions?: Farm
   const warning = object.type === "cropArea" ? "Deletes child crop fields too" : "Removes this object";
   return (
     <div className="slot-actions">
-      <button className="danger-button" type="button" onClick={() => actions?.deleteSelectedObject()}>Delete</button>
+      <button className="danger-button" type="button" onClick={() => actions?.deleteSelectedObject()}>
+        <PixelGlyph name="trash" className="button-icon" />
+        Delete
+      </button>
       <div className="detail-list"><span>Delete behavior</span><ul><li><strong>{warning}</strong><em>snapshot with + if needed</em></li></ul></div>
     </div>
   );
+}
+
+function RotateIcon() {
+  return (
+    <svg className="rotate-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M15.5 7.5A6 6 0 1 0 16 12"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M15.5 3.5V7.5H11.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function glyphForType(type: FarmObjectType): PixelGlyphName {
+  const glyphs: Record<FarmObjectType, PixelGlyphName> = {
+    cropArea: "leaf",
+    cropField: "seed",
+    livestock: "basket",
+    structure: "ledger",
+    path: "scroll",
+  };
+
+  return glyphs[type];
 }
 
 function labelForType(type: FarmObjectType) {

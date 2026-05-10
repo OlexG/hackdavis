@@ -186,7 +186,7 @@ const initialObjects: FarmObject[] = [
 export const state: FarmState = {
     mode: "select",
     drawType: "cropArea",
-    view: "grid",
+    view: "satellite",
     units: "ft",
     selectedId: "tomato-slot",
     draft: [],
@@ -260,7 +260,7 @@ export function importSnapshot(snapshot: FarmManagerSnapshot): void {
     state.commitIndex = Geometry.clamp(Number(snapshot.commitIndex) || 0, 0, state.commits.length - 1);
     state.objects = clone(state.commits[state.commitIndex].objects);
     state.units = snapshot.units || "ft";
-    state.view = snapshot.view || "grid";
+    state.view = snapshot.view || "satellite";
     state.selectedId = snapshot.selectedId && state.objects.some((object) => object.id === snapshot.selectedId)
       ? snapshot.selectedId
       : state.objects[0]?.id || null;
