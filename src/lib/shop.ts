@@ -8,6 +8,7 @@ import { getInventorySnapshot, type InventoryViewItem } from "@/lib/inventory";
 import { getMongoDb } from "@/lib/mongodb";
 import type {
   InventoryItem,
+  Farm,
   ShopDisplay,
   ShopDisplayDetails,
   ShopDisplaySlot,
@@ -215,6 +216,15 @@ export async function saveShopDisplay({ slots, details }: ShopDisplaySavePayload
     },
     { upsert: true, returnDocument: "after" },
   );
+
+  // Ensure a farms document exists so this shop appears in the marketplace.
+  await ensureFarmForUser({
+    userId: currentUser.userId,
+    userUuid: currentUser.uuid,
+    displayName,
+    details: normalizedDetails,
+    now,
+  });
 
   return getShopSnapshot();
 }
@@ -918,4 +928,77 @@ export async function openShopImageStream(imageId: string): Promise<ShopImageStr
     contentType: file.metadata?.contentType ?? "application/octet-stream",
     contentLength: file.length,
   };
+}
+
+
+async function ensureFarmForUser({
+  userId,
+  userUuid,
+  displayName,
+  details,
+  now,
+}: {
+  userId: ObjectId;
+  userUuid: string;
+  displayName: string;
+  details: ShopDisplayDetails;
+  now: Date;
+}) {
+  const db = await getMongoDb();
+
+  await db.collection("farms").createIndex({ userId: 1 }, { unique: true });
+  await db.collection("farms").createIndex({ userUuid: 1 });
+  await db.collection("farms").createIndex({ location: "2dsphere" });
+
+  const shopName = details.shopName || displayName;
+  const pickupCoords = details.pickupCoords;
+
+  // Build location from pickup coordinates if available.
+  const location = pickupCoords
+    ? { type: "Point" as const, coordinates: [pickupCoords.lng, pickupCoords.lat] as [number, number] }
+    : undefined;
+
+  const coordinates = pickupCoords
+    ? { latitude: pickupCoords.lat, longitude: pickupCoords.lng, x: 50, y: 50 }
+    : undefined;
+
+  const updateFields: Record<string, unknown> = {
+    userId,
+    userUuid,
+    name: shopName,
+    units: "feet" as const,
+    bounds: { width: 100, height: 100 },
+    updatedAt: now,
+  };
+
+  // Only set location fields if we have coordinates.
+  if (location) {
+    updateFields.location = location;
+    updateFields.coordinates = coordinates;
+  }
+
+  if (details.pickupLocation) {
+    updateFields.neighborhood = details.pickupLocation;
+  }
+
+  if (details.hours) {
+    updateFields.response = details.hours;
+  }
+
+  await db.collection<Farm>("farms").updateOne(
+    { userId },
+    {
+      $set: updateFields,
+      $setOnInsert: {
+        _id: new ObjectId(),
+        slug: userUuid,
+        rating: 5,
+        reviews: 0,
+        ratings: { quality: 5, fairness: 5, pickup: 5 },
+        sortOrder: 100,
+        createdAt: now,
+      },
+    },
+    { upsert: true },
+  );
 }
