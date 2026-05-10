@@ -11,6 +11,22 @@ export interface CropCatalogEntry {
   visual: "fruiting" | "grain" | "leafy" | "herb" | "mound" | "vine" | "root" | "groundcover" | "generic";
   defaultCount: number;
   growth: number;
+  scientificName?: string;
+  description?: string;
+  cropCategory?: string;
+  lifeSpan?: string;
+  idealSpaceSqft?: number;
+  harvestCycles?: number;
+  soilPhMin?: number;
+  soilPhMax?: number;
+  lightRequirement?: string;
+  soilTexture?: string;
+  waterConsumptionMl?: number;
+  rainfallMaxMl?: number;
+  howToGrow?: string;
+  insectControl?: string;
+  tips?: string;
+  isCustom?: boolean;
 }
 
 export interface LivestockCatalogEntry {
@@ -19,6 +35,14 @@ export interface LivestockCatalogEntry {
   breed: string;
   breeds: string[];
   defaultCount: number;
+  description?: string;
+  idealSpaceSqft?: number;
+  feed?: string;
+  careInstructions?: string;
+  meatYield?: number;
+  yieldTypes?: string[];
+  yieldFrequency?: string;
+  isCustom?: boolean;
 }
 
 export interface StructureCatalogEntry {
@@ -49,13 +73,20 @@ export interface CropFieldAttrs {
   count: number;
   visual: CropCatalogEntry["visual"];
   growth: number;
+  idealSpaceSqft?: number;
+  harvestCycles?: number;
+  catalogKnown?: boolean;
 }
 
 export interface LivestockAttrs {
+  speciesKey?: string | null;
   species: string;
   breed: string;
   count: number;
   status: string;
+  idealSpaceSqft?: number;
+  yieldTypes?: string[];
+  catalogKnown?: boolean;
 }
 
 export interface StructureAttrs {
@@ -234,8 +265,11 @@ export interface FarmManagerActions {
   deleteSelectedObject: () => void;
   setCropCount: (count: number) => void;
   setCropType: (cropKey: string) => void;
+  setCustomCropName: (name: string) => void;
   setLivestockSpecies: (speciesKey: string) => void;
+  setCustomLivestockName: (name: string) => void;
   setLivestockBreed: (breed: string) => void;
+  setLivestockCount: (count: number) => void;
   setStructureType: (structureKey: string) => void;
   handleCanvasPointerDown: (event: PointerEvent) => void;
   handleCanvasPointerMove: (event: PointerEvent) => void;

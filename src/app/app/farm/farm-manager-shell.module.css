@@ -515,6 +515,39 @@
   border-bottom: 0;
 }
 
+:global(.farm-manager-root .capacity-warning) {
+  border-color: #d1a732;
+  background: #fff5c0;
+  box-shadow: 0 2px 0 #8d6c1f;
+}
+
+:global(.farm-manager-root .capacity-warning strong) {
+  color: #3f2f05;
+}
+
+:global(.farm-manager-root .catalog-guidance li) {
+  align-items: flex-start;
+}
+
+:global(.farm-manager-root .catalog-guidance strong) {
+  min-width: 96px;
+}
+
+:global(.farm-manager-root .catalog-guidance em) {
+  max-width: 100%;
+  text-align: right;
+}
+
+:global(.farm-manager-root .catalog-guidance .catalog-note) {
+  display: block;
+}
+
+:global(.farm-manager-root .catalog-guidance .catalog-note em) {
+  display: block;
+  margin-top: 3px;
+  text-align: left;
+}
+
 :global(.farm-manager-root .snapshot-chip) {
   position: absolute;
   left: 18px;

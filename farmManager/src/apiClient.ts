@@ -1,7 +1,8 @@
-import type { FarmManagerSnapshot } from "./types.js";
+import type { Catalog, FarmManagerSnapshot } from "./types.js";
 import { parseFarmManagerStateResponse } from "./stateContract.js";
 
 const stateEndpoint = "/api/farm/manager-state";
+const catalogEndpoint = "/api/farm/catalog";
 
 export type LoadFarmStateResult =
   | { ok: true; state: FarmManagerSnapshot | null; hasSavedFarm: boolean; updatedAt: string | null }
@@ -10,6 +11,25 @@ export type LoadFarmStateResult =
 export type SaveFarmStateResult =
   | { ok: true; hasSavedFarm: boolean; updatedAt: string | null }
   | { ok: false; error: string };
+
+export type LoadFarmCatalogResult =
+  | { ok: true; catalog: Catalog }
+  | { ok: false; error: string };
+
+export async function loadFarmCatalog(): Promise<LoadFarmCatalogResult> {
+  try {
+    const response = await fetch(catalogEndpoint, { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      return { ok: false, error: readError(data, "Unable to load farm catalog") };
+    }
+
+    return { ok: true, catalog: parseCatalog(data) };
+  } catch (error) {
+    return { ok: false, error: readUnknownError(error, "Unable to load farm catalog") };
+  }
+}
 
 export async function loadFarmState(): Promise<LoadFarmStateResult> {
   try {
@@ -48,6 +68,15 @@ export async function saveFarmState(state: FarmManagerSnapshot): Promise<SaveFar
   } catch (error) {
     return { ok: false, error: readUnknownError(error, "Unable to save farm state") };
   }
+}
+
+function parseCatalog(data: unknown): Catalog {
+  const candidate = data && typeof data === "object" ? data as Partial<Catalog> : {};
+  return {
+    crops: Array.isArray(candidate.crops) ? candidate.crops : [],
+    livestock: Array.isArray(candidate.livestock) ? candidate.livestock : [],
+    structures: Array.isArray(candidate.structures) ? candidate.structures : []
+  };
 }
 
 function readError(data: unknown, fallback: string): string {

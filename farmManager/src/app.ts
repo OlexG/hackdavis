@@ -12,6 +12,7 @@ import type {
   FarmManagerMount,
   FarmManagerMountOptions,
   FarmObject,
+  Catalog,
   Point,
   ScreenPoint,
   Units,
@@ -40,6 +41,7 @@ let backendMessage: string | null = null;
 let backendError = false;
 let onboardingVisible = true;
 let setupChoiceVisible = false;
+let activeCatalog: Catalog = CATALOG;
 
 export function mountFarmManager(root: ParentNode = document, options: FarmManagerMountOptions = {}): FarmManagerMount {
     mountOptions = options;
@@ -92,10 +94,15 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
     hudTimer: number;
   } | null> {
     try {
-      const loadResult = await ApiClient.loadFarmState();
+      const [catalogResult, loadResult] = await Promise.all([
+        ApiClient.loadFarmCatalog(),
+        ApiClient.loadFarmState()
+      ]);
       if (signal.aborted) return null;
 
+      if (catalogResult.ok === false) throw new Error(catalogResult.error);
       if (loadResult.ok === false) throw new Error(loadResult.error);
+      activeCatalog = catalogResult.catalog;
 
       if (loadResult.hasSavedFarm && hasSavedFarmState(loadResult.state)) {
         DemoState.importSnapshot(loadResult.state);
@@ -103,6 +110,7 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
       } else {
         showOnboarding();
       }
+      hydrateCatalogAttrs();
       state.view = "satellite";
 
       const rendererCleanup = FarmRenderer.init(ui.canvas);
@@ -194,8 +202,11 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
       deleteSelectedObject,
       setCropCount,
       setCropType,
+      setCustomCropName,
       setLivestockSpecies,
+      setCustomLivestockName,
       setLivestockBreed,
+      setLivestockCount,
       setStructureType,
       handleCanvasPointerDown: onPointerDown,
       handleCanvasPointerMove: onPointerMove,
@@ -237,7 +248,7 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
       boundaryPointCount: DemoState.activeBoundary().length,
       boundarySource: state.boundaryGeo ? "Map" : "Demo",
       units: state.units,
-      catalog: CATALOG,
+      catalog: activeCatalog,
       commitModalOpen,
       savingCommit
     };
@@ -475,10 +486,15 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
         growth: 0.2
       }));
     } else if (state.drawType === "livestock") {
+      const animal = activeCatalog.livestock[0];
       addObject(DemoState.livestock(`user-livestock-${Date.now()}`, "New Paddock", polygon, {
-        species: "Goat",
-        breed: "Mixed",
-        count: 4,
+        speciesKey: animal?.key ?? null,
+        species: animal?.name ?? "Livestock",
+        breed: animal?.breed ?? "Mixed",
+        count: animal?.defaultCount ?? 1,
+        idealSpaceSqft: animal?.idealSpaceSqft,
+        yieldTypes: animal?.yieldTypes ?? [],
+        catalogKnown: Boolean(animal),
         status: "Planned"
       }));
     } else if (state.drawType === "structure") {
@@ -527,23 +543,29 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
 
   function applyCatalogEntry(object, mode, key) {
     if (mode === "crop") {
-      const crop = CATALOG.crops.find((item) => item.key === key);
+      const crop = activeCatalog.crops.find((item) => item.key === key);
+      if (!crop) return;
       object.label = `${crop.name} Field`;
       object.attrs.cropKey = crop.key;
       object.attrs.cropName = crop.name;
       object.attrs.visual = crop.visual;
       object.attrs.count = crop.defaultCount;
       object.attrs.growth = crop.growth;
+      applyCropCatalogAttrs(object, crop);
       object.attrs.status = "Growing";
     } else if (mode === "livestock") {
-      const animal = CATALOG.livestock.find((item) => item.key === key);
+      const animal = activeCatalog.livestock.find((item) => item.key === key);
+      if (!animal) return;
       object.label = `${animal.name} Paddock`;
+      object.attrs.speciesKey = animal.key;
       object.attrs.species = animal.name;
       object.attrs.breed = animal.breed;
       object.attrs.count = animal.defaultCount;
+      applyLivestockCatalogAttrs(object, animal);
       object.attrs.status = "Planned";
     } else {
-      const structure = CATALOG.structures.find((item) => item.key === key);
+      const structure = activeCatalog.structures.find((item) => item.key === key);
+      if (!structure) return;
       object.label = structure.name;
       object.attrs.kind = structure.name;
       object.attrs.material = structure.material;
@@ -561,12 +583,19 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
       object.attrs.visual = "generic";
       object.attrs.count = object.attrs.count || 12;
       object.attrs.growth = object.attrs.growth || 0.45;
+      object.attrs.catalogKnown = false;
+      object.attrs.idealSpaceSqft = undefined;
+      object.attrs.harvestCycles = undefined;
       object.attrs.status = "Custom crop";
     } else if (mode === "livestock") {
       object.label = `${name} Paddock`;
+      object.attrs.speciesKey = "custom";
       object.attrs.species = name;
       object.attrs.breed = "Custom";
       object.attrs.count = object.attrs.count || 1;
+      object.attrs.catalogKnown = false;
+      object.attrs.idealSpaceSqft = undefined;
+      object.attrs.yieldTypes = [];
       object.attrs.status = "Custom livestock";
     } else {
       object.label = name;
@@ -619,6 +648,9 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
       object.attrs.count = 0;
       object.attrs.visual = "generic";
       object.attrs.growth = 0.2;
+      object.attrs.catalogKnown = false;
+      object.attrs.idealSpaceSqft = undefined;
+      object.attrs.harvestCycles = undefined;
       object.attrs.status = "Needs crop details";
     } else {
       applyCatalogEntry(object, "crop", cropKey);
@@ -627,10 +659,39 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
     emitContentChange();
   }
 
+  function setCustomCropName(name: string): void {
+    const object = state.objects.find((item) => item.id === state.selectedId);
+    const nextName = name.trim();
+    if (object?.type !== "cropField" || !nextName) return;
+    applyCustomEntry(object, "crop", nextName);
+    markPanelDirty();
+    emitContentChange();
+  }
+
   function setLivestockSpecies(speciesKey: string): void {
     const object = state.objects.find((item) => item.id === state.selectedId);
     if (object?.type !== "livestock") return;
-    applyCatalogEntry(object, "livestock", speciesKey);
+    if (speciesKey) applyCatalogEntry(object, "livestock", speciesKey);
+    else {
+      object.label = "New Paddock";
+      object.attrs.speciesKey = null;
+      object.attrs.species = "";
+      object.attrs.breed = "";
+      object.attrs.count = 0;
+      object.attrs.catalogKnown = false;
+      object.attrs.idealSpaceSqft = undefined;
+      object.attrs.yieldTypes = [];
+      object.attrs.status = "Needs livestock details";
+    }
+    markPanelDirty();
+    emitContentChange();
+  }
+
+  function setCustomLivestockName(name: string): void {
+    const object = state.objects.find((item) => item.id === state.selectedId);
+    const nextName = name.trim();
+    if (object?.type !== "livestock" || !nextName) return;
+    applyCustomEntry(object, "livestock", nextName);
     markPanelDirty();
     emitContentChange();
   }
@@ -639,6 +700,14 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
     const object = state.objects.find((item) => item.id === state.selectedId);
     if (object?.type !== "livestock") return;
     object.attrs.breed = breed;
+    markPanelDirty();
+    emitContentChange();
+  }
+
+  function setLivestockCount(count: number): void {
+    const object = state.objects.find((item) => item.id === state.selectedId);
+    if (object?.type !== "livestock") return;
+    object.attrs.count = Math.max(0, Number(count) || 0);
     markPanelDirty();
     emitContentChange();
   }
@@ -744,6 +813,48 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
     state.dirtyPanelKey = "";
   }
 
+  function hydrateCatalogAttrs(): void {
+    const hydrateObject = (object: FarmObject) => {
+      if (object.type === "cropField" && object.attrs.cropKey) {
+        const crop = activeCatalog.crops.find((item) => item.key === object.attrs.cropKey || item.name === object.attrs.cropName);
+        if (crop) {
+          object.attrs.cropKey = crop.key;
+          object.attrs.cropName = crop.name;
+          object.attrs.visual = crop.visual;
+          applyCropCatalogAttrs(object, crop);
+        }
+      }
+      if (object.type === "livestock") {
+        const animal = activeCatalog.livestock.find((item) =>
+          item.key === object.attrs.speciesKey ||
+          item.name === object.attrs.species ||
+          item.key === String(object.attrs.species || "").toLowerCase()
+        );
+        if (animal) {
+          object.attrs.speciesKey = animal.key;
+          object.attrs.species = animal.name;
+          if (!object.attrs.breed || object.attrs.breed === "Custom") object.attrs.breed = animal.breed;
+          applyLivestockCatalogAttrs(object, animal);
+        }
+      }
+    };
+
+    state.objects.forEach(hydrateObject);
+    state.commits.forEach((commit) => commit.objects.forEach(hydrateObject));
+  }
+
+  function applyCropCatalogAttrs(object, crop): void {
+    object.attrs.catalogKnown = true;
+    object.attrs.idealSpaceSqft = crop.idealSpaceSqft;
+    object.attrs.harvestCycles = crop.harvestCycles;
+  }
+
+  function applyLivestockCatalogAttrs(object, animal): void {
+    object.attrs.catalogKnown = true;
+    object.attrs.idealSpaceSqft = animal.idealSpaceSqft;
+    object.attrs.yieldTypes = animal.yieldTypes || [];
+  }
+
   function readErrorMessage(error: unknown): string {
     return error instanceof Error && error.message ? error.message : "Unable to load farm manager state";
   }
@@ -757,4 +868,3 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
       "'": "&#39;"
     })[char] || char);
   }
-

@@ -229,6 +229,7 @@ export function getCenteredPan(zoom = state.zoom): { x: number; y: number } {
       stroke: "rgba(30, 47, 28, 0.8)"
     });
     drawCropRows(object);
+    if (isOverCapacity(object)) drawCapacityWarning(object);
     if (state.selectedId === object.id) drawSelection(object);
   }
 
@@ -240,6 +241,7 @@ export function getCenteredPan(zoom = state.zoom): { x: number; y: number } {
     });
     drawFence(object.polygon, "#c9a865", object.height + 0.25);
     drawAnimals(object);
+    if (isOverCapacity(object)) drawCapacityWarning(object);
     if (state.selectedId === object.id) drawSelection(object);
   }
 
@@ -708,6 +710,38 @@ export function hitTestAll(world: Point): FarmObject[] {
       if (distanceToSegment(point, points[i], points[i + 1]) <= threshold) return true;
     }
     return false;
+  }
+
+  function isOverCapacity(object) {
+    if (object.type !== "cropField" && object.type !== "livestock") return false;
+    const idealSpace = Number(object.attrs.idealSpaceSqft);
+    const count = Number(object.attrs.count);
+    if (!Number.isFinite(idealSpace) || idealSpace <= 0 || !Number.isFinite(count) || count <= 0) return false;
+    return count * idealSpace > G.polygonArea(object.polygon) * 1.02;
+  }
+
+  function drawCapacityWarning(object) {
+    const height = object.height + 0.55;
+    const path = buildPath(object.polygon, height);
+    const center = project(G.polygonCentroid(object.polygon), height + 0.4);
+    ctx.save();
+    ctx.setLineDash([7, 5]);
+    ctx.strokeStyle = "#ffe45f";
+    ctx.lineWidth = Math.max(2, 2.2 * state.zoom);
+    ctx.stroke(path);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#ffe45f";
+    ctx.strokeStyle = "#3b2a14";
+    ctx.lineWidth = 2;
+    roundedRect(center.x - 10, center.y - 22, 20, 20, 3);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#3b2a14";
+    ctx.font = "900 14px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("!", center.x, center.y - 12);
+    ctx.restore();
   }
 
   function distanceToSegment(point, a, b) {

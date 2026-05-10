@@ -39,8 +39,37 @@ type FarmCommit = {
 };
 
 type FarmCatalog = {
-  crops: Array<{ key: string; name: string }>;
-  livestock: Array<{ key: string; name: string; breeds: string[] }>;
+  crops: Array<{
+    key: string;
+    name: string;
+    scientificName?: string;
+    description?: string;
+    cropCategory?: string;
+    lifeSpan?: string;
+    idealSpaceSqft?: number;
+    harvestCycles?: number;
+    soilPhMin?: number;
+    soilPhMax?: number;
+    lightRequirement?: string;
+    soilTexture?: string;
+    waterConsumptionMl?: number;
+    rainfallMaxMl?: number;
+    howToGrow?: string;
+    insectControl?: string;
+    tips?: string;
+  }>;
+  livestock: Array<{
+    key: string;
+    name: string;
+    breeds: string[];
+    description?: string;
+    idealSpaceSqft?: number;
+    feed?: string;
+    careInstructions?: string;
+    meatYield?: number;
+    yieldTypes?: string[];
+    yieldFrequency?: string;
+  }>;
   structures: Array<{ key: string; name: string }>;
 };
 
@@ -89,8 +118,11 @@ type FarmManagerActions = {
   deleteSelectedObject: () => void;
   setCropCount: (count: number) => void;
   setCropType: (cropKey: string) => void;
+  setCustomCropName: (name: string) => void;
   setLivestockSpecies: (speciesKey: string) => void;
+  setCustomLivestockName: (name: string) => void;
   setLivestockBreed: (breed: string) => void;
+  setLivestockCount: (count: number) => void;
   setStructureType: (structureKey: string) => void;
   handleCanvasPointerDown: (event: PointerEvent) => void;
   handleCanvasPointerMove: (event: PointerEvent) => void;
@@ -532,6 +564,13 @@ function ObjectDetails({ object, content, actions }: { object: FarmObject; conte
   }
 
   if (object.type === "cropField") {
+    const crop = content.catalog.crops.find((item) => item.key === stringAttr(object, "cropKey"));
+    const area = polygonArea(object.polygon ?? []);
+    const capacity = getCapacityStatus({
+      area,
+      count: numberAttr(object, "count"),
+      idealSpace: crop?.idealSpaceSqft ?? numberAttr(object, "idealSpaceSqft"),
+    });
     return (
       <>
         {common}
@@ -543,38 +582,75 @@ function ObjectDetails({ object, content, actions }: { object: FarmObject; conte
           </label>
           <DetailItem label="Parent" value={parentLabel(content.objects, object.parentId)} />
           <DetailItem label="Planted" value={stringAttr(object, "planted") || "Unassigned"} />
+          <DetailItem label="Ideal capacity" value={capacity.capacityLabel} />
+          <DetailItem label="Harvest cycles" value={formatNumber(crop?.harvestCycles ?? numberAttr(object, "harvestCycles"), "Unknown")} />
         </div>
+        {capacity.isOver ? <CapacityWarning message={`Over recommended density by ${capacity.overBy} ${capacity.overBy === 1 ? "plant" : "plants"}.`} /> : null}
         <div className="detail-list">
           <span>Crop type</span>
           <label className="select-shell">
-            <select value={stringAttr(object, "cropKey")} onChange={(event) => actions?.setCropType(event.target.value)}>
+            <select value={stringAttr(object, "cropKey")} onChange={(event) => handleCropSelect(event.target.value, actions)}>
               <option value="">Unassigned</option>
+              {stringAttr(object, "cropKey") === "custom" ? <option value="custom">Custom: {stringAttr(object, "cropName")}</option> : null}
               {content.catalog.crops.map((crop) => <option key={crop.key} value={crop.key}>{crop.name}</option>)}
+              <option value="__custom">Custom crop...</option>
             </select>
           </label>
         </div>
+        <CatalogGuidance
+          title={crop ? crop.name : stringAttr(object, "cropName") || "Custom crop"}
+          subtitle={crop?.scientificName || crop?.cropCategory || "No catalog match"}
+          items={[
+            ["Category", crop?.cropCategory],
+            ["Life span", crop?.lifeSpan],
+            ["Ideal spacing", crop?.idealSpaceSqft ? `${crop.idealSpaceSqft} ft2 each` : undefined],
+            ["Soil pH", formatRange(crop?.soilPhMin, crop?.soilPhMax)],
+            ["Soil", crop?.soilTexture],
+            ["Light", crop?.lightRequirement],
+            ["Water", crop?.waterConsumptionMl ? `${crop.waterConsumptionMl} ml` : undefined],
+            ["Rain max", crop?.rainfallMaxMl ? `${crop.rainfallMaxMl} ml` : undefined],
+          ]}
+          notes={[crop?.description, crop?.howToGrow, crop?.insectControl, crop?.tips]}
+        />
         <DeleteControl object={object} actions={actions} />
       </>
     );
   }
 
   if (object.type === "livestock") {
-    const species = content.catalog.livestock.find((item) => item.name === stringAttr(object, "species")) ?? content.catalog.livestock[0];
+    const species = content.catalog.livestock.find((item) =>
+      item.key === stringAttr(object, "speciesKey") || item.name === stringAttr(object, "species")
+    );
     const breeds = species?.breeds ?? [stringAttr(object, "breed")].filter(Boolean);
+    const area = polygonArea(object.polygon ?? []);
+    const capacity = getCapacityStatus({
+      area,
+      count: numberAttr(object, "count"),
+      idealSpace: species?.idealSpaceSqft ?? numberAttr(object, "idealSpaceSqft"),
+    });
     return (
       <>
         {common}
         <div className="detail-grid">
           <DetailItem label="Species" value={stringAttr(object, "species")} />
           <DetailItem label="Breed" value={stringAttr(object, "breed")} />
-          <DetailItem label="Headcount" value={String(numberAttr(object, "count"))} />
+          <label className="detail-item">
+            <span>Headcount</span>
+            <input type="number" min="0" step="1" value={numberAttr(object, "count")} onChange={(event) => actions?.setLivestockCount(Number(event.target.value))} />
+          </label>
           <DetailItem label="Enclosure" value="Fenced" />
+          <DetailItem label="Ideal capacity" value={capacity.capacityLabel} />
+          <DetailItem label="Yield types" value={species?.yieldTypes?.join(", ") || "Unknown"} />
         </div>
+        {capacity.isOver ? <CapacityWarning message={`Over recommended density by ${capacity.overBy} ${capacity.overBy === 1 ? "animal" : "animals"}.`} /> : null}
         <div className="detail-list">
           <span>Livestock type</span>
           <label className="select-shell">
-            <select value={species?.key ?? ""} onChange={(event) => actions?.setLivestockSpecies(event.target.value)}>
+            <select value={species?.key ?? stringAttr(object, "speciesKey")} onChange={(event) => handleLivestockSelect(event.target.value, actions)}>
+              <option value="">Unassigned</option>
+              {stringAttr(object, "speciesKey") === "custom" ? <option value="custom">Custom: {stringAttr(object, "species")}</option> : null}
               {content.catalog.livestock.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
+              <option value="__custom">Custom livestock...</option>
             </select>
           </label>
         </div>
@@ -586,6 +662,17 @@ function ObjectDetails({ object, content, actions }: { object: FarmObject; conte
             </select>
           </label>
         </div>
+        <CatalogGuidance
+          title={species ? species.name : stringAttr(object, "species") || "Custom livestock"}
+          subtitle={species?.description || "No catalog match"}
+          items={[
+            ["Ideal spacing", species?.idealSpaceSqft ? `${species.idealSpaceSqft} ft2 each` : undefined],
+            ["Meat yield", species?.meatYield ? `${species.meatYield}` : undefined],
+            ["Yield frequency", species?.yieldFrequency],
+            ["Feed", species?.feed],
+          ]}
+          notes={[species?.careInstructions]}
+        />
         <DeleteControl object={object} actions={actions} />
       </>
     );
@@ -615,6 +702,56 @@ function ObjectDetails({ object, content, actions }: { object: FarmObject; conte
 
 function DetailItem({ label, value }: { label: string; value: string }) {
   return <div className="detail-item"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function CapacityWarning({ message }: { message: string }) {
+  return (
+    <div className="detail-list capacity-warning">
+      <span>Spacing warning</span>
+      <ul>
+        <li><strong>{message}</strong><em>yellow map outline</em></li>
+      </ul>
+    </div>
+  );
+}
+
+function CatalogGuidance({
+  title,
+  subtitle,
+  items,
+  notes,
+}: {
+  title: string;
+  subtitle: string;
+  items: Array<[string, string | undefined]>;
+  notes: Array<string | undefined>;
+}) {
+  const visibleItems = items.filter((item): item is [string, string] => Boolean(item[1]));
+  const visibleNotes = notes.filter((note): note is string => Boolean(note)).slice(0, 4);
+
+  if (!visibleItems.length && !visibleNotes.length) {
+    return (
+      <div className="detail-list catalog-guidance">
+        <span>Catalog data</span>
+        <ul><li><strong>{title}</strong><em>{subtitle}</em></li></ul>
+      </div>
+    );
+  }
+
+  return (
+    <div className="detail-list catalog-guidance">
+      <span>Catalog data</span>
+      <ul>
+        <li><strong>{title}</strong><em>{truncateText(subtitle, 88)}</em></li>
+        {visibleItems.map(([label, value]) => (
+          <li key={label}><strong>{label}</strong><em>{truncateText(value, 72)}</em></li>
+        ))}
+        {visibleNotes.map((note, index) => (
+          <li key={`note-${index}`} className="catalog-note"><strong>Note</strong><em>{truncateText(note, 150)}</em></li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function DeleteControl({ object, actions }: { object: FarmObject; actions?: FarmManagerActions }) {
@@ -682,6 +819,40 @@ function numberAttr(object: FarmObject, key: string) {
   return Number.isFinite(value) ? value : 0;
 }
 
+function handleCropSelect(value: string, actions?: FarmManagerActions) {
+  if (value === "__custom") {
+    const name = window.prompt("Crop name");
+    if (name?.trim()) actions?.setCustomCropName(name.trim());
+    return;
+  }
+
+  if (value !== "custom") actions?.setCropType(value);
+}
+
+function handleLivestockSelect(value: string, actions?: FarmManagerActions) {
+  if (value === "__custom") {
+    const name = window.prompt("Livestock name");
+    if (name?.trim()) actions?.setCustomLivestockName(name.trim());
+    return;
+  }
+
+  if (value !== "custom") actions?.setLivestockSpecies(value);
+}
+
+function getCapacityStatus({ area, count, idealSpace }: { area: number; count: number; idealSpace: number }) {
+  if (!Number.isFinite(area) || area <= 0 || !Number.isFinite(idealSpace) || idealSpace <= 0) {
+    return { capacityLabel: "Unknown", isOver: false, overBy: 0 };
+  }
+
+  const capacity = Math.max(0, Math.floor(area / idealSpace));
+  const overBy = Math.max(0, Math.ceil(count - capacity));
+  return {
+    capacityLabel: `${capacity.toLocaleString()} ${capacity === 1 ? "unit" : "units"}`,
+    isOver: overBy > 0,
+    overBy,
+  };
+}
+
 function parentLabel(objects: FarmObject[], parentId: string | null | undefined) {
   return objects.find((object) => object.id === parentId)?.label || "None";
 }
@@ -718,6 +889,21 @@ function formatDimensions(points: FarmManagerPoint[], units: FarmManagerContentS
 function formatArea(areaFt: number, units: FarmManagerContentState["units"]) {
   if (units === "m") return `${Math.round(areaFt * 0.092903)} m2`;
   return `${Math.round(areaFt).toLocaleString()} ft2`;
+}
+
+function formatNumber(value: number | undefined, fallback: string) {
+  return Number.isFinite(value) ? Number(value).toLocaleString() : fallback;
+}
+
+function formatRange(min: number | undefined, max: number | undefined) {
+  if (Number.isFinite(min) && Number.isFinite(max)) return `${min}-${max}`;
+  if (Number.isFinite(min)) return `${min}+`;
+  if (Number.isFinite(max)) return `up to ${max}`;
+  return undefined;
+}
+
+function truncateText(value: string, maxLength: number) {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1).trim()}...` : value;
 }
 
 function formatLength(lengthFt: number, units: FarmManagerContentState["units"]) {
