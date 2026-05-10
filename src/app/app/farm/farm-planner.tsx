@@ -38,6 +38,14 @@ type FarmV2Renderer = {
   unproject: (x: number, y: number) => LocalPoint;
   hitTestAll: (point: LocalPoint) => { id: string; distance: number }[];
   getZoomLimits: () => { min: number; max: number };
+  // Returns the new camera state when zooming about a specific screen point;
+  // legacy zoomAtScreenPoint preserves the world point under the cursor.
+  zoomAtScreenPoint: (
+    cursor: { x: number; y: number },
+    delta: number,
+    plan: SavedFarmV2Plan,
+  ) => { zoom: number; panX: number; panY: number };
+  size: () => { width: number; height: number };
   destroy: () => void;
 };
 
@@ -481,9 +489,25 @@ export function FarmPlanner() {
           {error ? <span className="farmv2-error">{error}</span> : null}
           <Segmented options={["grid", "satellite"]} value={activePlan?.view ?? "grid"} labels={{ grid: "Grid", satellite: "Satellite" }} onChange={(value) => updatePlan((plan) => ({ ...plan, view: value as "grid" | "satellite" }))} />
           <Segmented options={["ft", "m"]} value={activePlan?.units ?? "ft"} labels={{ ft: "ft", m: "m" }} onChange={(value) => updatePlan((plan) => ({ ...plan, units: value as "ft" | "m" }))} />
-          <button type="button" onClick={() => updatePlan((plan) => ({ ...plan, camera: { ...plan.camera, zoom: clamp(plan.camera.zoom - 0.18, rendererRef.current?.getZoomLimits().min ?? 0.1, rendererRef.current?.getZoomLimits().max ?? 12) } }))}>-</button>
-          <button type="button" onClick={() => updatePlan((plan) => ({ ...plan, camera: { ...plan.camera, zoom: clamp(plan.camera.zoom + 0.18, rendererRef.current?.getZoomLimits().min ?? 0.1, rendererRef.current?.getZoomLimits().max ?? 12) } }))}>+</button>
-          <button type="button" onClick={() => updatePlan((plan) => ({ ...plan, camera: { ...plan.camera, rotation: (plan.camera.rotation + 90) % 360 } }))}>Rotate</button>
+          <button type="button" onClick={() => updatePlan((plan) => {
+            const renderer = rendererRef.current;
+            if (!renderer) return plan;
+            const size = renderer.size();
+            const next = renderer.zoomAtScreenPoint({ x: size.width / 2, y: size.height / 2 }, -0.18, plan);
+            return { ...plan, camera: { ...plan.camera, ...next } };
+          })}>-</button>
+          <button type="button" onClick={() => updatePlan((plan) => {
+            const renderer = rendererRef.current;
+            if (!renderer) return plan;
+            const size = renderer.size();
+            const next = renderer.zoomAtScreenPoint({ x: size.width / 2, y: size.height / 2 }, 0.18, plan);
+            return { ...plan, camera: { ...plan.camera, ...next } };
+          })}>+</button>
+          <button type="button" onClick={() => updatePlan((plan) => {
+            const limits = rendererRef.current?.getZoomLimits();
+            const nextZoom = limits ? clamp(plan.camera.zoom, limits.min, limits.max) : plan.camera.zoom;
+            return { ...plan, camera: { ...plan.camera, rotation: (plan.camera.rotation + 90) % 360, zoom: nextZoom } };
+          })}>Rotate</button>
           <button type="button" onClick={() => updatePlan((plan) => ({ ...plan, camera: { zoom: rendererRef.current?.getZoomLimits().min ?? 1, panX: 0, panY: -18, rotation: 0 } }))}>Reset</button>
           <button type="button" onClick={() => setOnboardingOpen(true)}>Settings</button>
         </div>
@@ -506,7 +530,15 @@ export function FarmPlanner() {
           onClick={onCanvasClick}
           onWheel={(event) => {
             event.preventDefault();
-            updatePlan((plan) => ({ ...plan, camera: { ...plan.camera, zoom: clamp(plan.camera.zoom + (event.deltaY < 0 ? 0.18 : -0.18), rendererRef.current?.getZoomLimits().min ?? 0.1, rendererRef.current?.getZoomLimits().max ?? 12) } }));
+            const renderer = rendererRef.current;
+            if (!renderer) return;
+            const rect = event.currentTarget.getBoundingClientRect();
+            const cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+            const delta = event.deltaY < 0 ? 0.18 : -0.18;
+            updatePlan((plan) => ({
+              ...plan,
+              camera: { ...plan.camera, ...renderer.zoomAtScreenPoint(cursor, delta, plan) },
+            }), false);
           }}
         />
         {activePlan ? (
@@ -861,15 +893,25 @@ function createFarmV2Renderer(
     return boardToWorld(rotatePoint([(dy + dx) / 2, (dy - dx) / 2], boardCenter, -plan.camera.rotation));
   };
   const getZoomLimits = () => {
-    const points = getPlan().boundary.local.map((point) => {
-      const plan = getPlan();
+    const plan = getPlan();
+    const points = plan.boundary.local.map((point) => {
       const rotated = rotatePoint(worldToBoard(point), boardCenter, plan.camera.rotation);
       return { x: (rotated[0] - rotated[1]) * tileX, y: (rotated[0] + rotated[1]) * tileY };
     });
     const width = Math.max(...points.map((point) => point.x)) - Math.min(...points.map((point) => point.x));
     const height = Math.max(...points.map((point) => point.y)) - Math.min(...points.map((point) => point.y));
-    const min = Math.min(logicalWidth / Math.max(1, width * 1.25), logicalHeight / Math.max(1, height * 1.25));
-    return { min: clamp(min, 0.12, 1.2), max: 12 };
+    const minZoom = Math.min(
+      logicalWidth / Math.max(1, width * 1.25),
+      logicalHeight / Math.max(1, height * 1.25),
+    );
+    // Legacy: dynamic max so a small farm can zoom in further than a giant one.
+    const transform = worldTransform();
+    const base25Feet = 25 * transform.scale * Math.hypot(tileX, tileY);
+    const maxZoom = Math.max(
+      minZoom * 1.4,
+      (Math.min(logicalWidth, logicalHeight) * 0.65) / Math.max(1, base25Feet),
+    );
+    return { min: clamp(minZoom, 0.12, 1.2), max: clamp(maxZoom, 1.4, 12) };
   };
   const tracePolygon = (polygon: LocalPoint[], height: number) => {
     context.beginPath();
@@ -1392,7 +1434,7 @@ function createFarmV2Renderer(
     if (plan.view === "satellite") drawTerrainPatches(plan.boundary.local);
     else drawGridLines(plan.boundary.local);
     context.restore();
-    drawFence(plan.boundary.local, "#d4b16b", 0.3);
+    drawFence(plan.boundary.local, "#d4b16b", 0.25);
     // Sort objects per legacy: paths first (lowest layer), then crop areas,
     // livestock, crop fields, structures — and back-to-front by depth within
     // each layer so foreground objects paint over background ones.
@@ -1511,11 +1553,53 @@ function createFarmV2Renderer(
     }
     raf = window.requestAnimationFrame(render);
   };
+  // Legacy hitPriority — lower number wins so structures pull selection over
+  // crop fields, livestock, crop areas, and paths in that order.
+  const hitPriority = (object: FarmV2Object) => {
+    if (object.type === "structure") return 10;
+    if (object.type === "cropField") return 20;
+    if (object.type === "livestock") return 30;
+    if (object.type === "cropArea") return 40;
+    return 90;
+  };
   const hitTestAll = (point: LocalPoint) => getPlan().objects
-    .map((object) => ({ object, center: "polygon" in object ? polygonCentroid(object.polygon) : object.points[Math.floor(object.points.length / 2)] }))
-    .filter(({ object }) => object.type === "path" ? minPathDistance(point, object.points) < 2.5 : "polygon" in object && pointInPolygon(point, object.polygon))
-    .map(({ object, center }) => ({ id: object.id, distance: distance(point, center) }))
-    .sort((left, right) => left.distance - right.distance);
+    .filter((object) => object.type === "path"
+      ? minPathDistance(point, object.points) < 2.8
+      : "polygon" in object && pointInPolygon(point, object.polygon))
+    .sort((left, right) => hitPriority(left) - hitPriority(right))
+    .map((object) => ({ id: object.id, distance: 0 }));
+
+  // Project a hypothetical (panX/panY/zoom) to figure out where a world point
+  // would land on screen, then nudge pan so the cursor stays on the same
+  // world point as zoom changes (legacy zoomAtScreenPoint).
+  const zoomAtScreenPoint = (
+    cursor: { x: number; y: number },
+    delta: number,
+    plan: SavedFarmV2Plan,
+  ): { zoom: number; panX: number; panY: number } => {
+    const limits = getZoomLimits();
+    const beforeZoom = plan.camera.zoom;
+    const nextZoom = clamp(beforeZoom + delta, limits.min, limits.max);
+    if (nextZoom === beforeZoom) return plan.camera;
+    // World point under cursor at the current zoom.
+    const dx = (cursor.x - (logicalWidth * 0.49 + plan.camera.panX)) / (tileX * beforeZoom);
+    const dy = (cursor.y - (92 + plan.camera.panY)) / (tileY * beforeZoom);
+    const board: LocalPoint = [(dy + dx) / 2, (dy - dx) / 2];
+    const worldBefore = boardToWorld(rotatePoint(board, boardCenter, -plan.camera.rotation));
+    // Where that world point projects at the new zoom.
+    const rotated = rotatePoint(worldToBoard(worldBefore), boardCenter, plan.camera.rotation);
+    const screenAfter = {
+      x: logicalWidth * 0.49 + plan.camera.panX + (rotated[0] - rotated[1]) * tileX * nextZoom,
+      y: 92 + plan.camera.panY + (rotated[0] + rotated[1]) * tileY * nextZoom,
+    };
+    return {
+      zoom: nextZoom,
+      panX: plan.camera.panX + (cursor.x - screenAfter.x),
+      panY: plan.camera.panY + (cursor.y - screenAfter.y),
+    };
+  };
+
+  const size = () => ({ width: logicalWidth, height: logicalHeight });
 
   resize();
   window.addEventListener("resize", resize);
@@ -1524,6 +1608,8 @@ function createFarmV2Renderer(
     project,
     unproject,
     hitTestAll,
+    zoomAtScreenPoint,
+    size,
     getZoomLimits,
     destroy: () => {
       window.cancelAnimationFrame(raf);
