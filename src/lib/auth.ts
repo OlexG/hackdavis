@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { ObjectId } from "mongodb";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { getMongoDb } from "@/lib/mongodb";
 import type { Profile, User, UserSession } from "@/lib/models";
 import { verifyUserPassword } from "@/lib/users";
@@ -46,6 +46,8 @@ export async function createSessionForUser(userId: ObjectId) {
     path: "/",
     maxAge: sessionMaxAgeSeconds,
   });
+
+  return token;
 }
 
 export async function signInWithPassword(identifier: string, password: string) {
@@ -60,8 +62,16 @@ export async function signInWithPassword(identifier: string, password: string) {
 }
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
-  const token = (await cookies()).get(sessionCookieName)?.value;
+  const token = await getSessionToken();
 
+  if (!token) {
+    return null;
+  }
+
+  return getCurrentUserFromSessionToken(token);
+}
+
+export async function getCurrentUserFromSessionToken(token: string): Promise<CurrentUser | null> {
   if (!token) {
     return null;
   }
@@ -127,14 +137,33 @@ export async function requireUserSession() {
 
 export async function clearCurrentSession() {
   const cookieStore = await cookies();
-  const token = cookieStore.get(sessionCookieName)?.value;
+  const token = cookieStore.get(sessionCookieName)?.value ?? (await getBearerToken());
 
   if (token) {
-    const db = await getMongoDb();
-    await db.collection<UserSession>("sessions").deleteOne({ tokenHash: hashSessionToken(token) });
+    await clearSessionToken(token);
   }
 
   cookieStore.delete(sessionCookieName);
+}
+
+export async function clearSessionToken(token: string) {
+  const db = await getMongoDb();
+  await db.collection<UserSession>("sessions").deleteOne({ tokenHash: hashSessionToken(token) });
+}
+
+async function getSessionToken() {
+  return (await cookies()).get(sessionCookieName)?.value ?? (await getBearerToken());
+}
+
+async function getBearerToken() {
+  const authorization = (await headers()).get("authorization");
+
+  if (!authorization) {
+    return null;
+  }
+
+  const [scheme, token] = authorization.split(/\s+/, 2);
+  return scheme?.toLowerCase() === "bearer" && token ? token : null;
 }
 
 function hashSessionToken(token: string) {

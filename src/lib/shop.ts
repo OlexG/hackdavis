@@ -60,6 +60,7 @@ export type ShopDisplaySlotView = {
 export type ShopSnapshot = {
   userEmail: string;
   displayName: string;
+  isPublished: boolean;
   theme: ShopDisplay["theme"];
   layoutMode: ShopDisplay["layoutMode"];
   details: ShopDisplayDetails;
@@ -149,6 +150,7 @@ export async function getShopSnapshot(): Promise<ShopSnapshot> {
     return {
       userEmail: currentUser.email,
       displayName,
+      isPublished: Boolean(display),
       theme: "farm-stand",
       layoutMode: "shelves",
       details: normalizeDetails(display?.details, displayName),
@@ -224,6 +226,7 @@ async function getFallbackShopSnapshot() {
   return {
     userEmail: inventory.userEmail,
     displayName: inventory.displayName,
+    isPublished: false,
     theme: "farm-stand" as const,
     layoutMode: "shelves" as const,
     details: normalizeDetails(undefined, inventory.displayName),

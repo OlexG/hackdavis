@@ -8,6 +8,7 @@ import Constants from "expo-constants";
 import { Platform } from "react-native";
 
 const DEFAULT_PORT = 3000;
+let authToken: string | null = null;
 
 function resolveDevHost(): string | null {
   const hostUri =
@@ -64,18 +65,29 @@ export class ApiError extends Error {
   }
 }
 
+export function setApiAuthToken(token: string | null) {
+  authToken = token;
+}
+
+export function getApiAuthToken() {
+  return authToken;
+}
+
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const base = getApiBaseUrl();
   const url = path.startsWith("http") ? path : `${base}${path.startsWith("/") ? "" : "/"}${path}`;
+  const headers = new Headers(init?.headers);
+
+  headers.set("Accept", "application/json");
+  if (authToken) {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  }
 
   let response: Response;
   try {
     response = await fetch(url, {
       ...init,
-      headers: {
-        Accept: "application/json",
-        ...(init?.headers ?? {}),
-      },
+      headers,
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "network error";

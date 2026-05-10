@@ -125,6 +125,7 @@ export async function getSocialSnapshot(): Promise<SocialSnapshot> {
           snapshot: {
             userEmail: user.email,
             displayName,
+            isPublished: Boolean(display),
             theme: display.theme,
             layoutMode: display.layoutMode,
             details: normalizePublicDetails(display.details, displayName),
