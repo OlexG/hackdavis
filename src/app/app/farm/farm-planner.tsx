@@ -1451,6 +1451,11 @@ function createFarmV2Renderer(
       if (isSelected && object.type !== "path" && "polygon" in object) {
         drawSelectionHalo(object.polygon, object.height + 0.05);
       }
+    });
+    // Label pass: legacy parity — draw every label after every polygon so
+    // later layers can never paint over an earlier label. Iterate in the
+    // original (insertion) order so newer objects' labels stack on top.
+    plan.objects.forEach((object) => {
       const labelPoint = "polygon" in object ? polygonCentroid(object.polygon) : object.points[Math.floor(object.points.length / 2)];
       const p = project(labelPoint, "height" in object ? object.height + 0.2 : 0.8);
       context.fillStyle = "rgba(10,14,12,.78)";
