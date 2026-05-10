@@ -1065,39 +1065,39 @@ function InventoryToken({ item, compact = false }: { item: InventoryViewItem; co
 function iconForItem(item: InventoryViewItem) {
   const name = item.name.toLowerCase();
 
-  if (name.includes("tomato")) {
-    return "/inventory-icons/tomato.png";
-  }
-
-  if (name.includes("lettuce")) {
-    return "/inventory-icons/lettuce.png";
-  }
-
-  if (name.includes("corn") || item.category === "seeds" || item.category === "feed") {
-    return "/inventory-icons/corn.png";
-  }
-
-  if (name.includes("jam") || name.includes("strawberry") || item.category === "preserves") {
-    return "/inventory-icons/strawberry.png";
-  }
-
-  if (name.includes("basil") || name.includes("herb") || item.category === "starts") {
-    return "/inventory-icons/pea-pod.png";
-  }
-
-  if (item.category === "amendments") {
-    return "/inventory-icons/mushroom.png";
-  }
-
   if (item.category === "livestock") {
-    return "/inventory-icons/egg.png";
+    return "/inventory-icons/animals/chickens.png";
   }
 
   if (item.category === "tools") {
-    return "/inventory-icons/hammer.png";
+    return "/inventory-icons/materials/hammer.png";
   }
 
-  return "/inventory-icons/potato.png";
+  if (name.includes("tomato")) {
+    return "/inventory-icons/plants/tomato.png";
+  }
+
+  if (name.includes("lettuce")) {
+    return "/inventory-icons/plants/lettuce.png";
+  }
+
+  if (name.includes("corn") || item.category === "seeds" || item.category === "feed") {
+    return "/inventory-icons/plants/corn.png";
+  }
+
+  if (name.includes("jam") || name.includes("strawberry") || item.category === "preserves") {
+    return "/inventory-icons/plants/strawberries.png";
+  }
+
+  if (name.includes("basil") || name.includes("herb") || item.category === "starts") {
+    return "/inventory-icons/plants/basil.png";
+  }
+
+  if (item.category === "amendments") {
+    return "/inventory-icons/plants/mushroom.png";
+  }
+
+  return "/inventory-icons/plants/potatoes.png";
 }
 
 function columnToPatch(column: InventoryColumn): Partial<InventoryViewItem> {

@@ -56,7 +56,7 @@ function InventoryHeroBanner() {
             className="grid size-12 place-items-center rounded-md border-2 border-[#8b6f3e] bg-[#fff8dc] shadow-[inset_0_2px_0_rgba(255,255,255,0.6),inset_0_-4px_0_rgba(95,80,43,0.22),0_2px_0_#5e4a26]"
           >
             <Image
-              src="/inventory-icons/strawberry.png"
+              src="/inventory-icons/plants/strawberries.png"
               alt=""
               width={28}
               height={28}
