@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Sunpatch Market",
+    "slug": "sunpatch-market",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "sunpatch",
+    "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFE9B2"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sunpatch.market"
+    },
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "package": "com.sunpatch.market",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFE9B2"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
