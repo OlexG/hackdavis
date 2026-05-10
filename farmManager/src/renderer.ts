@@ -31,25 +31,43 @@ const { state } = DemoState;
   let ctx;
   let logicalWidth = 0;
   let logicalHeight = 0;
+  let animationFrame = 0;
+  let isRendering = false;
 
-export function init(targetCanvas: HTMLCanvasElement): void {
+export function init(targetCanvas: HTMLCanvasElement): () => void {
     canvas = targetCanvas;
     ctx = canvas.getContext("2d");
+    isRendering = true;
     window.addEventListener("resize", resize);
     resize();
-    requestAnimationFrame(render);
+    animationFrame = requestAnimationFrame(render);
+
+    return () => {
+      isRendering = false;
+      window.removeEventListener("resize", resize);
+      cancelAnimationFrame(animationFrame);
+      canvas = null;
+      ctx = null;
+    };
   }
 
 export function resize(): void {
+    const previousWidth = logicalWidth;
+    const previousHeight = logicalHeight;
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(rect.width * dpr);
     canvas.height = Math.round(rect.height * dpr);
-    canvas.style.width = `${rect.width}px`;
-    canvas.style.height = `${rect.height}px`;
+    canvas.style.width = rect.width + "px";
+    canvas.style.height = rect.height + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     logicalWidth = rect.width;
     logicalHeight = rect.height;
+
+    if (previousWidth > 0 && previousHeight > 0) {
+      state.panX += (logicalWidth - previousWidth) * 0.01;
+      state.panY += (logicalHeight - previousHeight) * 0.52;
+    }
   }
 
 export function project(point: Point, height = 0): ScreenPoint {
@@ -98,7 +116,7 @@ export function unproject(screenX: number, screenY: number): Point {
     ];
   }
 
-  function projectedBoundarySize(zoom = 1): { width: number; height: number } {
+  function projectedBoundaryBounds(zoom = 1): { minX: number; maxX: number; minY: number; maxY: number; width: number; height: number } {
     const points = DemoState.activeBoundary().map((point) => {
       const rotated = G.rotatePoint(worldToBoard(point), BOARD_CENTER, state.rotation);
       return {
@@ -108,14 +126,22 @@ export function unproject(screenX: number, screenY: number): Point {
     });
     const xs = points.map((point) => point.x);
     const ys = points.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
     return {
-      width: Math.max(...xs) - Math.min(...xs),
-      height: Math.max(...ys) - Math.min(...ys)
+      minX,
+      maxX,
+      minY,
+      maxY,
+      width: maxX - minX,
+      height: maxY - minY
     };
   }
 
 export function getZoomLimits(): ZoomLimits {
-    const size = projectedBoundarySize(1);
+    const size = projectedBoundaryBounds(1);
     const minZoom = Math.min(
       logicalWidth / Math.max(1, size.width * 1.25),
       logicalHeight / Math.max(1, size.height * 1.25)
@@ -129,13 +155,24 @@ export function getZoomLimits(): ZoomLimits {
     };
   }
 
+export function getCenteredPan(zoom = state.zoom): { x: number; y: number } {
+    const bounds = projectedBoundaryBounds(zoom);
+    const boundaryCenterX = (bounds.minX + bounds.maxX) / 2;
+    const boundaryCenterY = (bounds.minY + bounds.maxY) / 2;
+    return {
+      x: logicalWidth * 0.5 - logicalWidth * 0.49 - boundaryCenterX,
+      y: logicalHeight * 0.52 - 92 - boundaryCenterY
+    };
+  }
+
   function render() {
+    if (!ctx || !isRendering) return;
     ctx.clearRect(0, 0, logicalWidth, logicalHeight);
     drawBackdrop();
     drawGround();
     drawObjects();
     drawDraft();
-    requestAnimationFrame(render);
+    animationFrame = requestAnimationFrame(render);
   }
 
   function drawBackdrop() {
@@ -192,6 +229,7 @@ export function getZoomLimits(): ZoomLimits {
       stroke: "rgba(30, 47, 28, 0.8)"
     });
     drawCropRows(object);
+    if (isOverCapacity(object)) drawCapacityWarning(object);
     if (state.selectedId === object.id) drawSelection(object);
   }
 
@@ -203,6 +241,7 @@ export function getZoomLimits(): ZoomLimits {
     });
     drawFence(object.polygon, "#c9a865", object.height + 0.25);
     drawAnimals(object);
+    if (isOverCapacity(object)) drawCapacityWarning(object);
     if (state.selectedId === object.id) drawSelection(object);
   }
 
@@ -671,6 +710,38 @@ export function hitTestAll(world: Point): FarmObject[] {
       if (distanceToSegment(point, points[i], points[i + 1]) <= threshold) return true;
     }
     return false;
+  }
+
+  function isOverCapacity(object) {
+    if (object.type !== "cropField" && object.type !== "livestock") return false;
+    const idealSpace = Number(object.attrs.idealSpaceSqft);
+    const count = Number(object.attrs.count);
+    if (!Number.isFinite(idealSpace) || idealSpace <= 0 || !Number.isFinite(count) || count <= 0) return false;
+    return count * idealSpace > G.polygonArea(object.polygon) * 1.02;
+  }
+
+  function drawCapacityWarning(object) {
+    const height = object.height + 0.55;
+    const path = buildPath(object.polygon, height);
+    const center = project(G.polygonCentroid(object.polygon), height + 0.4);
+    ctx.save();
+    ctx.setLineDash([7, 5]);
+    ctx.strokeStyle = "#ffe45f";
+    ctx.lineWidth = Math.max(2, 2.2 * state.zoom);
+    ctx.stroke(path);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#ffe45f";
+    ctx.strokeStyle = "#3b2a14";
+    ctx.lineWidth = 2;
+    roundedRect(center.x - 10, center.y - 22, 20, 20, 3);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#3b2a14";
+    ctx.font = "900 14px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("!", center.x, center.y - 12);
+    ctx.restore();
   }
 
   function distanceToSegment(point, a, b) {
