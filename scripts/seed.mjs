@@ -19,6 +19,9 @@ if (!dbName) {
 const now = new Date();
 const shopImagesBucket = "shop_images";
 const imageUserAgent = "davishacks-seed/1.0 (local development seed script)";
+const usedUnsplashPhotoIds = new Set();
+const usedUnsplashSourceUrls = new Set();
+const unsplashSearchCache = new Map();
 const testUser = {
   username: "testfarmer",
   email: "test@gmail.com",
@@ -361,6 +364,7 @@ const neighborFarms = [
       itemSeed("Little gem lettuce", "harvest", "ready", 18, "heads", "wash table", "north shade bed", "#65a95a", 450, "Crisp mini heads packed for same-day pickup.", "2026-05-12T07:00:00.000Z", imageSources.lettuce),
       itemSeed("Cilantro bundles", "harvest", "ready", 24, "bunches", "porch cooler", "herb strip", "#4f9f52", 250, "Fragrant bunches with roots rinsed and wrapped.", "2026-05-11T07:00:00.000Z", imageSources.cilantro),
       itemSeed("Strawberry mint shrub", "preserves", "curing", 10, "bottles", "pantry crate", "spring berry bed", "#c95b76", 900, "Bright drinking vinegar for soda water or salad dressing.", "2026-08-20T07:00:00.000Z", imageSources.jam),
+      itemSeed("Arugula snack bags", "harvest", "ready", 15, "bags", "porch cooler", "peppery greens bed", "#72b85b", 475, "Peppery arugula bags for sandwiches and quick salads.", "2026-05-12T07:00:00.000Z", imageSources.vegetables),
     ],
     reviews: [
       reviewSeed("Nora Chen", 5, "Pickup was simple and the lettuce stayed crisp for days.", ["fresh", "easy pickup"]),
@@ -386,7 +390,6 @@ const neighborFarms = [
     inventory: [
       itemSeed("Early girl tomatoes", "harvest", "ready", 9, "lb", "driveway cart", "sun trellis", "#e9783a", 500, "Firm slicing tomatoes picked at first blush.", "2026-05-15T07:00:00.000Z", imageSources.tomatoes),
       itemSeed("Albion strawberries", "harvest", "ready", 16, "pints", "cooler shelf", "berry trough", "#d94d5c", 650, "Sweet pints sorted with the soft berries removed.", "2026-05-11T07:00:00.000Z", imageSources.strawberries),
-      itemSeed("Pollinator posies", "harvest", "ready", 12, "bunches", "water bucket", "front border", "#d7b64b", 400, "Small edible-flower and pollinator bouquets.", "2026-05-13T07:00:00.000Z", imageSources.flowers),
     ],
     reviews: [
       reviewSeed("Ari Salazar", 5, "The strawberry pints tasted like the first real week of spring.", ["sweet", "seasonal"]),
@@ -413,6 +416,7 @@ const neighborFarms = [
       itemSeed("Pasture eggs", "harvest", "ready", 8, "dozen", "gate shelf", "coop run", "#d7b64b", 700, "Mixed-color dozen from the backyard flock.", "2026-05-18T07:00:00.000Z", imageSources.eggs),
       itemSeed("Oyster mushrooms", "harvest", "ready", 5, "lb", "cooler tray", "oak log stack", "#b99067", 900, "Tender clusters harvested before the caps flatten.", "2026-05-12T07:00:00.000Z", imageSources.mushrooms),
       itemSeed("Apricot rosemary jam", "preserves", "curing", 14, "jars", "pantry shelf", "tree guild", "#e0a33a", 850, "Low-sugar jam with a soft rosemary finish.", "2026-11-01T07:00:00.000Z", imageSources.jam),
+      itemSeed("Breakfast herb salt", "preserves", "curing", 18, "jars", "gate shelf", "drying rack", "#8a6f3f", 575, "Coop-side herb salt for eggs and breakfast potatoes.", "2026-12-01T07:00:00.000Z", imageSources.jam),
     ],
     reviews: [
       reviewSeed("Eli Morgan", 5, "The eggs were spotless and the pickup shelf was easy to find.", ["eggs", "easy pickup"]),
@@ -438,7 +442,6 @@ const neighborFarms = [
     inventory: [
       itemSeed("Pea shoot clamshells", "harvest", "ready", 20, "clamshells", "alley tote", "hydro shelf", "#66ad63", 550, "Tender pea shoots clipped the morning of pickup.", "2026-05-11T07:00:00.000Z", imageSources.lettuce),
       itemSeed("Spicy salad mix", "harvest", "ready", 14, "bags", "cool tote", "mustard bed", "#72b85b", 600, "Peppery baby greens with edible flower petals.", "2026-05-12T07:00:00.000Z", imageSources.vegetables),
-      itemSeed("Strawberry lavender jam", "preserves", "curing", 18, "jars", "pantry crate", "berry rail", "#c95b76", 950, "Soft-set berry jam with a light lavender finish.", "2026-10-15T07:00:00.000Z", imageSources.jam),
     ],
     reviews: [
       reviewSeed("Cam Huynh", 5, "The pea shoots were clean, sweet, and packed perfectly.", ["greens", "clean"]),
@@ -465,6 +468,7 @@ const neighborFarms = [
       itemSeed("Cherry tomato cups", "harvest", "ready", 22, "cups", "courtyard table", "arch trellis", "#e9783a", 450, "Mixed cherry tomatoes sorted by color.", "2026-05-14T07:00:00.000Z", imageSources.tomatoes),
       itemSeed("Basil bouquets", "harvest", "ready", 16, "bunches", "water jar", "herb border", "#3f8b58", 350, "Long-stem basil bundles for pesto or porch bouquets.", "2026-05-12T07:00:00.000Z", imageSources.cilantro),
       itemSeed("Edible flower cups", "harvest", "ready", 10, "cups", "shade tray", "flower edge", "#d7b64b", 500, "Calendula, viola, and borage flowers for salads.", "2026-05-11T07:00:00.000Z", imageSources.flowers),
+      itemSeed("Parsley lemon bundles", "harvest", "ready", 13, "bundles", "courtyard table", "citrus herb pot", "#4f9f52", 325, "Parsley bundles tucked with lemon thyme stems.", "2026-05-12T07:00:00.000Z", imageSources.cilantro),
     ],
     reviews: [
       reviewSeed("Maya Ortiz", 5, "The tomato cups were gorgeous and sorted with care.", ["tomatoes", "colorful"]),
@@ -490,7 +494,6 @@ const neighborFarms = [
     inventory: [
       itemSeed("Blue oyster clusters", "harvest", "ready", 6, "lb", "shed cooler", "straw blocks", "#b99067", 950, "Dense clusters harvested while caps are still curled.", "2026-05-12T07:00:00.000Z", imageSources.marketMushrooms),
       itemSeed("Romaine bundles", "harvest", "ready", 11, "heads", "wash bin", "compost bed", "#65a95a", 425, "Tall romaine heads grown in finished compost.", "2026-05-13T07:00:00.000Z", imageSources.lettuce),
-      itemSeed("Tomato leaf sauce", "preserves", "curing", 12, "jars", "pantry shelf", "summer sauce batch", "#e9783a", 875, "Savory sauce from frozen summer tomatoes and herbs.", "2026-09-30T07:00:00.000Z", imageSources.jam),
     ],
     reviews: [
       reviewSeed("Inez Ford", 5, "The mushrooms cooked down beautifully.", ["mushrooms", "high quality"]),
@@ -841,8 +844,41 @@ function itemSeed(name, category, status, amount, unit, location, source, color,
     priceCents,
     useBy: new Date(useBy),
     acquiredAt: new Date("2026-05-09T07:00:00.000Z"),
-    image,
+    image: listingImage(name, category, image),
   };
+}
+
+function listingImage(name, category, fallbackImage) {
+  const slug = slugify(name);
+
+  return {
+    key: `listing-v3-${slug}`,
+    fileName: `${slug}.jpg`,
+    searchQuery: `${imageSearchTerm(name, category)} ${name} farm stand`,
+    fallbackDownloadUrl: fallbackImage?.downloadUrl,
+    fallbackSourcePage: fallbackImage?.sourcePage,
+  };
+}
+
+function imageSearchTerm(name, category) {
+  const normalized = name.toLowerCase();
+
+  if (normalized.includes("egg")) return "fresh eggs carton";
+  if (normalized.includes("mushroom")) return "fresh mushrooms";
+  if (normalized.includes("strawberr") || normalized.includes("berry")) return "fresh strawberries";
+  if (normalized.includes("tomato") || normalized.includes("salsa") || normalized.includes("chutney")) return "fresh tomatoes";
+  if (normalized.includes("lettuce") || normalized.includes("kale") || normalized.includes("greens") || normalized.includes("salad")) return "fresh lettuce greens";
+  if (normalized.includes("cilantro") || normalized.includes("basil") || normalized.includes("herb") || normalized.includes("sage") || normalized.includes("rosemary") || normalized.includes("thyme")) return "fresh herbs";
+  if (normalized.includes("flower") || normalized.includes("posies") || normalized.includes("bouquet") || normalized.includes("marigold")) return "garden flowers";
+  if (normalized.includes("pepper")) return "fresh peppers";
+  if (normalized.includes("jam") || normalized.includes("sauce") || normalized.includes("shrub") || normalized.includes("salt")) return "homemade jam jars";
+  if (category === "preserves") return "preserve jars";
+
+  return name;
+}
+
+function slugify(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
 }
 
 function reviewSeed(reviewerName, rating, comment, tags) {
@@ -865,15 +901,16 @@ async function ensureSeedShopImage(db, userId, inventoryItemId, image) {
     return existing._id;
   }
 
-  const downloaded = await downloadSeedImage(image.downloadUrl);
+  const resolvedImage = await resolveSeedImage(image);
+  const downloaded = await downloadSeedImage(resolvedImage.downloadUrl);
   const bucket = new GridFSBucket(db, { bucketName: shopImagesBucket });
-  const uploadStream = bucket.openUploadStream(image.fileName, {
+  const uploadStream = bucket.openUploadStream(resolvedImage.fileName, {
     metadata: {
       userId,
       inventoryItemId,
       contentType: downloaded.contentType,
-      sourceUrl: image.downloadUrl,
-      sourcePage: image.sourcePage,
+      sourceUrl: resolvedImage.downloadUrl,
+      sourcePage: resolvedImage.sourcePage,
       seedKey: image.key,
       uploadedAt: now,
     },
@@ -886,6 +923,62 @@ async function ensureSeedShopImage(db, userId, inventoryItemId, image) {
   });
 
   return uploadStream.id;
+}
+
+async function resolveSeedImage(image) {
+  if (!image.searchQuery) {
+    return image;
+  }
+
+  const results = await searchUnsplashPhotos(image.searchQuery);
+  const result =
+    results.find((photo) => !usedUnsplashPhotoIds.has(photo.id) && !usedUnsplashSourceUrls.has(photo.urls?.raw)) ??
+    results.find((photo) => !usedUnsplashSourceUrls.has(photo.urls?.raw)) ??
+    results[0];
+
+  if (!result) {
+    return {
+      key: image.key,
+      fileName: image.fileName,
+      downloadUrl: image.fallbackDownloadUrl,
+      sourcePage: image.fallbackSourcePage,
+    };
+  }
+
+  usedUnsplashPhotoIds.add(result.id);
+  usedUnsplashSourceUrls.add(result.urls.raw);
+
+  return {
+    key: image.key,
+    fileName: image.fileName,
+    downloadUrl: `${result.urls.raw}&auto=format&fit=crop&w=800&q=80`,
+    sourcePage: result.links.html,
+  };
+}
+
+async function searchUnsplashPhotos(query) {
+  const cached = unsplashSearchCache.get(query);
+  if (cached) {
+    return cached;
+  }
+
+  const url = `https://unsplash.com/napi/search/photos?query=${encodeURIComponent(query)}&per_page=30`;
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": imageUserAgent,
+      "Accept": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unsplash image search failed ${response.status} for ${query}`);
+  }
+
+  const data = await response.json();
+  const results = Array.isArray(data.results) ? data.results : [];
+  unsplashSearchCache.set(query, results);
+
+  return results;
 }
 
 async function downloadSeedImage(url) {
