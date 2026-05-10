@@ -55,9 +55,10 @@ function normalizeRequest(raw: unknown): { slots: ShopDisplaySaveSlot[]; details
 
     const value = slot as Record<string, unknown>;
 
-    return {
-      inventoryItemId: typeof value.inventoryItemId === "string" ? value.inventoryItemId : "",
-      position: typeof value.position === "number" ? value.position : undefined,
+      return {
+        inventoryItemId: typeof value.inventoryItemId === "string" ? value.inventoryItemId : "",
+        listingId: typeof value.listingId === "string" ? value.listingId : undefined,
+        position: typeof value.position === "number" ? value.position : undefined,
       displayAmount: typeof value.displayAmount === "number" ? value.displayAmount : undefined,
       displayUnit: typeof value.displayUnit === "string" ? value.displayUnit : undefined,
       priceCents: typeof value.priceCents === "number" ? value.priceCents : undefined,

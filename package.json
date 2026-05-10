@@ -11,6 +11,7 @@
     "lint": "eslint",
     "db:seed": "node scripts/seed.mjs",
     "db:seed:marketplace": "node scripts/seed-marketplace.mjs",
+    "db:consolidate": "node scripts/consolidate-mongo.mjs",
     "db:seed:plants": "node scripts/seed-plants.mjs"
   },
   "dependencies": {

@@ -6,7 +6,6 @@ import { useEffect, useRef, useState, type CSSProperties, type Dispatch, type Se
 import type { FarmV2Object, FarmV2Plan, GeoPoint, LocalPoint } from "@/lib/models";
 import {
   clamp,
-  cloneFarmV2Objects,
   createFarmV2Commit,
   defaultFarmV2Boundary,
   demoFarmV2GeoBoundary,
@@ -84,6 +83,7 @@ export function FarmPlanner() {
   const [activePlan, setActivePlan] = useState<SavedFarmV2Plan | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [boundaryGeo, setBoundaryGeo] = useState<GeoPoint[]>([]);
@@ -156,7 +156,6 @@ export function FarmPlanner() {
       renderer.destroy();
       if (rendererRef.current === renderer) rendererRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePlan, draft, mouse]);
 
   // Fetch a satellite image of the boundary's geographic bbox when the user
@@ -391,7 +390,10 @@ export function FarmPlanner() {
     if (pointer && event.buttons === 1) {
       const dx = event.clientX - pointer.x;
       const dy = event.clientY - pointer.y;
-      if (Math.hypot(dx, dy) > 4) pointer.moved = true;
+      if (Math.hypot(dx, dy) > 4 && !pointer.moved) {
+        pointer.moved = true;
+        setIsDraggingCanvas(true);
+      }
       if (pointer.moved) {
         updatePlan((plan) => ({
           ...plan,
@@ -410,6 +412,7 @@ export function FarmPlanner() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    setIsDraggingCanvas(false);
     window.setTimeout(() => {
       pointerRef.current = null;
     }, 0);
@@ -561,13 +564,14 @@ export function FarmPlanner() {
         <canvas
           ref={canvasRef}
           aria-label="Interactive low-poly farm map"
-          style={{ cursor: pointerRef.current?.moved ? "grabbing" : mode === "draw" ? "crosshair" : "grab" }}
+          style={{ cursor: isDraggingCanvas ? "grabbing" : mode === "draw" ? "crosshair" : "grab" }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
           onPointerLeave={() => {
             setMouse(null);
+            setIsDraggingCanvas(false);
             pointerRef.current = null;
           }}
           onClick={onCanvasClick}

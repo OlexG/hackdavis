@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { ObjectId } from "mongodb";
 import { cookies } from "next/headers";
 import { getMongoDb } from "@/lib/mongodb";
@@ -12,6 +12,7 @@ const sessionMaxAgeSeconds = 60 * 60 * 24 * 30;
 
 export type CurrentUser = {
   id: string;
+  uuid: string;
   email: string;
   username?: string;
   displayName: string;
@@ -85,8 +86,25 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     return null;
   }
 
+  const userUuid = typeof user.uuid === "string" && user.uuid
+    ? user.uuid
+    : randomUUID();
+
+  if (!user.uuid) {
+    await db.collection<User>("users").updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          uuid: userUuid,
+          updatedAt: new Date(),
+        },
+      },
+    );
+  }
+
   return {
     id: user._id.toString(),
+    uuid: userUuid,
     email: user.email,
     username: user.username,
     displayName: profile?.displayName || user.username || user.email,

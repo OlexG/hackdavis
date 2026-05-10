@@ -64,9 +64,11 @@ export type CatalogItem = {
 
 export type User = {
   _id: ObjectId;
+  uuid: string;
   email: string;
   username?: string;
   passwordHash: string;
+  pushTokens?: string[];
   role: "user" | "admin";
   createdAt: Date;
   updatedAt: Date;
@@ -126,6 +128,7 @@ export type InventoryItem = {
 
 export type ShopDisplaySlot = {
   inventoryItemId: ObjectId;
+  listingId: string;
   position: number;
   displayAmount: number;
   displayUnit: string;
@@ -134,6 +137,26 @@ export type ShopDisplaySlot = {
   visible: boolean;
   imageId?: ObjectId;
   imageMimeType?: string;
+};
+
+export type ShopOffering = {
+  _id: ObjectId;
+  listingId: string;
+  userId: ObjectId;
+  userUuid: string;
+  inventoryItemId: ObjectId;
+  name: string;
+  category: InventoryCategory;
+  amount: number;
+  unit: string;
+  priceCents: number;
+  signText: string;
+  visible: boolean;
+  position: number;
+  imageId?: ObjectId;
+  imageMimeType?: string;
+  createdAt: Date;
+  updatedAt: Date;
 };
 
 export type ShopHoursSchedule = {
@@ -205,10 +228,68 @@ export type FarmReview = {
 
 export type Farm = {
   _id: ObjectId;
-  userId: ObjectId;
+  userId?: ObjectId;
+  userUuid?: string;
+  slug?: string;
   name: string;
+  shortName?: string;
+  distance?: string;
+  neighborhood?: string;
+  response?: string;
+  rating?: number;
+  reviews?: number;
+  ratings?: {
+    quality: number;
+    fairness: number;
+    pickup: number;
+  };
+  offerings?: Array<{
+    slug: string;
+    name: string;
+    category: string;
+    amount: number;
+    unit: string;
+    priceCents: number;
+    signText: string;
+    icon: string;
+    color: string;
+  }>;
+  sortOrder?: number;
   units: "meters" | "feet";
   bounds: ObjectSize;
+  location?: {
+    type: "Point";
+    coordinates: [number, number];
+  };
+  coordinates?: {
+    latitude: number;
+    longitude: number;
+    x?: number;
+    y?: number;
+  };
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type OfferNotification = {
+  _id: ObjectId;
+  type: "offer";
+  status: "pending" | "accepted" | "declined";
+  listingId: string;
+  offeringName: string;
+  farmId?: ObjectId;
+  farmName?: string;
+  recipientUserUuid: string;
+  actorUserUuid: string;
+  actorName: string;
+  mode: "cash" | "barter";
+  cashOfferCents?: number;
+  barterListingIds?: string[];
+  note?: string;
+  pushEvents?: {
+    offerMadeAt?: Date;
+    offerAcceptedAt?: Date;
+  };
   createdAt: Date;
   updatedAt: Date;
 };

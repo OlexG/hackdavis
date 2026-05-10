@@ -36,17 +36,10 @@ const EXPECTED_SECONDS = 30;
 export function MagicGenerateOverlay({ visible }: { visible: boolean }) {
   const [phraseIndex, setPhraseIndex] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [mountTarget, setMountTarget] = useState<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    setMountTarget(document.getElementById("app-main"));
-  }, []);
+  const mountTarget = typeof document === "undefined" ? null : document.getElementById("app-main");
 
   useEffect(() => {
     if (!visible) {
-      setPhraseIndex(0);
-      setElapsedSeconds(0);
       return;
     }
 
@@ -66,13 +59,15 @@ export function MagicGenerateOverlay({ visible }: { visible: boolean }) {
   }, [visible]);
 
   useEffect(() => {
-    if (!visible || !mountTarget) return;
-    const previousOverflow = mountTarget.style.overflow;
-    mountTarget.style.overflow = "hidden";
+    if (!visible || typeof document === "undefined") return;
+    const target = document.getElementById("app-main");
+    if (!target) return;
+    const previousOverflow = target.style.overflow;
+    target.style.overflow = "hidden";
     return () => {
-      mountTarget.style.overflow = previousOverflow;
+      target.style.overflow = previousOverflow;
     };
-  }, [visible, mountTarget]);
+  }, [visible]);
 
   if (!visible || !mountTarget) {
     return null;

@@ -7,8 +7,11 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const formData = await request.formData();
+    const formData = await request.formData() as unknown as globalThis.FormData & {
+      get(name: string): FormDataEntryValue | null;
+    };
     const inventoryItemId = formData.get("inventoryItemId");
+    const listingId = formData.get("listingId");
     const file = formData.get("file");
 
     if (typeof inventoryItemId !== "string" || !inventoryItemId) {
@@ -21,6 +24,7 @@ export async function POST(request: Request) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const result = await uploadShopImage({
       inventoryItemId,
+      listingId: typeof listingId === "string" ? listingId : undefined,
       fileName: file.name,
       mimeType: file.type,
       bytes,

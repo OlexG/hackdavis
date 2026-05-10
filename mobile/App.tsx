@@ -26,13 +26,17 @@ import tomatoIcon from "./assets/inventory-icons/tomato.png";
 import NativeFarmMap from "./components/NativeFarmMap";
 import { getApiBaseUrl } from "./lib/api";
 import {
+  createOffer,
+  fetchOffers,
   fetchMarketplaceSnapshot,
+  fetchShopOfferings,
   type MarketFarm,
   type MarketOffering,
   type MarketplaceSnapshot,
+  type OfferNotification,
 } from "./lib/marketplace";
 
-type MainTab = "market" | "shop";
+type MainTab = "market" | "shop" | "offers";
 type MarketView = "map" | "list";
 type OfferMode = "cash" | "barter";
 type Category = MarketOffering["category"];
@@ -368,6 +372,9 @@ const myShopRatings: RatingProfile = {
   pickup: 4.7,
 };
 
+const mobileUserUuid = "mobile-demo-buyer";
+const myShopUserUuid = process.env.EXPO_PUBLIC_USER_UUID ?? mobileUserUuid;
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<MainTab>("market");
 
@@ -377,11 +384,12 @@ export default function App() {
       <View style={styles.app}>
         <TopBar />
         <View style={styles.screen}>
-          {activeTab === "market" ? <MarketScreen /> : <ShopScreen />}
+          {activeTab === "market" ? <MarketScreen /> : activeTab === "shop" ? <ShopScreen /> : <OffersScreen />}
         </View>
         <View style={styles.tabBar}>
           <TabButton active={activeTab === "market"} label="Market" glyph="wagon" onPress={() => setActiveTab("market")} />
           <TabButton active={activeTab === "shop"} label="My Shop" glyph="basket" onPress={() => setActiveTab("shop")} />
+          <TabButton active={activeTab === "offers"} label="Offers" glyph="sparkle" onPress={() => setActiveTab("offers")} />
         </View>
       </View>
     </SafeAreaView>
@@ -442,7 +450,7 @@ function MarketScreen() {
   }, []);
 
   useEffect(() => {
-    loadFarms();
+    void Promise.resolve().then(loadFarms);
   }, [loadFarms]);
 
   const farms =
@@ -478,14 +486,30 @@ function MarketScreen() {
     });
   }
 
-  function submitTrade(farm: Farm, offering: Offering, draft: TradeDraft) {
+  async function submitTrade(farm: Farm, offering: Offering, draft: TradeDraft) {
     const message =
       draft.mode === "cash"
         ? `${formatMoney(draft.cashOfferCents)} offer sent for ${offering.name}.`
         : `${draft.barterIds.length} barter item${draft.barterIds.length === 1 ? "" : "s"} offered for ${offering.name}.`;
 
-    setSentMessage(`${farm.shortName}: ${message}`);
-    setTradeDraft(null);
+    try {
+      await createOffer({
+        listingId: offering.listingId ?? offering.id,
+        farmId: farm.id,
+        farmName: farm.name,
+        actorUserUuid: mobileUserUuid,
+        actorName: "Mobile shopper",
+        mode: draft.mode,
+        cashOfferCents: draft.mode === "cash" ? draft.cashOfferCents : undefined,
+        barterListingIds: draft.mode === "barter" ? draft.barterIds : [],
+        note: draft.note,
+      });
+      setSentMessage(`${farm.shortName}: ${message}`);
+      setTradeDraft(null);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Unable to send offer";
+      setSentMessage(`Offer could not be sent: ${reason}`);
+    }
   }
 
   return (
@@ -878,7 +902,7 @@ function FarmCard({
   onPress: () => void;
   onStartTrade: (farm: Farm, offering: Offering, mode: OfferMode) => void;
   onChangeDraft: (draft: TradeDraft | null) => void;
-  onSubmitTrade: (farm: Farm, offering: Offering, draft: TradeDraft) => void;
+  onSubmitTrade: (farm: Farm, offering: Offering, draft: TradeDraft) => Promise<void>;
 }) {
   const shelfCount = farm.offerings.reduce((total, offering) => total + offering.amount, 0);
 
@@ -980,7 +1004,7 @@ function TradeComposer({
   offering: Offering;
   draft: TradeDraft;
   onChange: (draft: TradeDraft | null) => void;
-  onSubmit: () => void;
+  onSubmit: () => void | Promise<void>;
 }) {
   const barterTotal = useMemo(
     () =>
@@ -1070,10 +1094,33 @@ function TradeComposer({
 }
 
 function ShopScreen() {
-  const totalDisplayed = myShopOfferings
+  const [offerings, setOfferings] = useState<ShopOffering[]>(myShopOfferings);
+  const [shopStatus, setShopStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [shopMessage, setShopMessage] = useState<string | null>(null);
+  const totalDisplayed = offerings
     .filter((item) => item.status === "on shelf" || item.status === "barter preferred")
     .reduce((sum, item) => sum + item.amount, 0);
   const averageRating = (myShopRatings.quality + myShopRatings.fairness + myShopRatings.pickup) / 3;
+
+  const loadShop = useCallback(async () => {
+    setShopStatus("loading");
+    setShopMessage(null);
+
+    try {
+      const data = await fetchShopOfferings(myShopUserUuid);
+      if (data.offerings.length) {
+        setOfferings(data.offerings);
+      }
+      setShopStatus("ready");
+    } catch (error) {
+      setShopStatus("error");
+      setShopMessage(error instanceof Error ? error.message : "Could not load shop offerings");
+    }
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(loadShop);
+  }, [loadShop]);
 
   return (
     <ScrollView contentContainerStyle={styles.screenScroll} showsVerticalScrollIndicator={false}>
@@ -1100,6 +1147,16 @@ function ShopScreen() {
         </View>
       </View>
 
+      {shopStatus === "error" ? (
+        <View style={styles.notice}>
+          <PixelGlyph name="sparkle" small />
+          <View style={styles.noticeColumn}>
+            <Text style={styles.noticeText}>Showing local shop fallback.</Text>
+            <Text style={styles.noticeMeta}>{shopMessage}</Text>
+          </View>
+        </View>
+      ) : null}
+
       <View style={styles.pixelPanel}>
         <View style={styles.panelHeaderNeed}>
           <PixelGlyph name="sparkle" small />
@@ -1116,7 +1173,7 @@ function ShopScreen() {
           <Text style={styles.panelHeaderText}>Current offerings</Text>
         </View>
         <View style={styles.panelBody}>
-          {myShopOfferings.map((offering) => (
+          {offerings.map((offering) => (
             <ShopOfferingCard key={offering.id} offering={offering} />
           ))}
         </View>
@@ -1145,6 +1202,89 @@ function ShopOfferingCard({ offering }: { offering: ShopOffering }) {
         <Text style={styles.statusSignText}>{offering.status}</Text>
       </View>
     </View>
+  );
+}
+
+function OffersScreen() {
+  const [offers, setOffers] = useState<OfferNotification[]>([]);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [message, setMessage] = useState<string | null>(null);
+
+  const loadOffers = useCallback(async () => {
+    setStatus("loading");
+    setMessage(null);
+
+    try {
+      const data = await fetchOffers(mobileUserUuid);
+      setOffers(data.offers);
+      setStatus("ready");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Could not load offers");
+    }
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(loadOffers);
+  }, [loadOffers]);
+
+  return (
+    <ScrollView contentContainerStyle={styles.screenScroll} showsVerticalScrollIndicator={false}>
+      <PixelPanel headerTone="pink">
+        <View style={styles.marketHeader}>
+          <View style={styles.marketTitleGroup}>
+            <Text style={styles.eyebrow}>Offer inbox</Text>
+            <Text style={styles.title}>Trades and cash offers</Text>
+          </View>
+          <StatusTag label={`${offers.length} offers`} tone="pink" />
+        </View>
+      </PixelPanel>
+
+      {status === "loading" ? (
+        <View style={[styles.notice, styles.loadingNotice]}>
+          <ActivityIndicator color="#3b2a14" />
+          <Text style={styles.noticeText}>Loading offers...</Text>
+        </View>
+      ) : null}
+
+      {status === "error" ? (
+        <View style={styles.notice}>
+          <PixelGlyph name="sparkle" small />
+          <View style={styles.noticeColumn}>
+            <Text style={styles.noticeText}>Could not load offers.</Text>
+            <Text style={styles.noticeMeta}>{message}</Text>
+            <Pressable accessibilityRole="button" onPress={loadOffers} style={styles.retryButton}>
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {offers.length ? offers.map((offer) => (
+        <View key={offer.id} style={styles.shopOfferingCard}>
+          <View style={[styles.imageSlotSmall, { backgroundColor: offer.status === "accepted" ? "#eef8df" : "#fff4dc" }]}>
+            <PixelGlyph name="sparkle" />
+          </View>
+          <View style={styles.shopOfferingCopy}>
+            <View style={styles.cardTopLine}>
+              <Text style={styles.offeringName}>{offer.offeringName}</Text>
+              <StatusTag label={offer.status} tone={offer.status === "accepted" ? "green" : "gold"} />
+            </View>
+            <Text style={styles.itemQuantity}>
+              {offer.mode === "cash" ? formatMoney(offer.cashOfferCents ?? 0) : `${offer.barterListingIds.length} barter listing${offer.barterListingIds.length === 1 ? "" : "s"}`}
+            </Text>
+            <Text style={styles.signText}>
+              {offer.actorName}{offer.note ? `: ${offer.note}` : ""}
+            </Text>
+          </View>
+        </View>
+      )) : status === "ready" ? (
+        <View style={styles.notice}>
+          <PixelGlyph name="basket" small />
+          <Text style={styles.noticeText}>No offers yet.</Text>
+        </View>
+      ) : null}
+    </ScrollView>
   );
 }
 
@@ -1177,7 +1317,7 @@ function CategoryBadge({ category }: { category: Category }) {
   );
 }
 
-function StatusTag({ label, tone }: { label: string; tone: "green" | "gold" | "blue" | "cream" }) {
+function StatusTag({ label, tone }: { label: string; tone: "green" | "gold" | "blue" | "cream" | "pink" }) {
   const toneStyle =
     tone === "green"
       ? styles.statusGreen
@@ -1185,6 +1325,8 @@ function StatusTag({ label, tone }: { label: string; tone: "green" | "gold" | "b
         ? styles.statusGold
         : tone === "blue"
           ? styles.statusBlue
+          : tone === "pink"
+            ? styles.statusPink
           : styles.statusCream;
 
   return (
@@ -1199,10 +1341,10 @@ function PixelPanel({
   headerTone,
 }: {
   children: ReactNode;
-  headerTone?: "sky";
+  headerTone?: "sky" | "pink";
 }) {
   return (
-    <View style={[styles.pixelPanel, headerTone === "sky" && styles.skyPanel]}>
+    <View style={[styles.pixelPanel, headerTone === "sky" && styles.skyPanel, headerTone === "pink" && styles.pinkPanel]}>
       {children}
     </View>
   );
@@ -1505,6 +1647,9 @@ const styles = StyleSheet.create({
   skyPanel: {
     backgroundColor: "#d8ecd6",
   },
+  pinkPanel: {
+    backgroundColor: "#fff0f4",
+  },
   panelActive: {
     borderColor: colors.leaf,
   },
@@ -1647,6 +1792,10 @@ const styles = StyleSheet.create({
   statusBlue: {
     backgroundColor: "#e4f7f8",
     borderColor: "#68b8c9",
+  },
+  statusPink: {
+    backgroundColor: "#fff0f4",
+    borderColor: "#d38aa0",
   },
   statusCream: {
     backgroundColor: colors.warmCream,

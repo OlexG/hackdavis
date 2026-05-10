@@ -230,14 +230,21 @@ export class SocialReviewError extends Error {
   }
 }
 
-function byUserId<T extends { userId: ObjectId }>(items: T[]) {
-  return new Map(items.map((item) => [item.userId.toString(), item]));
+function byUserId<T extends { userId?: ObjectId }>(items: T[]) {
+  return new Map(
+    items
+      .filter((item): item is T & { userId: ObjectId } => item.userId instanceof ObjectId)
+      .map((item) => [item.userId.toString(), item]),
+  );
 }
 
-function groupByUserId<T extends { userId: ObjectId }>(items: T[]) {
+function groupByUserId<T extends { userId?: ObjectId }>(items: T[]) {
   const groups = new Map<string, T[]>();
 
   for (const item of items) {
+    if (!(item.userId instanceof ObjectId)) {
+      continue;
+    }
     const key = item.userId.toString();
     groups.set(key, [...(groups.get(key) ?? []), item]);
   }
@@ -271,6 +278,7 @@ function buildPublicShopSlots(items: InventoryViewItem[], savedSlots: ShopDispla
     slots.push({
       id: `slot-${item.id}`,
       inventoryItemId: item.id,
+      listingId: savedSlot.listingId ?? item.id,
       position: slots.length,
       displayAmount: savedSlot.displayAmount,
       displayUnit: savedSlot.displayUnit,

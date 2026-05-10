@@ -163,20 +163,24 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
 
     try {
       const formData = new FormData();
+      const slot = findSlot(itemId);
       formData.set("inventoryItemId", itemId);
+      if (slot?.listingId) {
+        formData.set("listingId", slot.listingId);
+      }
       formData.set("file", file);
 
       const response = await fetch("/api/shop/display/image", {
         method: "POST",
         body: formData,
       });
-      const data = (await response.json()) as { imageId?: string; imageUrl?: string; error?: string };
+      const data = (await response.json()) as { imageId?: string; imageUrl?: string; listingId?: string; error?: string };
 
       if (!response.ok || !data.imageId || !data.imageUrl) {
         throw new Error(data.error ?? "Unable to upload image");
       }
 
-      updateSlot(itemId, { imageId: data.imageId, imageUrl: data.imageUrl });
+      updateSlot(itemId, { imageId: data.imageId, imageUrl: data.imageUrl, listingId: data.listingId ?? slot?.listingId });
       flashAction("Photo saved.");
     } catch (error) {
       setSaveStatus("error");
@@ -1237,6 +1241,7 @@ function normalizeDetails(details: ShopDetails): ShopDetails {
 function toSaveSlot(slot: ShopDisplaySlotView) {
   return {
     inventoryItemId: slot.inventoryItemId,
+    listingId: slot.listingId,
     position: slot.position,
     displayAmount: slot.displayAmount,
     displayUnit: slot.displayUnit,

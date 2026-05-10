@@ -53,6 +53,7 @@ export async function POST(request: Request) {
       now,
     });
     const bbox = getBBox(generated.boundary.local);
+    const geoPoint = geoPointFromBoundary(input.boundaryGeo) ?? defaultGeoPoint();
 
     if (!existingFarmV2) {
       await db.collection("plans").deleteMany({
@@ -70,11 +71,21 @@ export async function POST(request: Request) {
       { _id: context.farmId, userId: context.userId },
       {
         $set: {
+          userUuid: context.userUuid,
           bounds: {
             width: Math.max(1, Math.round(bbox.maxX - bbox.minX)),
             depth: Math.max(1, Math.round(bbox.maxY - bbox.minY)),
             height: 10,
           },
+          location: geoPoint.location,
+          coordinates: geoPoint.coordinates,
+          shortName: "DH",
+          distance: "Nearby",
+          neighborhood: "Davis, California",
+          response: "Offer notifications enabled",
+          rating: 5,
+          reviews: 0,
+          ratings: { quality: 5, fairness: 5, pickup: 5 },
           updatedAt: now,
         },
       },
@@ -183,7 +194,13 @@ async function ensureFarmV2Context() {
   const now = new Date();
 
   await Promise.all([
+    db.collection("users").createIndex({ email: 1 }, { unique: true }),
+    db.collection("users").createIndex({ username: 1 }, { unique: true, sparse: true }),
+    db.collection("users").createIndex({ uuid: 1 }, { unique: true, sparse: true }),
+    db.collection("profiles").createIndex({ userId: 1 }, { unique: true }),
     db.collection("farms").createIndex({ userId: 1 }),
+    db.collection("farms").createIndex({ slug: 1 }, { unique: true, sparse: true }),
+    db.collection("farms").createIndex({ location: "2dsphere" }),
     db.collection("plans").createIndex({ userId: 1, farmId: 1, schema: 1, createdAt: -1 }),
   ]);
 
@@ -192,7 +209,17 @@ async function ensureFarmV2Context() {
     {
       $set: {
         userId: currentUser.userId,
+        userUuid: currentUser.uuid,
         name: "Drawn Homestead Site",
+        shortName: "DH",
+        distance: "Nearby",
+        neighborhood: "Davis, California",
+        response: "Offer notifications enabled",
+        rating: 5,
+        reviews: 0,
+        ratings: { quality: 5, fairness: 5, pickup: 5 },
+        location: defaultGeoPoint().location,
+        coordinates: defaultGeoPoint().coordinates,
         units: "feet",
         updatedAt: now,
       },
@@ -210,7 +237,65 @@ async function ensureFarmV2Context() {
 
   return {
     userId: currentUser.userId,
+    userUuid: currentUser.uuid,
     farmId: farm._id as ObjectId,
+  };
+}
+
+function geoPointFromBoundary(boundaryGeo: Array<[number, number]> | null) {
+  if (!boundaryGeo?.length) {
+    return null;
+  }
+
+  const validPoints = boundaryGeo.filter((point) =>
+    Number.isFinite(point[0]) &&
+    Number.isFinite(point[1]) &&
+    point[0] >= -180 &&
+    point[0] <= 180 &&
+    point[1] >= -90 &&
+    point[1] <= 90,
+  );
+
+  if (!validPoints.length) {
+    return null;
+  }
+
+  const longitude = roundGeo(validPoints.reduce((sum, point) => sum + point[0], 0) / validPoints.length);
+  const latitude = roundGeo(validPoints.reduce((sum, point) => sum + point[1], 0) / validPoints.length);
+
+  return {
+    location: {
+      type: "Point" as const,
+      coordinates: [longitude, latitude] as [number, number],
+    },
+    coordinates: {
+      latitude,
+      longitude,
+      x: 50,
+      y: 50,
+    },
+  };
+}
+
+function roundGeo(value: number) {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function defaultGeoPoint() {
+  const latitude = 38.5449;
+  const longitude = -121.7405;
+
+  return {
+    location: {
+      type: "Point" as const,
+      coordinates: [longitude, latitude] as [number, number],
+    },
+    coordinates: {
+      latitude,
+      longitude,
+      x: 50,
+      y: 50,
+    },
   };
 }
 

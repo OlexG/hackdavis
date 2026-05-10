@@ -21,6 +21,13 @@ export const appNavItems = [
     accent: "#e9823a",
   },
   {
+    label: "Offers",
+    href: "/app/offers",
+    shortLabel: "O",
+    icon: "social",
+    accent: "#c95b76",
+  },
+  {
     label: "Intelligence",
     href: "/app/intelligence",
     shortLabel: "AI",
