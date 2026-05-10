@@ -116,15 +116,35 @@ export function FarmPlanner() {
     };
   }, []);
 
+  // Returns the polygon list the canvas should display: the live working
+  // state when commitIndex points past the snapshots (the "Live" sentinel),
+  // otherwise the saved snapshot's objects.
+  const viewedObjects = (plan: SavedFarmV2Plan) =>
+    plan.commitIndex >= 0 && plan.commitIndex < plan.commits.length
+      ? plan.commits[plan.commitIndex].objects
+      : plan.objects;
+
+  const isPreviewingSnapshot =
+    activePlan != null && activePlan.commitIndex >= 0 && activePlan.commitIndex < activePlan.commits.length;
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !activePlan) return;
-    const renderer = createFarmV2Renderer(canvas, () => activePlan, () => ({ draft, mouse, drawType: drawTypeRef.current }));
+    const renderer = createFarmV2Renderer(
+      canvas,
+      () => {
+        const plan = activePlan;
+        // Substitute the displayed objects without touching live state.
+        return { ...plan, objects: viewedObjects(plan) };
+      },
+      () => ({ draft, mouse, drawType: drawTypeRef.current }),
+    );
     rendererRef.current = renderer;
     return () => {
       renderer.destroy();
       if (rendererRef.current === renderer) rendererRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePlan, draft, mouse]);
 
   useEffect(() => {
@@ -132,14 +152,10 @@ export function FarmPlanner() {
     const timer = window.setInterval(() => {
       setActivePlan((current) => {
         if (!current) return current;
+        // Cycle through saved snapshots only; never poison live state.
         const nextIndex = (current.commitIndex + 1) % current.commits.length;
         void loadCommit(current, nextIndex);
-        return {
-          ...current,
-          commitIndex: nextIndex,
-          objects: cloneFarmV2Objects(current.commits[nextIndex].objects),
-          selectedId: current.commits[nextIndex].objects[0]?.id ?? null,
-        };
+        return { ...current, commitIndex: nextIndex };
       });
     }, 1200);
     return () => window.clearInterval(timer);
@@ -177,9 +193,16 @@ export function FarmPlanner() {
     setActivePlan((current) => {
       if (!current) return current;
       const next = updater(current);
-      setPlans((items) => items.map((item) => (item._id === next._id ? next : item)));
-      if (save) scheduleSave(next);
-      return next;
+      // Any change to the live objects array means the user is editing — return
+      // the timeline cursor to the "Live" sentinel so the canvas reflects the
+      // edit instead of continuing to show the previewed snapshot.
+      const objectsChanged = next.objects !== current.objects;
+      const adjusted = objectsChanged && next.commitIndex < next.commits.length
+        ? { ...next, commitIndex: next.commits.length }
+        : next;
+      setPlans((items) => items.map((item) => (item._id === adjusted._id ? adjusted : item)));
+      if (save) scheduleSave(adjusted);
+      return adjusted;
     });
   }
 
@@ -406,7 +429,8 @@ export function FarmPlanner() {
   });
 
   function selectedObject() {
-    return activePlan?.objects.find((object) => object.id === activePlan.selectedId) ?? null;
+    if (!activePlan) return null;
+    return viewedObjects(activePlan).find((object) => object.id === activePlan.selectedId) ?? null;
   }
 
   const selected = selectedObject();
@@ -469,7 +493,11 @@ export function FarmPlanner() {
         {activePlan ? (
           <div className="farmv2-snapshot">
             <span>{formatDate(activePlan.commits[activePlan.commitIndex]?.timestamp ?? activePlan.updatedAt)}</span>
-            <strong>{activePlan.commits[activePlan.commitIndex]?.name ?? activePlan.name}</strong>
+            <strong>
+              {isPreviewingSnapshot
+                ? activePlan.commits[activePlan.commitIndex]?.name ?? activePlan.name
+                : "Live · current edits"}
+            </strong>
           </div>
         ) : null}
         <ObjectPanel plan={activePlan} object={selected} draftCount={draft.length} setPlan={updatePlan} />
@@ -480,27 +508,40 @@ export function FarmPlanner() {
         <input
           type="range"
           min="0"
-          max={Math.max(0, (activePlan?.commits.length ?? 1) - 1)}
-          value={activePlan?.commitIndex ?? 0}
+          max={activePlan?.commits.length ?? 0}
+          value={activePlan ? Math.min(activePlan.commitIndex, activePlan.commits.length) : 0}
           onChange={(event) => {
             if (!activePlan) return;
             const index = Number(event.target.value);
-            const commit = activePlan.commits[index];
-            if (!commit) return;
-            setActivePlan({ ...activePlan, commitIndex: index, objects: cloneFarmV2Objects(commit.objects), selectedId: commit.objects[0]?.id ?? null });
+            const commits = activePlan.commits;
+            if (index < 0 || index > commits.length) return;
+            // Non-destructive: leave plan.objects (live state) alone.
+            setActivePlan({ ...activePlan, commitIndex: index });
             void loadCommit(activePlan, index);
           }}
         />
-        <div className="farmv2-marker-row" style={{ "--marker-count": activePlan?.commits.length ?? 1 } as CSSProperties}>
+        <div className="farmv2-marker-row" style={{ "--marker-count": (activePlan?.commits.length ?? 0) + 1 } as CSSProperties}>
           {activePlan?.commits.map((commit, index) => (
             <button key={commit.id} type="button" className={index === activePlan.commitIndex ? "active" : ""} onClick={() => {
-              const next = { ...activePlan, commitIndex: index, objects: cloneFarmV2Objects(commit.objects), selectedId: commit.objects[0]?.id ?? null };
-              setActivePlan(next);
+              setActivePlan({ ...activePlan, commitIndex: index });
               void loadCommit(activePlan, index);
             }}>
               {commit.name}
             </button>
           ))}
+          {activePlan ? (
+            <button
+              type="button"
+              className={activePlan.commitIndex >= activePlan.commits.length ? "active" : ""}
+              onClick={() => {
+                const liveIndex = activePlan.commits.length;
+                setActivePlan({ ...activePlan, commitIndex: liveIndex });
+                void loadCommit(activePlan, liveIndex);
+              }}
+            >
+              Live
+            </button>
+          ) : null}
         </div>
         <form onSubmit={(event) => {
           event.preventDefault();
@@ -905,6 +946,282 @@ function createFarmV2Renderer(
     context.stroke();
     context.restore();
   };
+
+  // Stable string hash for per-object seeding so plant placement stays
+  // pinned to the polygon between renders.
+  const seedFromString = (value: string) => {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  };
+
+  const mulberry32 = (seed: number) => {
+    let state = seed >>> 0;
+    return () => {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let t = state;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+
+  const generatePositions = (polygon: LocalPoint[], count: number, seed: number, offset: number): LocalPoint[] => {
+    if (count <= 0) return [];
+    const rng = mulberry32(seed + offset * 131);
+    const bbox = getBBox(polygon);
+    const cols = Math.max(2, Math.ceil(Math.sqrt(count * 1.45)));
+    const rows = Math.max(2, Math.ceil(count / cols) + 1);
+    const positions: LocalPoint[] = [];
+    for (let row = 0; row < rows && positions.length < count; row += 1) {
+      for (let col = 0; col < cols && positions.length < count; col += 1) {
+        const x = bbox.minX + ((col + 0.5) / cols) * (bbox.maxX - bbox.minX) + (rng() - 0.5) * 2.5;
+        const y = bbox.minY + ((row + 0.5) / rows) * (bbox.maxY - bbox.minY) + (rng() - 0.5) * 2.5;
+        if (pointInPolygon([x, y], polygon)) positions.push([x, y]);
+      }
+    }
+    let guard = 0;
+    while (positions.length < count && guard < 500) {
+      const point: LocalPoint = [
+        bbox.minX + rng() * (bbox.maxX - bbox.minX),
+        bbox.minY + rng() * (bbox.maxY - bbox.minY),
+      ];
+      if (pointInPolygon(point, polygon)) positions.push(point);
+      guard += 1;
+    }
+    return positions;
+  };
+
+  const drawDiamond = (x: number, y: number, w: number, h: number) => {
+    context.beginPath();
+    context.moveTo(x, y - h);
+    context.lineTo(x + w, y);
+    context.lineTo(x, y + h);
+    context.lineTo(x - w, y);
+    context.closePath();
+    context.fill();
+  };
+  const drawTriangle = (x: number, y: number, w: number, h: number, direction: 1 | -1) => {
+    context.beginPath();
+    context.moveTo(x, y);
+    context.lineTo(x + w * direction, y - h * 0.4);
+    context.lineTo(x + w * direction, y + h * 0.4);
+    context.closePath();
+    context.fill();
+  };
+  const drawCircle = (x: number, y: number, radius: number) => {
+    context.beginPath();
+    context.arc(x, y, Math.max(0.5, radius), 0, Math.PI * 2);
+    context.fill();
+  };
+
+  type CropFieldAttrs = Extract<FarmV2Object, { type: "cropField" }>["attrs"];
+  type LivestockAttrs = Extract<FarmV2Object, { type: "livestock" }>["attrs"];
+
+  const drawPlant = (position: LocalPoint, baseHeight: number, attrs: CropFieldAttrs) => {
+    const plan = getPlan();
+    const zoom = plan.camera.zoom;
+    const base = project(position, baseHeight);
+    const growth = Math.max(0.18, attrs.growth ?? 0.45);
+    const visual = attrs.visual ?? "generic";
+    const stalkHeight = (5 + growth * 16) * zoom;
+    const sway = Math.sin(performance.now() / 900 + position[0]) * 0.45;
+    context.save();
+    context.lineCap = "round";
+    context.strokeStyle = visual === "grain" ? "#d3c85a" : "#2e6f45";
+    context.lineWidth = Math.max(1, 1.7 * zoom);
+    context.beginPath();
+    context.moveTo(base.x, base.y);
+    context.lineTo(base.x + sway, base.y - stalkHeight);
+    context.stroke();
+    if (visual === "grain") {
+      context.fillStyle = "#8db64f";
+      drawTriangle(base.x + sway, base.y - stalkHeight * 0.55, 4.5 * zoom, 8 * zoom, -1);
+      drawTriangle(base.x + sway, base.y - stalkHeight * 0.48, 4.5 * zoom, 8 * zoom, 1);
+      if (growth > 0.72) {
+        context.fillStyle = "#ecc95a";
+        drawDiamond(base.x + sway, base.y - stalkHeight * 0.82, 2.8 * zoom, 5.5 * zoom);
+      }
+    } else if (visual === "fruiting" || visual === "vine") {
+      context.fillStyle = "#4f9c51";
+      drawDiamond(base.x + sway, base.y - stalkHeight * 0.42, 6 * growth * zoom, 4.5 * growth * zoom);
+      drawDiamond(base.x + sway + 2, base.y - stalkHeight * 0.66, 5 * growth * zoom, 4 * growth * zoom);
+      if (growth > 0.56) {
+        context.fillStyle = visual === "vine" ? "#f0a83b" : "#d94d3d";
+        drawCircle(base.x - 2 * zoom, base.y - stalkHeight * 0.62, 2.2 * zoom);
+      }
+    } else if (visual === "leafy" || visual === "herb" || visual === "groundcover") {
+      context.fillStyle = visual === "herb" ? "#64b66b" : visual === "groundcover" ? "#a4c95a" : "#9ccd68";
+      drawDiamond(base.x, base.y - 2 * zoom, 6 * growth * zoom, 4 * growth * zoom);
+      drawDiamond(base.x + 1.5 * zoom, base.y - 3.5 * zoom, 4.5 * growth * zoom, 3.5 * growth * zoom);
+      if (visual === "groundcover" && growth > 0.4) {
+        context.fillStyle = "#d94d3d";
+        drawCircle(base.x + 1.2 * zoom, base.y - 1.6 * zoom, 1.6 * zoom);
+      }
+    } else if (visual === "root" || visual === "mound") {
+      context.fillStyle = "#5cb56a";
+      drawDiamond(base.x, base.y - stalkHeight * 0.3, 5 * growth * zoom, 3.2 * growth * zoom);
+      context.fillStyle = visual === "root" ? "#d68a3c" : "#8c5a2a";
+      drawCircle(base.x, base.y - stalkHeight * 0.08, 2.6 * zoom);
+    } else {
+      context.fillStyle = "#5cb56a";
+      drawCircle(base.x, base.y - stalkHeight * 0.42, Math.max(2, 4.5 * growth * zoom));
+    }
+    context.restore();
+  };
+
+  const drawCropRows = (object: Extract<FarmV2Object, { type: "cropField" }>) => {
+    const path = new Path2D();
+    object.polygon.forEach((point, index) => {
+      const projected = project(point, object.height + 0.08);
+      if (index === 0) path.moveTo(projected.x, projected.y);
+      else path.lineTo(projected.x, projected.y);
+    });
+    path.closePath();
+    const bbox = getBBox(object.polygon);
+    context.save();
+    context.clip(path);
+    context.lineWidth = 1.2;
+    context.strokeStyle = "rgba(245, 230, 164, 0.24)";
+    const rows = object.attrs.rows ?? 5;
+    const stepY = Math.max(3.5, (bbox.maxY - bbox.minY) / rows);
+    for (let y = bbox.minY - 6; y <= bbox.maxY + 6; y += stepY) {
+      const p1 = project([bbox.minX - 8, y], object.height + 0.12);
+      const p2 = project([bbox.maxX + 8, y + 2], object.height + 0.12);
+      context.beginPath();
+      context.moveTo(p1.x, p1.y);
+      context.lineTo(p2.x, p2.y);
+      context.stroke();
+    }
+    context.restore();
+
+    const count = object.attrs.cropKey ? Math.min(64, Math.max(6, object.attrs.count ?? 12)) : 0;
+    if (count > 0) {
+      const seed = seedFromString(`${object.id}-${object.attrs.cropKey ?? "none"}`);
+      const positions = generatePositions(object.polygon, count, seed, 0)
+        .sort((a, b) => a[0] + a[1] - (b[0] + b[1]));
+      positions.forEach((position) => drawPlant(position, object.height + 0.2, object.attrs));
+    }
+  };
+
+  const drawTilledRows = (object: Extract<FarmV2Object, { type: "cropArea" }>) => {
+    const path = new Path2D();
+    object.polygon.forEach((point, index) => {
+      const projected = project(point, object.height + 0.08);
+      if (index === 0) path.moveTo(projected.x, projected.y);
+      else path.lineTo(projected.x, projected.y);
+    });
+    path.closePath();
+    const bbox = getBBox(object.polygon);
+    const wobbleSeed = object.id.length;
+    context.save();
+    context.clip(path);
+    context.lineWidth = 1.2;
+    context.strokeStyle = "rgba(58, 38, 22, 0.34)";
+    for (let y = bbox.minY - 8; y <= bbox.maxY + 8; y += 3.8) {
+      context.beginPath();
+      let started = false;
+      for (let x = bbox.minX - 8; x <= bbox.maxX + 8; x += 2.8) {
+        const waveY = y + Math.sin((x + wobbleSeed) * 0.25) * 0.45;
+        const p = project([x, waveY], object.height + 0.12);
+        if (!started) {
+          context.moveTo(p.x, p.y);
+          started = true;
+        } else {
+          context.lineTo(p.x, p.y);
+        }
+      }
+      context.stroke();
+    }
+    context.strokeStyle = "rgba(235, 183, 107, 0.16)";
+    context.lineWidth = 1;
+    for (let y = bbox.minY - 6; y <= bbox.maxY + 6; y += 7.6) {
+      const p1 = project([bbox.minX - 8, y], object.height + 0.13);
+      const p2 = project([bbox.maxX + 8, y + 1.5], object.height + 0.13);
+      context.beginPath();
+      context.moveTo(p1.x, p1.y);
+      context.lineTo(p2.x, p2.y);
+      context.stroke();
+    }
+    context.restore();
+  };
+
+  const drawAnimals = (object: Extract<FarmV2Object, { type: "livestock" }>) => {
+    const attrs = object.attrs as LivestockAttrs;
+    const count = Math.min(36, Math.max(0, attrs.count ?? 0));
+    if (count === 0) return;
+    const seed = seedFromString(object.id);
+    const positions = generatePositions(object.polygon, count, seed, 2)
+      .sort((a, b) => a[0] + a[1] - (b[0] + b[1]));
+    const zoom = getPlan().camera.zoom;
+    positions.forEach((position, index) => {
+      const p = project(position, object.height + 0.2);
+      const bob = Math.sin(performance.now() / 620 + index * 0.9) * 0.7;
+      context.save();
+      context.translate(p.x, p.y + bob);
+      context.scale(zoom, zoom);
+      context.fillStyle = "rgba(0,0,0,0.16)";
+      context.beginPath();
+      context.ellipse(0, 4, 7, 3, 0, 0, Math.PI * 2);
+      context.fill();
+      const species = attrs.species ?? "Goat";
+      if (species === "Chicken" || species === "Duck") {
+        const isDuck = species === "Duck";
+        context.fillStyle = isDuck ? "#f1ecd2" : index % 3 === 0 ? "#f4e3c3" : "#d47d4c";
+        context.beginPath();
+        context.moveTo(-5, 1);
+        context.lineTo(1, -5);
+        context.lineTo(6, 1);
+        context.lineTo(1, 5);
+        context.closePath();
+        context.fill();
+        context.fillStyle = isDuck ? "#f1c14b" : "#d94d3d";
+        context.beginPath();
+        context.moveTo(5, -1);
+        context.lineTo(9, 1);
+        context.lineTo(5, 3);
+        context.closePath();
+        context.fill();
+      } else if (species === "Sheep") {
+        context.fillStyle = "#efe8d5";
+        context.beginPath();
+        context.arc(-4, -1, 4.8, 0, Math.PI * 2);
+        context.fill();
+        context.beginPath();
+        context.arc(1, -2, 5.2, 0, Math.PI * 2);
+        context.fill();
+        context.beginPath();
+        context.arc(5, 0, 4.5, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "#3b332c";
+        context.beginPath();
+        context.ellipse(8, -1, 2.6, 2.2, 0, 0, Math.PI * 2);
+        context.fill();
+      } else {
+        context.fillStyle = index % 2 === 0 ? "#d8c0a3" : "#9f8063";
+        context.beginPath();
+        context.ellipse(0, 0, 7, 4.5, -0.15, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "#efe2ce";
+        context.beginPath();
+        context.ellipse(7, -2, 3.5, 3, 0, 0, Math.PI * 2);
+        context.fill();
+        context.strokeStyle = "#4a3829";
+        context.lineWidth = 1.2;
+        context.beginPath();
+        context.moveTo(7, -4);
+        context.lineTo(10, -7);
+        context.moveTo(8, -3);
+        context.lineTo(12, -5);
+        context.stroke();
+      }
+      context.restore();
+    });
+  };
+
   const render = () => {
     const plan = getPlan();
     context.clearRect(0, 0, logicalWidth, logicalHeight);

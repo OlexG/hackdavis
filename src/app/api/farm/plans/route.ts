@@ -138,12 +138,15 @@ export async function PATCH(request: Request) {
       const plan = await db.collection<FarmV2Plan>("plans").findOne(selector);
       if (!plan) throw new Error("Farmv2 plan not found");
       const commitIndex = input.commitIndex;
-      const commit = plan.commits[commitIndex];
-      if (!commit) throw new Error("Timeline entry not found");
+      // commitIndex >= commits.length is the "live" sentinel; that's allowed.
+      if (commitIndex < 0 || (commitIndex < plan.commits.length ? !plan.commits[commitIndex] : false)) {
+        throw new Error("Timeline entry not found");
+      }
+      // Non-destructive: only remember which entry the user is viewing.
+      // plan.objects (the live working state) stays untouched so previewing
+      // a snapshot can never overwrite the user's unsaved edits.
       await db.collection("plans").updateOne(selector, {
         $set: {
-          objects: commit.objects,
-          selectedId: commit.objects[0]?.id ?? null,
           commitIndex,
           updatedAt: now,
         },
