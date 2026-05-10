@@ -1,0 +1,2 @@
+"""Farm profit optimization MVP."""
+
