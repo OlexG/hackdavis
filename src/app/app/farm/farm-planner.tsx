@@ -68,6 +68,7 @@ export function FarmPlanner() {
   const finishCurrentDraftRef = useRef<() => void>(() => {});
   const finishDraftFromPointsRef = useRef<(points: LocalPoint[]) => void>(() => {});
   const pointerRef = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
+  const hitCycleRef = useRef<{ key: string; index: number; world: LocalPoint } | null>(null);
   const [plans, setPlans] = useState<SavedFarmV2Plan[]>([]);
   const [activePlan, setActivePlan] = useState<SavedFarmV2Plan | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -377,8 +378,22 @@ export function FarmPlanner() {
       });
       return;
     }
-    const hit = renderer.hitTestAll(world)[0];
-    updatePlan((plan) => ({ ...plan, selectedId: hit?.id ?? null }), false);
+    // Cycle through stacked hits on repeated clicks at the same spot so a user
+    // can dig down through overlapping polygons (legacy selectFromHitStack).
+    const hits = renderer.hitTestAll(world);
+    if (!hits.length) {
+      hitCycleRef.current = null;
+      updatePlan((plan) => ({ ...plan, selectedId: null }), false);
+      return;
+    }
+    const ids = hits.map((hit) => hit.id);
+    const cycleKey = ids.join("|");
+    const previous = hitCycleRef.current;
+    const nearPrior = previous && previous.key === cycleKey && distance(world, previous.world) <= 2.5;
+    const index = nearPrior ? (previous!.index + 1) % hits.length : 0;
+    hitCycleRef.current = { key: cycleKey, index, world };
+    const selectedId = hits[index].id;
+    updatePlan((plan) => ({ ...plan, selectedId }), false);
   }
 
   function addObject(object: FarmV2Object) {
@@ -451,6 +466,9 @@ export function FarmPlanner() {
             setDrawType(value as DrawType);
             draftRef.current = [];
             setDraft([]);
+            // Picking a draw type implies you want to draw — flip to Draw mode
+            // so the canvas is immediately in the right interaction state.
+            setMode("draw");
           }} />
           <button type="button" onClick={() => finishCurrentDraft()}>{drawType === "path" ? "Enter" : "Close"}</button>
           <button type="button" onClick={() => {
@@ -476,6 +494,7 @@ export function FarmPlanner() {
         <canvas
           ref={canvasRef}
           aria-label="Interactive low-poly farm map"
+          style={{ cursor: pointerRef.current?.moved ? "grabbing" : mode === "draw" ? "crosshair" : "grab" }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -697,6 +716,7 @@ function ObjectPanel({
       </div>
       <div className="farmv2-details">
         {"polygon" in object ? <Detail label="Area" value={formatArea(polygonArea(object.polygon), plan.units)} /> : null}
+        {"polygon" in object ? <Detail label="Dimensions" value={formatDimensions(object.polygon, plan.units)} /> : null}
         {"points" in object ? <Detail label="Length" value={formatLength(pathLength(object.points), plan.units)} /> : null}
         <Detail label="Status" value={String(object.attrs.status ?? "Planned")} />
         {object.type === "cropArea" ? <CropAreaDetails plan={plan} object={object} /> : null}
@@ -752,24 +772,31 @@ function CropFieldEditor({ object, updateObject }: { object: Extract<FarmV2Objec
 }
 
 function LivestockEditor({ object, updateObject }: { object: Extract<FarmV2Object, { type: "livestock" }>; updateObject: (id: string, updater: (object: FarmV2Object) => FarmV2Object) => void }) {
+  const animal = farmV2Catalog.livestock.find((item) => item.name === object.attrs.species) ?? farmV2Catalog.livestock[0];
   return (
     <>
       <label className="farmv2-detail-item"><span>Species</span><select value={object.attrs.species} onChange={(event) => {
-        const animal = farmV2Catalog.livestock.find((item) => item.name === event.target.value) ?? farmV2Catalog.livestock[0];
-        updateObject(object.id, (current) => current.type === "livestock" ? { ...current, label: `${animal.name} Paddock`, attrs: { ...current.attrs, species: animal.name, breed: animal.breed, count: animal.defaultCount } } : current);
-      }}>{farmV2Catalog.livestock.map((animal) => <option key={animal.key} value={animal.name}>{animal.name}</option>)}</select></label>
-      <Detail label="Breed" value={object.attrs.breed} />
-      <Detail label="Headcount" value={String(object.attrs.count)} />
+        const next = farmV2Catalog.livestock.find((item) => item.name === event.target.value) ?? farmV2Catalog.livestock[0];
+        updateObject(object.id, (current) => current.type === "livestock" ? { ...current, label: `${next.name} Paddock`, attrs: { ...current.attrs, species: next.name, breed: next.breed, count: next.defaultCount } } : current);
+      }}>{farmV2Catalog.livestock.map((item) => <option key={item.key} value={item.name}>{item.name}</option>)}</select></label>
+      <label className="farmv2-detail-item"><span>Breed</span><select value={object.attrs.breed} onChange={(event) => {
+        updateObject(object.id, (current) => current.type === "livestock" ? { ...current, attrs: { ...current.attrs, breed: event.target.value } } : current);
+      }}>{animal.breeds.map((breed) => <option key={breed} value={breed}>{breed}</option>)}</select></label>
+      <label className="farmv2-detail-item"><span>Headcount</span><input type="number" min="0" value={object.attrs.count ?? 0} onChange={(event) => updateObject(object.id, (current) => current.type === "livestock" ? { ...current, attrs: { ...current.attrs, count: Math.max(0, Number(event.target.value) || 0) } } : current)} /></label>
     </>
   );
 }
 
 function StructureEditor({ object, updateObject }: { object: Extract<FarmV2Object, { type: "structure" }>; updateObject: (id: string, updater: (object: FarmV2Object) => FarmV2Object) => void }) {
   return (
-    <label className="farmv2-detail-item"><span>Kind</span><select value={object.attrs.kind} onChange={(event) => {
-      const structure = farmV2Catalog.structures.find((item) => item.name === event.target.value) ?? farmV2Catalog.structures[0];
-      updateObject(object.id, (current) => current.type === "structure" ? { ...current, label: structure.name, height: structure.height, attrs: { ...current.attrs, kind: structure.name, material: structure.material, height: structure.height } } : current);
-    }}>{farmV2Catalog.structures.map((structure) => <option key={structure.key} value={structure.name}>{structure.name}</option>)}</select></label>
+    <>
+      <label className="farmv2-detail-item"><span>Kind</span><select value={object.attrs.kind} onChange={(event) => {
+        const structure = farmV2Catalog.structures.find((item) => item.name === event.target.value) ?? farmV2Catalog.structures[0];
+        updateObject(object.id, (current) => current.type === "structure" ? { ...current, label: structure.name, height: structure.height, attrs: { ...current.attrs, kind: structure.name, material: structure.material, height: structure.height } } : current);
+      }}>{farmV2Catalog.structures.map((structure) => <option key={structure.key} value={structure.name}>{structure.name}</option>)}</select></label>
+      <Detail label="Material" value={object.attrs.material} />
+      <Detail label="Height" value={`${object.height.toFixed(1)} ft`} />
+    </>
   );
 }
 
@@ -945,6 +972,125 @@ function createFarmV2Renderer(
     context.lineTo(p2.x, p2.y);
     context.stroke();
     context.restore();
+  };
+
+  const niceGridStep = (span: number) => {
+    if (span > 1200) return 100;
+    if (span > 600) return 50;
+    if (span > 240) return 25;
+    if (span > 120) return 10;
+    return 6;
+  };
+
+  const drawGridLines = (boundary: LocalPoint[]) => {
+    const bbox = getBBox(boundary);
+    const step = niceGridStep(Math.max(bbox.maxX - bbox.minX, bbox.maxY - bbox.minY));
+    const startX = Math.floor(bbox.minX / step) * step;
+    const endX = Math.ceil(bbox.maxX / step) * step;
+    const startY = Math.floor(bbox.minY / step) * step;
+    const endY = Math.ceil(bbox.maxY / step) * step;
+    context.save();
+    context.strokeStyle = "rgba(232, 239, 214, 0.12)";
+    context.lineWidth = 1;
+    for (let x = startX; x <= endX; x += step) {
+      const p1 = project([x, startY], 0.04);
+      const p2 = project([x, endY], 0.04);
+      context.beginPath();
+      context.moveTo(p1.x, p1.y);
+      context.lineTo(p2.x, p2.y);
+      context.stroke();
+    }
+    for (let y = startY; y <= endY; y += step) {
+      const p1 = project([startX, y], 0.04);
+      const p2 = project([endX, y], 0.04);
+      context.beginPath();
+      context.moveTo(p1.x, p1.y);
+      context.lineTo(p2.x, p2.y);
+      context.stroke();
+    }
+    context.restore();
+  };
+
+  const drawTerrainPatches = (boundary: LocalPoint[]) => {
+    const bbox = getBBox(boundary);
+    const patchW = Math.max(12, (bbox.maxX - bbox.minX) / 8);
+    const patchH = Math.max(10, (bbox.maxY - bbox.minY) / 8);
+    const colors = ["#58754b", "#6d8752", "#526c45", "#7d8f55", "#48683f", "#6f6f45"];
+    for (let x = bbox.minX; x < bbox.maxX; x += patchW) {
+      for (let y = bbox.minY; y < bbox.maxY; y += patchH) {
+        const polygon: LocalPoint[] = [
+          [x, y],
+          [Math.min(bbox.maxX, x + patchW), y + ((x + y) % 3)],
+          [Math.min(bbox.maxX, x + patchW), Math.min(bbox.maxY, y + patchH)],
+          [x + ((x + y) % 5), Math.min(bbox.maxY, y + patchH)],
+        ];
+        context.beginPath();
+        polygon.forEach((point, index) => {
+          const projected = project(point, 0.02);
+          if (index === 0) context.moveTo(projected.x, projected.y);
+          else context.lineTo(projected.x, projected.y);
+        });
+        context.closePath();
+        context.fillStyle = colors[Math.abs(Math.floor(x * 7 + y * 11)) % colors.length];
+        context.fill();
+      }
+    }
+  };
+
+  const drawPath2 = (points: LocalPoint[], color: string) => {
+    const zoom = getPlan().camera.zoom;
+    const trace = (height: number) => {
+      context.beginPath();
+      points.forEach((point, index) => {
+        const projected = project(point, height);
+        if (index === 0) context.moveTo(projected.x, projected.y);
+        else context.lineTo(projected.x, projected.y);
+      });
+    };
+    context.save();
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.strokeStyle = "rgba(36, 28, 17, 0.42)";
+    context.lineWidth = 9 * zoom;
+    trace(0.07);
+    context.stroke();
+    context.strokeStyle = color;
+    context.lineWidth = 6 * zoom;
+    trace(0.12);
+    context.stroke();
+    context.strokeStyle = "rgba(245, 222, 168, 0.2)";
+    context.lineWidth = 2 * zoom;
+    trace(0.15);
+    context.stroke();
+    context.restore();
+  };
+
+  const drawSelectionHalo = (polygon: LocalPoint[], height: number) => {
+    context.save();
+    context.beginPath();
+    polygon.forEach((point, index) => {
+      const projected = project(point, height + 0.01);
+      if (index === 0) context.moveTo(projected.x, projected.y);
+      else context.lineTo(projected.x, projected.y);
+    });
+    context.closePath();
+    context.strokeStyle = "#f8e08a";
+    context.lineWidth = 3;
+    context.shadowColor = "rgba(248, 224, 138, 0.5)";
+    context.shadowBlur = 12;
+    context.stroke();
+    context.restore();
+  };
+
+  // Render order priority used to sort objects back-to-front within a layer
+  // so closer polygons paint over farther ones (legacy objectDepth).
+  const objectDepth = (object: FarmV2Object) => {
+    const points = "polygon" in object ? object.polygon : object.points;
+    return Math.max(...points.map((point) => {
+      const board = worldToBoard(point);
+      const rotated = rotatePoint(board, boardCenter, getPlan().camera.rotation);
+      return rotated[0] + rotated[1];
+    }));
   };
 
   // Stable string hash for per-object seeding so plant placement stays
@@ -1232,33 +1378,78 @@ function createFarmV2Renderer(
     context.fillStyle = gradient;
     context.fillRect(0, 0, logicalWidth, logicalHeight);
     drawPolygon(plan.boundary.local, plan.view === "satellite" ? "#5c7c4c" : "#496b47", "#203029", 0);
+    // Clip ground textures to the boundary so grid lines / terrain patches
+    // never spill onto the dark backdrop.
+    const boundaryClip = new Path2D();
+    plan.boundary.local.forEach((point, index) => {
+      const projected = project(point, 0.03);
+      if (index === 0) boundaryClip.moveTo(projected.x, projected.y);
+      else boundaryClip.lineTo(projected.x, projected.y);
+    });
+    boundaryClip.closePath();
+    context.save();
+    context.clip(boundaryClip);
+    if (plan.view === "satellite") drawTerrainPatches(plan.boundary.local);
+    else drawGridLines(plan.boundary.local);
+    context.restore();
     drawFence(plan.boundary.local, "#d4b16b", 0.3);
-    plan.objects.forEach((object) => {
+    // Sort objects per legacy: paths first (lowest layer), then crop areas,
+    // livestock, crop fields, structures — and back-to-front by depth within
+    // each layer so foreground objects paint over background ones.
+    const layerOrder: Record<FarmV2Object["type"], number> = {
+      path: 0,
+      cropArea: 1,
+      livestock: 2,
+      cropField: 3,
+      structure: 4,
+    };
+    const sortedObjects = [...plan.objects].sort((left, right) => {
+      const layerDelta = layerOrder[left.type] - layerOrder[right.type];
+      if (layerDelta !== 0) return layerDelta;
+      return objectDepth(left) - objectDepth(right);
+    });
+    sortedObjects.forEach((object) => {
       const isSelected = object.id === plan.selectedId;
       const stroke = isSelected ? "#f8e08a" : "rgba(0,0,0,.35)";
       if (object.type === "path") {
-        context.beginPath();
-        object.points.forEach((point, index) => {
-          const projected = project(point, 0.3);
-          if (index === 0) context.moveTo(projected.x, projected.y);
-          else context.lineTo(projected.x, projected.y);
-        });
-        context.strokeStyle = isSelected ? "#f8e08a" : "#c59d5b";
-        context.lineWidth = isSelected ? 5 : 4;
-        context.stroke();
+        drawPath2(object.points, object.attrs.material === "Mulch" ? "#a66f44" : "#c59d5b");
+        if (isSelected) {
+          context.save();
+          context.strokeStyle = "#f8e08a";
+          context.lineWidth = 3;
+          context.beginPath();
+          object.points.forEach((point, index) => {
+            const projected = project(point, 0.3);
+            if (index === 0) context.moveTo(projected.x, projected.y);
+            else context.lineTo(projected.x, projected.y);
+          });
+          context.stroke();
+          context.restore();
+        }
       } else if (object.type === "cropArea") {
-        drawExtruded(object.polygon, object.height, "#8b6a43", "#5f4a2b", stroke);
+        drawExtruded(object.polygon, object.height, "#8b6a43", "#5f452d", stroke);
+        drawTilledRows(object);
       } else if (object.type === "cropField") {
-        drawExtruded(object.polygon, object.height, "#5f9f55", "#3f6f3a", stroke);
+        const fieldTop = !object.attrs.cropKey
+          ? "#6f7a52"
+          : object.attrs.status === "Harvested"
+            ? "#658f4b"
+            : "#5f9f55";
+        drawExtruded(object.polygon, object.height, fieldTop, "#416f40", stroke);
+        drawCropRows(object);
       } else if (object.type === "livestock") {
-        drawExtruded(object.polygon, object.height, "#a7b85b", "#7a8744", stroke);
+        drawExtruded(object.polygon, object.height, "#a7b85b", "#6f7d3d", stroke);
         drawFence(object.polygon, "#c9a865", object.height + 0.25);
+        drawAnimals(object);
       } else if (object.type === "structure") {
         const isGreenhouse = object.attrs.kind === "Greenhouse";
         const topFill = isGreenhouse ? "rgba(137,204,198,.7)" : "#58697a";
         const sideFill = isGreenhouse ? "rgba(90,138,134,.6)" : "#9a6848";
         drawExtruded(object.polygon, object.height, topFill, sideFill, stroke);
         drawRoofRidge(object.polygon, object.height, isGreenhouse);
+      }
+      if (isSelected && object.type !== "path" && "polygon" in object) {
+        drawSelectionHalo(object.polygon, object.height + 0.05);
       }
       const labelPoint = "polygon" in object ? polygonCentroid(object.polygon) : object.points[Math.floor(object.points.length / 2)];
       const p = project(labelPoint, "height" in object ? object.height + 0.2 : 0.8);
@@ -1383,6 +1574,11 @@ function pathLength(points: LocalPoint[]) {
 function formatArea(areaFt: number, units: "ft" | "m") {
   if (units === "m") return `${Math.round(areaFt * 0.092903)} m2`;
   return `${Math.round(areaFt).toLocaleString("en-US")} ft2`;
+}
+
+function formatDimensions(polygon: LocalPoint[], units: "ft" | "m") {
+  const bbox = getBBox(polygon);
+  return `${formatLength(bbox.maxX - bbox.minX, units)} x ${formatLength(bbox.maxY - bbox.minY, units)}`;
 }
 
 function formatLength(lengthFt: number, units: "ft" | "m") {
