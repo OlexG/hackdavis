@@ -32,6 +32,12 @@ const statusStyles = {
   strong: "border-[#83b86b] bg-[#eef8df] text-[#335a2d]",
 };
 
+const healthBarColor: Record<FarmHealthMetric["status"], string> = {
+  weak: "#c46a1d",
+  okay: "#d39a18",
+  strong: "#4e9f5d",
+};
+
 export default async function IntelligencePage() {
   await connection();
   const data = await getFarmIntelligencePageData();
@@ -49,31 +55,23 @@ export default async function IntelligencePage() {
         generatedAt={data.savedReport?.generatedAt}
         hasReport={Boolean(data.savedReport)}
         hasGeminiKey={data.hasGeminiKey}
+        isDemoReport={isDemoReport}
+        isStale={isStale}
       />
 
       <div className="grid gap-3 p-3">
-        {isDemoReport ? (
-          <NoticePanel
-            tone="empty"
-            title="AI intelligence has not been generated yet"
-            body="The dashboard is showing a deterministic demo preview from the current plan. Generate AI intelligence to replace it with Gemini-powered forecasts and recommendations."
-          />
-        ) : null}
-        {isStale ? (
-          <NoticePanel
-            tone="stale"
-            title="Inventory changed after this report"
-            body="Refresh AI intelligence when you want Gemini to account for the latest inventory quantities and status changes."
-          />
-        ) : null}
+        <OverviewPanel
+          report={report}
+          isDemoReport={isDemoReport}
+          isStale={isStale}
+        />
 
-        <ExecutivePanel report={report} canPersist={data.canPersist} isDemoReport={isDemoReport} />
-        <ForecastSection forecasts={report.productionForecasts} />
-
-        <div className="grid gap-3 xl:grid-cols-[1.2fr_0.8fr]">
+        <div className="grid gap-3 xl:grid-cols-[1.4fr_1fr]">
           <SuggestionsSection report={report} />
           <HealthSection metrics={report.farmHealth} />
         </div>
+
+        <ForecastSection forecasts={report.productionForecasts} />
 
         <div className="grid gap-3 xl:grid-cols-2">
           <ScenarioSection report={report} />
@@ -89,12 +87,23 @@ function IntelligenceHeroBanner({
   generatedAt,
   hasReport,
   hasGeminiKey,
+  isDemoReport,
+  isStale,
 }: {
   planName?: string;
   generatedAt?: string;
   hasReport: boolean;
   hasGeminiKey: boolean;
+  isDemoReport: boolean;
+  isStale: boolean;
 }) {
+  const statusLabel = isDemoReport ? "Demo preview" : isStale ? "Stale · Inventory changed" : "Saved";
+  const statusTone = isDemoReport
+    ? "border-[#7eb3bd] bg-[#e9fbfb] text-[#245c65]"
+    : isStale
+      ? "border-[#d8a05a] bg-[#fff1dc] text-[#7a461f]"
+      : "border-[#83b86b] bg-[#eef8df] text-[#335a2d]";
+
   return (
     <div className="pixel-gradient-sky relative overflow-hidden border-b-2 border-[#3b2a14] px-4 py-4">
       <div
@@ -125,16 +134,21 @@ function IntelligenceHeroBanner({
           <span className="grid size-12 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#fff8dc] text-[#a8761c] shadow-[inset_0_2px_0_rgba(255,255,255,0.6),inset_0_-4px_0_rgba(168,118,28,0.32),0_2px_0_#3b2a14]">
             <PixelGlyph name="sparkle" className="size-6" />
           </span>
-          <div>
+          <div className="min-w-0">
             <h1 className="font-mono text-lg font-black uppercase tracking-[0.18em] text-[#34432b] drop-shadow-[1px_1px_0_#fffdf5]">
               Farm Intelligence
             </h1>
-            <p className="text-xs text-[#5e4a26]">
+            <p className="truncate text-xs text-[#5e4a26]">
               {planName ? `Gemini forecasts for ${planName}.` : "Gemini forecasts for your farm plan."}
             </p>
-            <p className="mt-1 font-mono text-[10px] font-black uppercase tracking-[0.12em] text-[#607145]">
-              {generatedAt ? `Generated ${formatShortDateTime(generatedAt)}` : "Demo preview until AI runs"}
-            </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span className={`rounded-none border-2 px-2 py-0.5 font-mono text-[10px] font-black uppercase tracking-[0.1em] ${statusTone}`}>
+                {statusLabel}
+              </span>
+              <span className="font-mono text-[10px] font-black uppercase tracking-[0.12em] text-[#607145]">
+                {generatedAt ? `Generated ${formatShortDateTime(generatedAt)}` : "Not generated yet"}
+              </span>
+            </div>
           </div>
         </div>
         <IntelligenceGenerateButton hasGeminiKey={hasGeminiKey} hasReport={hasReport} />
@@ -143,38 +157,58 @@ function IntelligenceHeroBanner({
   );
 }
 
-function ExecutivePanel({
+function OverviewPanel({
   report,
-  canPersist,
   isDemoReport,
+  isStale,
 }: {
   report: FarmIntelligenceReport;
-  canPersist: boolean;
   isDemoReport: boolean;
+  isStale: boolean;
 }) {
+  const avgHealth = averageHealth(report.farmHealth);
+  const noticeTone = isDemoReport
+    ? { class: "border-[#7eb3bd] bg-[#e9fbfb] text-[#245c65]", text: "Generate AI intelligence to replace this demo preview with Gemini forecasts." }
+    : isStale
+      ? { class: "border-[#d8a05a] bg-[#fff1dc] text-[#7a461f]", text: "Inventory changed after this report. Refresh AI intelligence to resync." }
+      : null;
+
   return (
     <section
       style={{ ["--pixel-frame-bg" as string]: "#fffdf5" }}
       className="pixel-frame overflow-hidden rounded-none border-2 border-[#a8916a] bg-[#fff8dc]"
     >
       <div className="pixel-gradient-meadow border-b-2 border-[#a8916a] p-3">
-        <PanelTitle
-          icon="ledger"
-          eyebrow="AI Readout"
-          title={isDemoReport ? "Starter preview" : report.planName}
-          meta={canPersist ? "Latest report saved to this plan" : "Demo mode without report persistence"}
-        />
+        <PanelTitle icon="scroll" eyebrow="At A Glance" title="Today's Readout" />
       </div>
       <div className="grid gap-3 p-3 lg:grid-cols-[1fr_auto]">
-        <p className="text-sm leading-6 text-[#5e4a26]">{report.executiveSummary}</p>
+        <div className="min-w-0">
+          <p className="text-sm leading-6 text-[#5e4a26]">{report.executiveSummary}</p>
+          {noticeTone ? (
+            <p className={`mt-3 rounded-none border-2 p-2 font-mono text-[11px] font-black uppercase tracking-[0.08em] ${noticeTone.class}`}>
+              {noticeTone.text}
+            </p>
+          ) : null}
+        </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2">
-          <MiniStat label="Forecasts" value={report.productionForecasts.length.toString()} />
-          <MiniStat label="Actions" value={report.aiSuggestions.length.toString()} />
-          <MiniStat label="Scenarios" value={report.scenarioCards.length.toString()} />
-          <MiniStat label="Health" value={`${averageHealth(report.farmHealth)}%`} />
+          <MiniStat label="Forecasts" value={report.productionForecasts.length} accent="#2f6f4e" />
+          <MiniStat label="Actions" value={report.aiSuggestions.length} accent="#a8761c" />
+          <MiniStat label="Scenarios" value={report.scenarioCards.length} accent="#245c65" />
+          <MiniStat label="Health" value={`${avgHealth}%`} accent={healthAvgAccent(avgHealth)} />
         </div>
       </div>
     </section>
+  );
+}
+
+function MiniStat({ label, value, accent }: { label: string; value: number | string; accent: string }) {
+  return (
+    <div className="rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] px-3 py-2 text-right shadow-[0_2px_0_#3b2a14]">
+      <div className="font-mono text-xl font-black leading-none" style={{ color: accent }}>
+        {value}
+      </div>
+      <div className="mt-1 font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#746850]">{label}</div>
+    </div>
   );
 }
 
@@ -183,11 +217,12 @@ function ForecastSection({ forecasts }: { forecasts: ProductionForecast[] }) {
     <section className="grid gap-3">
       <SectionHeader
         icon="wheat"
-        title="AI Production Forecast"
-        subtitle="One Gemini-generated yield and value curve for every output in the current plan."
+        eyebrow="Yield Forecast"
+        title="What This Plan Will Grow"
+        subtitle="A five-year yield curve and latest revenue estimate for every output."
       />
       {forecasts.length ? (
-        <div className="grid gap-3 xl:grid-cols-3">
+        <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
           {forecasts.map((forecast) => (
             <ForecastCard key={forecast.outputId} forecast={forecast} />
           ))}
@@ -200,10 +235,12 @@ function ForecastSection({ forecasts }: { forecasts: ProductionForecast[] }) {
 }
 
 function ForecastCard({ forecast }: { forecast: ProductionForecast }) {
+  const latestRevenue = forecast.revenueTrend.at(-1)?.expectedValueUsd ?? 0;
+
   return (
     <article
       style={{ ["--pixel-frame-bg" as string]: "#fffdf5" }}
-      className="pixel-frame overflow-hidden rounded-none border-2 border-[#a8916a] bg-[#fffaf0]"
+      className="pixel-frame grid gap-3 overflow-hidden rounded-none border-2 border-[#a8916a] bg-[#fffaf0]"
     >
       <div className="pixel-gradient-meadow border-b-2 border-[#a8916a] p-3">
         <div className="flex items-start justify-between gap-3">
@@ -222,31 +259,41 @@ function ForecastCard({ forecast }: { forecast: ProductionForecast }) {
           </span>
         </div>
       </div>
-      <div className="grid gap-3 p-3">
-        <div className="grid grid-cols-[auto_1fr] gap-3">
-          <span className="grid size-14 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] font-mono text-lg font-black text-[#2f6f4e] shadow-[0_2px_0_#3b2a14]">
-            {formatCompactNumber(forecast.currentYearEstimate)}
-          </span>
-          <p className="min-w-0 text-xs leading-5 text-[#5e4a26]">{forecast.trendSummary}</p>
+      <div className="grid gap-3 px-3 pb-3">
+        <div className="grid grid-cols-2 gap-2">
+          <KpiBlock
+            label="This year"
+            value={`${formatCompactNumber(forecast.currentYearEstimate)} ${forecast.unit}`}
+            accent="#2f6f4e"
+          />
+          <KpiBlock
+            label="Year 5 value"
+            value={`$${formatCompactNumber(latestRevenue)}`}
+            accent="#a8761c"
+          />
         </div>
         <MiniLineChart
-          title="Yield"
+          title="Yield curve"
           series={forecast.yearlyTrend}
           valueKey="expectedAmount"
           accent="#4e9f5d"
-          valuePrefix=""
           valueSuffix={` ${forecast.unit}`}
         />
-        <MiniLineChart
-          title="Value"
-          series={forecast.revenueTrend}
-          valueKey="expectedValueUsd"
-          accent="#c46a1d"
-          valuePrefix="$"
-        />
+        <p className="text-xs leading-5 text-[#5e4a26]">{forecast.trendSummary}</p>
         <TagList items={forecast.keyDrivers} emptyLabel="No drivers returned" />
       </div>
     </article>
+  );
+}
+
+function KpiBlock({ label, value, accent }: { label: string; value: string; accent: string }) {
+  return (
+    <div className="rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-2">
+      <p className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#607145]">{label}</p>
+      <p className="mt-0.5 font-mono text-sm font-black" style={{ color: accent }}>
+        {value}
+      </p>
+    </div>
   );
 }
 
@@ -257,28 +304,35 @@ function SuggestionsSection({ report }: { report: FarmIntelligenceReport }) {
       className="pixel-frame overflow-hidden rounded-none border-2 border-[#a8916a] bg-[#fffaf0]"
     >
       <div className="pixel-gradient-sell border-b-2 border-[#a8916a] p-3">
-        <PanelTitle icon="sparkle" eyebrow="Gemini Suggestions" title="Next Best Farm Moves" />
+        <PanelTitle icon="sparkle" eyebrow="Action Priorities" title="Next Best Moves" />
       </div>
       <div className="grid gap-2 p-3">
         {report.aiSuggestions.length ? (
           report.aiSuggestions.map((suggestion, index) => (
-            <article key={`${suggestion.title}-${index}`} className="rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-3">
+            <article
+              key={`${suggestion.title}-${index}`}
+              className="rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-3"
+            >
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <h3 className="font-mono text-sm font-black uppercase tracking-[0.08em] text-[#27351f]">
+                <h3 className="min-w-0 font-mono text-sm font-black uppercase tracking-[0.08em] text-[#27351f]">
                   {suggestion.title}
                 </h3>
-                <span className={`rounded-none border-2 px-2 py-0.5 font-mono text-[10px] font-black uppercase ${confidenceStyles[suggestion.confidence]}`}>
+                <span className={`rounded-none border-2 px-2 py-0.5 font-mono text-[10px] font-black uppercase tracking-[0.08em] ${confidenceStyles[suggestion.confidence]}`}>
                   {suggestion.confidence}
                 </span>
               </div>
-              <p className="mt-2 text-sm leading-6 text-[#5e4a26]">{suggestion.recommendation}</p>
-              <p className="mt-2 text-xs font-semibold leading-5 text-[#2f6f4e]">{suggestion.expectedImpact}</p>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                <TinyBadge label={`Effort ${suggestion.effort}`} />
-                <TinyBadge label={`Cost ${suggestion.cost}`} />
-                <TinyBadge label={suggestion.bestTiming} />
+              <p className="mt-1.5 text-sm leading-5 text-[#5e4a26]">{suggestion.recommendation}</p>
+              <p className="mt-1.5 rounded-none border-2 border-[#c5d8a6] bg-[#eef8df] px-2 py-1 font-mono text-[11px] font-black text-[#2f6f4e]">
+                ↑ {suggestion.expectedImpact}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <MetaPill icon="warning" label={`Effort ${suggestion.effort}`} />
+                <MetaPill icon="jar" label={`Cost ${suggestion.cost}`} />
+                <MetaPill icon="sun" label={suggestion.bestTiming} />
               </div>
-              <TagList items={suggestion.affectedOutputs} emptyLabel="Whole farm" compact />
+              {suggestion.affectedOutputs.length ? (
+                <TagList items={suggestion.affectedOutputs} emptyLabel="Whole farm" compact />
+              ) : null}
             </article>
           ))
         ) : (
@@ -289,6 +343,15 @@ function SuggestionsSection({ report }: { report: FarmIntelligenceReport }) {
   );
 }
 
+function MetaPill({ icon, label }: { icon: PixelGlyphName; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-none border-2 border-[#c9b88a] bg-[#fff8dc] px-1.5 py-0.5 font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#5e4a26]">
+      <PixelGlyph name={icon} className="size-3" />
+      {label}
+    </span>
+  );
+}
+
 function HealthSection({ metrics }: { metrics: FarmHealthMetric[] }) {
   return (
     <section
@@ -296,26 +359,31 @@ function HealthSection({ metrics }: { metrics: FarmHealthMetric[] }) {
       className="pixel-frame overflow-hidden rounded-none border-2 border-[#a8916a] bg-[#fffaf0]"
     >
       <div className="pixel-gradient-need border-b-2 border-[#a8916a] p-3">
-        <PanelTitle icon="warning" eyebrow="Farm Health" title="Risk And Resilience" />
+        <PanelTitle icon="warning" eyebrow="Farm Health" title="Risk & Resilience" />
       </div>
       <div className="grid gap-2 p-3">
         {metrics.map((metric) => (
-          <article key={metric.name} className="rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-3">
+          <article key={metric.name} className="rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-2.5">
             <div className="flex items-center justify-between gap-3">
               <h3 className="font-mono text-xs font-black uppercase tracking-[0.1em] text-[#27351f]">
                 {healthLabels[metric.name]}
               </h3>
-              <span className={`rounded-none border-2 px-2 py-0.5 font-mono text-[10px] font-black uppercase ${statusStyles[metric.status]}`}>
-                {metric.status}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-black" style={{ color: healthBarColor[metric.status] }}>
+                  {metric.score}
+                </span>
+                <span className={`rounded-none border-2 px-1.5 py-0.5 font-mono text-[10px] font-black uppercase ${statusStyles[metric.status]}`}>
+                  {metric.status}
+                </span>
+              </div>
             </div>
-            <div className="mt-2 h-4 border-2 border-[#3b2a14] bg-[#fff8dc]">
-              <div className="h-full bg-[#4e9f5d]" style={{ width: `${metric.score}%` }} />
+            <div className="mt-1.5 h-3 border-2 border-[#3b2a14] bg-[#fff8dc]">
+              <div
+                className="h-full"
+                style={{ width: `${metric.score}%`, backgroundColor: healthBarColor[metric.status] }}
+              />
             </div>
-            <div className="mt-1 flex items-start justify-between gap-3">
-              <p className="text-xs leading-5 text-[#5e4a26]">{metric.explanation}</p>
-              <span className="font-mono text-sm font-black text-[#2f6f4e]">{metric.score}</span>
-            </div>
+            <p className="mt-1.5 text-xs leading-5 text-[#5e4a26]">{metric.explanation}</p>
           </article>
         ))}
       </div>
@@ -330,7 +398,7 @@ function ScenarioSection({ report }: { report: FarmIntelligenceReport }) {
       className="pixel-frame overflow-hidden rounded-none border-2 border-[#a8916a] bg-[#fffaf0]"
     >
       <div className="pixel-gradient-meadow border-b-2 border-[#a8916a] p-3">
-        <PanelTitle icon="sun" eyebrow="Scenario Lab" title="AI What-If Cards" />
+        <PanelTitle icon="sun" eyebrow="Scenario Lab" title="What If You Try…" />
       </div>
       <div className="grid gap-2 p-3">
         {report.scenarioCards.length ? (
@@ -339,10 +407,10 @@ function ScenarioSection({ report }: { report: FarmIntelligenceReport }) {
               <h3 className="font-mono text-sm font-black uppercase tracking-[0.08em] text-[#27351f]">
                 {scenario.title}
               </h3>
-              <p className="mt-2 text-sm leading-6 text-[#5e4a26]">{scenario.change}</p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <InfoBlock label="Upside" value={scenario.expectedUpside} />
-                <InfoBlock label="Tradeoff" value={scenario.tradeoff} />
+              <p className="mt-1.5 text-sm leading-5 text-[#5e4a26]">{scenario.change}</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <InfoBlock label="Upside" value={scenario.expectedUpside} accent="#2f6f4e" />
+                <InfoBlock label="Tradeoff" value={scenario.tradeoff} accent="#a8761c" />
               </div>
               <TagList items={scenario.affectedMetrics} emptyLabel="Whole system" compact />
             </article>
@@ -367,14 +435,19 @@ function SurplusSection({ report }: { report: FarmIntelligenceReport }) {
       <div className="grid gap-2 p-3">
         {report.surplusCalendar.length ? (
           report.surplusCalendar.map((month, index) => (
-            <article key={`${month.month}-${index}`} className="grid gap-2 rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-3 sm:grid-cols-[84px_1fr]">
-              <h3 className="font-mono text-sm font-black uppercase tracking-[0.08em] text-[#27351f]">
-                {month.month}
-              </h3>
-              <div className="grid gap-2">
-                <LabelList label="Surplus" items={month.likelySurplus} />
-                <LabelList label="Shortage" items={month.likelyShortage} />
-                <LabelList label="Actions" items={month.recommendedActions} />
+            <article
+              key={`${month.month}-${index}`}
+              className="grid gap-2 rounded-none border-2 border-[#c9b88a] bg-[#fffdf5] p-3 sm:grid-cols-[68px_1fr]"
+            >
+              <div className="grid place-items-center rounded-none border-2 border-[#3b2a14] bg-[#fff8dc] py-2 shadow-[0_2px_0_#3b2a14]">
+                <span className="font-mono text-sm font-black uppercase tracking-[0.08em] text-[#27351f]">
+                  {month.month}
+                </span>
+              </div>
+              <div className="grid gap-1.5">
+                <SurplusRow icon="basket" tone="text-[#2f6f4e]" label="Surplus" items={month.likelySurplus} />
+                <SurplusRow icon="warning" tone="text-[#a8761c]" label="Shortage" items={month.likelyShortage} />
+                <SurplusRow icon="sparkle" tone="text-[#245c65]" label="Actions" items={month.recommendedActions} />
               </div>
             </article>
           ))
@@ -383,6 +456,28 @@ function SurplusSection({ report }: { report: FarmIntelligenceReport }) {
         )}
       </div>
     </section>
+  );
+}
+
+function SurplusRow({
+  icon,
+  label,
+  items,
+  tone,
+}: {
+  icon: PixelGlyphName;
+  label: string;
+  items: string[];
+  tone: string;
+}) {
+  return (
+    <div className="grid gap-1 sm:grid-cols-[88px_1fr]">
+      <span className={`flex items-center gap-1 font-mono text-[10px] font-black uppercase tracking-[0.1em] ${tone}`}>
+        <PixelGlyph name={icon} className="size-3" />
+        {label}
+      </span>
+      <p className="text-xs leading-5 text-[#5e4a26]">{items.length ? items.join(", ") : "None projected"}</p>
+    </div>
   );
 }
 
@@ -413,10 +508,20 @@ function PanelTitle({
   );
 }
 
-function SectionHeader({ icon, title, subtitle }: { icon: PixelGlyphName; title: string; subtitle: string }) {
+function SectionHeader({
+  icon,
+  eyebrow,
+  title,
+  subtitle,
+}: {
+  icon: PixelGlyphName;
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+}) {
   return (
-    <div className="flex flex-wrap items-end justify-between gap-3">
-      <PanelTitle icon={icon} eyebrow="Main Forecast" title={title} />
+    <div className="flex flex-wrap items-end justify-between gap-3 px-1">
+      <PanelTitle icon={icon} eyebrow={eyebrow} title={title} />
       <p className="max-w-2xl text-xs leading-5 text-[#6c614d]">{subtitle}</p>
     </div>
   );
@@ -477,29 +582,6 @@ function MiniLineChart<T extends YearlyTrendPoint | RevenueTrendPoint>({
   );
 }
 
-function NoticePanel({ title, body, tone }: { title: string; body: string; tone: "empty" | "stale" }) {
-  const classes =
-    tone === "empty"
-      ? "border-[#7eb3bd] bg-[#e9fbfb] text-[#245c65]"
-      : "border-[#d8a05a] bg-[#fff1dc] text-[#7a461f]";
-
-  return (
-    <div className={`rounded-none border-2 p-3 ${classes}`}>
-      <h2 className="font-mono text-xs font-black uppercase tracking-[0.12em]">{title}</h2>
-      <p className="mt-1 text-sm leading-5">{body}</p>
-    </div>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] px-3 py-2 text-right shadow-[0_2px_0_#3b2a14]">
-      <div className="font-mono text-lg font-black text-[#2f6f4e]">{value}</div>
-      <div className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#746850]">{label}</div>
-    </div>
-  );
-}
-
 function TinyBadge({ label }: { label: string }) {
   return (
     <span className="rounded-none border-2 border-[#c9b88a] bg-[#fff8dc] px-2 py-0.5 font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#5e4a26]">
@@ -520,20 +602,13 @@ function TagList({ items, emptyLabel, compact = false }: { items: string[]; empt
   );
 }
 
-function InfoBlock({ label, value }: { label: string; value: string }) {
+function InfoBlock({ label, value, accent }: { label: string; value: string; accent: string }) {
   return (
     <div className="rounded-none border-2 border-[#d4c39a] bg-[#fff8dc] p-2">
-      <p className="font-mono text-[10px] font-black uppercase tracking-[0.12em] text-[#607145]">{label}</p>
+      <p className="font-mono text-[10px] font-black uppercase tracking-[0.12em]" style={{ color: accent }}>
+        {label}
+      </p>
       <p className="mt-1 text-xs leading-5 text-[#5e4a26]">{value}</p>
-    </div>
-  );
-}
-
-function LabelList({ label, items }: { label: string; items: string[] }) {
-  return (
-    <div className="grid gap-1 sm:grid-cols-[76px_1fr]">
-      <span className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#607145]">{label}</span>
-      <p className="text-xs leading-5 text-[#5e4a26]">{items.length ? items.join(", ") : "None projected"}</p>
     </div>
   );
 }
@@ -545,6 +620,20 @@ function EmptyPanel({ title, body, compact = false }: { title: string; body: str
       <p className="mt-1 text-sm leading-5 text-[#6c614d]">{body}</p>
     </div>
   );
+}
+
+function averageHealth(metrics: FarmHealthMetric[]) {
+  if (!metrics.length) {
+    return 0;
+  }
+
+  return Math.round(metrics.reduce((sum, metric) => sum + metric.score, 0) / metrics.length);
+}
+
+function healthAvgAccent(score: number) {
+  if (score >= 70) return "#4e9f5d";
+  if (score >= 50) return "#d39a18";
+  return "#c46a1d";
 }
 
 function buildDemoReport(snapshot: InventorySnapshot): FarmIntelligenceReport {
@@ -583,7 +672,7 @@ function buildDemoReport(snapshot: InventorySnapshot): FarmIntelligenceReport {
     generatedAt: new Date().toISOString(),
     planName: snapshot.plan?.name ?? "Demo farm plan",
     executiveSummary:
-      "This preview shows the shape of the AI dashboard before Gemini generates a saved report for the latest farm plan.",
+      "Generate AI intelligence to turn the latest farm plan into full yield forecasts, improvement suggestions, scenario cards, and risk diagnostics.",
     productionForecasts: forecasts,
     aiSuggestions: [
       {
@@ -652,14 +741,6 @@ function buildDemoReport(snapshot: InventorySnapshot): FarmIntelligenceReport {
       { name: "storage", score: 48, status: "weak", explanation: "Preservation capacity is not yet visible in the plan." },
     ],
   };
-}
-
-function averageHealth(metrics: FarmHealthMetric[]) {
-  if (!metrics.length) {
-    return 0;
-  }
-
-  return Math.round(metrics.reduce((sum, metric) => sum + metric.score, 0) / metrics.length);
 }
 
 function formatCompactNumber(value: number) {

@@ -6,9 +6,29 @@ import { PixelGlyph } from "../_components/icons";
 import type { ShopDisplaySlotView, ShopSnapshot } from "@/lib/shop";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
+type ShopViewMode = "edit" | "preview";
+type ShopDetails = ShopSnapshot["details"];
+type DetailField = {
+  key: keyof ShopDetails;
+  label: string;
+  glyph: "sun" | "wagon" | "basket" | "leaf" | "scroll";
+  multiline?: boolean;
+};
+
+const detailFields: DetailField[] = [
+  { key: "shopName", label: "Shop name", glyph: "leaf" },
+  { key: "hours", label: "Open days and hours", glyph: "sun" },
+  { key: "pickupLocation", label: "Pickup location", glyph: "wagon" },
+  { key: "pickupInstructions", label: "Pickup instructions", glyph: "scroll", multiline: true },
+  { key: "paymentOptions", label: "Payment or trade", glyph: "basket" },
+  { key: "contact", label: "Contact", glyph: "scroll" },
+  { key: "availabilityNote", label: "Availability note", glyph: "leaf", multiline: true },
+];
 
 export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }) {
   const [slots, setSlots] = useState(initialSnapshot.slots);
+  const [details, setDetails] = useState(initialSnapshot.details);
+  const [mode, setMode] = useState<ShopViewMode>("edit");
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -38,7 +58,7 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
         const response = await fetch("/api/shop/display", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slots: slots.map(toSaveSlot) }),
+          body: JSON.stringify({ details, slots: slots.map(toSaveSlot) }),
         });
         const data = (await response.json()) as Partial<ShopSnapshot> & { error?: string };
 
@@ -52,6 +72,9 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
 
         hasUserEdited.current = false;
         setSlots(data.slots);
+        if (data.details) {
+          setDetails(data.details);
+        }
         setSaveStatus("saved");
       } catch (error) {
         setSaveStatus("error");
@@ -60,7 +83,7 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
     }, 650);
 
     return () => window.clearTimeout(timeout);
-  }, [slots]);
+  }, [details, slots]);
 
   function markEdited() {
     hasUserEdited.current = true;
@@ -125,6 +148,11 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
     );
   }
 
+  function updateDetails(patch: Partial<ShopDetails>) {
+    markEdited();
+    setDetails((current) => normalizeDetails({ ...current, ...patch }));
+  }
+
   function moveToShelf(itemId: string) {
     const slot = findSlot(itemId);
 
@@ -172,8 +200,12 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
+      <ShopModeTabs mode={mode} onChange={setMode} />
+
       <FarmStandPanel
         displayName={initialSnapshot.displayName}
+        details={details}
+        mode={mode}
         visibleSlots={visibleSlots}
         totalDisplayed={totalDisplayed}
         saveStatus={saveStatus}
@@ -183,26 +215,63 @@ export function ShopBoard({ initialSnapshot }: { initialSnapshot: ShopSnapshot }
         uploadingItemId={uploadingItemId}
         onDragStart={handleDragStart}
         onDropShelf={handleDropOnShelf}
+        onDetailsChange={updateDetails}
         onUpdate={updateSlot}
         onUpload={uploadImage}
         onHide={(itemId) => updateSlot(itemId, { visible: false })}
       />
 
-      <BackStockPanel
-        hiddenSlots={hiddenSlots}
-        draggedItemId={draggedItemId}
-        uploadingItemId={uploadingItemId}
-        onDragStart={handleDragStart}
-        onDropTray={handleDropOnTray}
-        onMoveToShelf={moveToShelf}
-        onUpload={uploadImage}
-      />
+      {mode === "edit" ? (
+        <BackStockPanel
+          hiddenSlots={hiddenSlots}
+          draggedItemId={draggedItemId}
+          uploadingItemId={uploadingItemId}
+          onDragStart={handleDragStart}
+          onDropTray={handleDropOnTray}
+          onMoveToShelf={moveToShelf}
+          onUpload={uploadImage}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ShopModeTabs({
+  mode,
+  onChange,
+}: {
+  mode: ShopViewMode;
+  onChange: (mode: ShopViewMode) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="font-mono text-xs font-black uppercase tracking-[0.14em] text-[#6f3f1c]">
+        Shopfront
+      </div>
+      <div className="grid grid-cols-2 rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] p-1 shadow-[0_2px_0_#3b2a14]">
+        {(["edit", "preview"] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => onChange(value)}
+            className={`h-8 px-4 font-mono text-[11px] font-black uppercase tracking-[0.1em] transition ${
+              mode === value
+                ? "bg-[#365833] text-[#fffdf5]"
+                : "bg-transparent text-[#5e4a26] hover:bg-[#fff3cf]"
+            }`}
+          >
+            {value === "edit" ? "Edit" : "Preview"}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
 
 function FarmStandPanel({
   displayName,
+  details,
+  mode,
   visibleSlots,
   totalDisplayed,
   saveStatus,
@@ -212,11 +281,14 @@ function FarmStandPanel({
   uploadingItemId,
   onDragStart,
   onDropShelf,
+  onDetailsChange,
   onUpdate,
   onUpload,
   onHide,
 }: {
   displayName: string;
+  details: ShopDetails;
+  mode: ShopViewMode;
   visibleSlots: ShopDisplaySlotView[];
   totalDisplayed: number;
   saveStatus: SaveStatus;
@@ -226,10 +298,14 @@ function FarmStandPanel({
   uploadingItemId: string | null;
   onDragStart: (itemId: string) => void;
   onDropShelf: (targetItemId?: string) => void;
+  onDetailsChange: (patch: Partial<ShopDetails>) => void;
   onUpdate: (itemId: string, patch: Partial<ShopDisplaySlotView>) => void;
   onUpload: (itemId: string, file: File) => Promise<void>;
   onHide: (itemId: string) => void;
 }) {
+  const isEditing = mode === "edit";
+  const shopName = details.shopName || displayName;
+
   return (
     <section
       style={{ ["--pixel-frame-bg" as string]: "#fbf6e8" }}
@@ -254,15 +330,15 @@ function FarmStandPanel({
             </span>
             <div className="min-w-0 text-left">
               <h1 className="font-mono text-lg font-black uppercase tracking-[0.18em] text-[#34432b] drop-shadow-[1px_1px_0_#fffdf5]">
-                Farm Stand
+                {shopName}
               </h1>
               <p className="text-xs font-semibold text-[#5f563f]">
-                {displayName}&apos;s market shelf
+                {isEditing ? "Editing shopfront" : "Public shop preview"}
               </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <StatusBadge status={saveStatus} error={saveError} />
+            {isEditing ? <StatusBadge status={saveStatus} error={saveError} /> : null}
             <span className="rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] px-2.5 py-1 font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#5e4a26] shadow-[0_2px_0_#3b2a14]">
               {visibleSlots.length} on shelf · {Math.round(totalDisplayed * 10) / 10} units
             </span>
@@ -275,10 +351,16 @@ function FarmStandPanel({
         </div>
       </div>
 
+      {isEditing ? (
+        <ShopDetailsEditor details={details} onChange={onDetailsChange} />
+      ) : (
+        <FarmStandInfoStrip details={details} visibleSlots={visibleSlots} />
+      )}
+
       <div
         onDragOver={(event) => event.preventDefault()}
         onDrop={() => onDropShelf()}
-        className={`pixel-dots relative min-h-[420px] bg-[#fcf6e4] p-4 ${
+        className={`pixel-dots relative min-h-[420px] border-t-2 border-[#3b2a14] bg-[#fcf6e4] p-4 ${
           draggedItemId ? "outline outline-2 -outline-offset-4 outline-dashed outline-[#c9a64a]" : ""
         }`}
       >
@@ -288,6 +370,8 @@ function FarmStandPanel({
               <ShopShelfCard
                 key={slot.inventoryItemId}
                 slot={slot}
+                mode={mode}
+                pickupLocation={details.pickupLocation}
                 isUploading={uploadingItemId === slot.inventoryItemId}
                 onDragStart={onDragStart}
                 onDrop={() => onDropShelf(slot.inventoryItemId)}
@@ -302,10 +386,12 @@ function FarmStandPanel({
             <div className="px-4">
               <PixelGlyph name="basket" className="mx-auto mb-2 size-8 text-[#c9a64a]" />
               <div className="font-mono text-xs font-black uppercase tracking-[0.12em] text-[#7a6843]">
-                Drag produce up from back stock
+                {isEditing ? "Drag produce up from back stock" : "No produce listed"}
               </div>
               <p className="mx-auto mt-1 max-w-xs text-[11px] text-[#9a8a66]">
-                Each item needs a photo before it can ride the wagon to the shelf.
+                {isEditing
+                  ? "Each item needs a photo before it can ride the wagon to the shelf."
+                  : "Check back when this shopfront has produce on the shelf."}
               </p>
             </div>
           </div>
@@ -314,10 +400,131 @@ function FarmStandPanel({
 
       <div className="border-t-2 border-[#3b2a14] bg-[linear-gradient(to_bottom,#a8916a_0_4px,#8b6f3e_4px_8px,#5e4a26_8px_100%)] py-2 text-center">
         <span className="font-mono text-[10px] font-black uppercase tracking-[0.18em] text-[#fffdf5] drop-shadow-[1px_1px_0_#3b2a14]">
-          ☼ Open Today ☼
+          {isEditing ? "Edit shopfront" : details.hours || "Hours not set"}
         </span>
       </div>
     </section>
+  );
+}
+
+function ShopDetailsEditor({
+  details,
+  onChange,
+}: {
+  details: ShopDetails;
+  onChange: (patch: Partial<ShopDetails>) => void;
+}) {
+  return (
+    <div className="bg-[#fffaf0] p-3">
+      <div className="grid gap-2 lg:grid-cols-2">
+        {detailFields.map((field) => (
+          <label
+            key={field.key}
+            style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
+            className={`pixel-frame grid gap-1.5 border-2 border-[#c9b88a] bg-[#fffdf5] p-2.5 shadow-[0_2px_0_#b29c66] ${
+              field.multiline ? "lg:col-span-2" : ""
+            }`}
+          >
+            <span className="flex items-center gap-2 font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">
+              <PixelGlyph name={field.glyph} className="size-4" />
+              {field.label}
+            </span>
+            {field.multiline ? (
+              <textarea
+                value={details[field.key]}
+                onChange={(event) => onChange({ [field.key]: event.target.value })}
+                rows={3}
+                className="min-h-20 w-full resize-y rounded-none border-2 border-[#c9b88a] bg-white px-2 py-1.5 text-sm font-bold leading-snug text-[#365833] outline-none focus:border-[#9bb979]"
+              />
+            ) : (
+              <input
+                value={details[field.key]}
+                onChange={(event) => onChange({ [field.key]: event.target.value })}
+                className="h-9 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
+              />
+            )}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FarmStandInfoStrip({
+  details,
+  visibleSlots,
+}: {
+  details: ShopDetails;
+  visibleSlots: ShopDisplaySlotView[];
+}) {
+  const freshestUntil = getSoonestUseByLabel(visibleSlots);
+  const publicDetails = [
+    { label: "Hours", value: details.hours, glyph: "sun" as const },
+    { label: "Pickup", value: details.pickupLocation, detail: details.pickupInstructions, glyph: "wagon" as const },
+    { label: "Payment", value: details.paymentOptions, glyph: "basket" as const },
+    { label: "Contact", value: details.contact, glyph: "scroll" as const },
+    { label: "Availability", value: details.availabilityNote, glyph: "leaf" as const },
+  ].filter((item) => item.value || item.detail);
+
+  return (
+    <div className="bg-[#fffaf0] p-3">
+      <div className="grid gap-2 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+        <div
+          style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
+          className="pixel-frame border-2 border-[#3b2a14] bg-[#fffdf5] p-3 shadow-[0_2px_0_#8b6f3e]"
+        >
+          <div className="flex flex-wrap items-start gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-none border-2 border-[#3b2a14] bg-[#eef8df] shadow-[0_2px_0_#6f8d45]">
+              <PixelGlyph name="leaf" className="size-6" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="font-mono text-[11px] font-black uppercase tracking-[0.14em] text-[#6f3f1c]">
+                {details.shopName || "Shopfront"}
+              </div>
+              {details.availabilityNote ? (
+                <p className="mt-1 text-sm font-bold leading-snug text-[#2d311f]">
+                  {details.availabilityNote}
+                </p>
+              ) : null}
+            </div>
+            <span className="rounded-none border-2 border-[#3b2a14] bg-[#eef8df] px-2 py-1 font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#335a2d] shadow-[0_2px_0_#6f8d45]">
+              {freshestUntil}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          {publicDetails.length ? publicDetails.map((item) => (
+            <div
+              key={item.label}
+              style={{ ["--pixel-frame-bg" as string]: "#fffaf0" }}
+              className="pixel-frame flex min-h-24 gap-2 border-2 border-[#c9b88a] bg-[#fffdf5] p-2 shadow-[0_2px_0_#b29c66]"
+            >
+              <span className="grid size-8 shrink-0 place-items-center rounded-none border-2 border-[#8b6f3e] bg-[#fff8dc] shadow-[0_1px_0_#5e4a26]">
+                <PixelGlyph name={item.glyph} className="size-4.5" />
+              </span>
+              <div className="min-w-0">
+                <div className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">
+                  {item.label}
+                </div>
+                <div className="mt-0.5 text-xs font-black leading-tight text-[#2d311f]">
+                  {item.value}
+                </div>
+                {item.detail ? (
+                  <p className="mt-1 text-[11px] font-semibold leading-snug text-[#7a6843]">
+                    {item.detail}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          )) : (
+            <div className="rounded-none border-2 border-dashed border-[#d4c39a] bg-[#fffdf5] px-3 py-5 text-center font-mono text-xs font-black uppercase tracking-[0.12em] text-[#9a8a66] sm:col-span-2">
+              Shop details not published yet
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -402,6 +609,8 @@ function BackStockPanel({
 
 function ShopShelfCard({
   slot,
+  mode,
+  pickupLocation,
   isUploading,
   onDragStart,
   onDrop,
@@ -410,6 +619,8 @@ function ShopShelfCard({
   onHide,
 }: {
   slot: ShopDisplaySlotView;
+  mode: ShopViewMode;
+  pickupLocation: string;
   isUploading: boolean;
   onDragStart: (itemId: string) => void;
   onDrop: () => void;
@@ -417,24 +628,34 @@ function ShopShelfCard({
   onUpload: (itemId: string, file: File) => Promise<void>;
   onHide: () => void;
 }) {
+  const isEditing = mode === "edit";
+  const freshness = getFreshnessLabel(slot);
+  const harvested = formatShortDate(slot.item.acquiredAt);
+  const farmSource = toTitleCase(slot.item.source);
+
   return (
     <article
-      draggable
-      onDragStart={() => onDragStart(slot.inventoryItemId)}
+      draggable={isEditing}
+      onDragStart={() => isEditing && onDragStart(slot.inventoryItemId)}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        onDrop();
+        if (isEditing) {
+          onDrop();
+        }
       }}
       style={{ ["--pixel-frame-bg" as string]: "#fcf6e4" }}
-      className="pixel-frame grid cursor-grab gap-2 rounded-none border-2 border-[#a8916a] bg-[#fffdf5] p-2.5 shadow-[0_3px_0_#8b6f3e] transition hover:-translate-y-0.5 active:cursor-grabbing"
+      className={`pixel-frame grid gap-2 rounded-none border-2 border-[#a8916a] bg-[#fffdf5] p-2.5 shadow-[0_3px_0_#8b6f3e] ${
+        isEditing ? "cursor-grab transition hover:-translate-y-0.5 active:cursor-grabbing" : ""
+      }`}
     >
       <ImageSlot
         slot={slot}
         isUploading={isUploading}
         onUpload={(file) => onUpload(slot.inventoryItemId, file)}
         height="h-32"
+        editable={isEditing}
       />
 
       <div className="flex items-start gap-2">
@@ -443,60 +664,94 @@ function ShopShelfCard({
           <div className="mt-0.5 font-mono text-[11px] font-bold text-[#5e4a26]">
             {slot.item.quantity.amount} {slot.item.quantity.unit} available
           </div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            <span className="rounded-none border border-[#9bc278] bg-[#eef8df] px-1.5 py-0.5 font-mono text-[9px] font-black uppercase tracking-[0.08em] text-[#335a2d]">
+              {freshness}
+            </span>
+            {pickupLocation ? (
+              <span className="rounded-none border border-[#d8a05a] bg-[#fff4dc] px-1.5 py-0.5 font-mono text-[9px] font-black uppercase tracking-[0.08em] text-[#7a461f]">
+                Pick up: {pickupLocation}
+              </span>
+            ) : null}
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={onHide}
-          className="grid size-7 shrink-0 place-items-center rounded-none border-2 border-[#8b6f3e] bg-[#fff8dc] text-[#7a6843] shadow-[0_2px_0_#5e4a26] transition hover:bg-[#fff3cf] active:translate-y-0.5 active:shadow-[0_1px_0_#5e4a26]"
-          aria-label={`Move ${slot.item.name} to back stock`}
-        >
-          <PixelGlyph name="basket" className="size-3.5" />
-        </button>
+        {isEditing ? (
+          <button
+            type="button"
+            onClick={onHide}
+            className="grid size-7 shrink-0 place-items-center rounded-none border-2 border-[#8b6f3e] bg-[#fff8dc] text-[#7a6843] shadow-[0_2px_0_#5e4a26] transition hover:bg-[#fff3cf] active:translate-y-0.5 active:shadow-[0_1px_0_#5e4a26]"
+            aria-label={`Move ${slot.item.name} to back stock`}
+          >
+            <PixelGlyph name="basket" className="size-3.5" />
+          </button>
+        ) : null}
       </div>
 
-      <label className="grid gap-1">
-        <span className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">Sign</span>
-        <input
-          aria-label={`${slot.item.name} sign text`}
-          value={slot.signText}
-          onChange={(event) => onUpdate(slot.inventoryItemId, { signText: event.target.value })}
-          className="h-8 min-w-0 rounded-none border-2 border-[#c9b88a] bg-[#fffaf0] px-2 text-sm font-black text-[#6f3f1c] outline-none focus:border-[#9bb979]"
-        />
-      </label>
+      {isEditing ? (
+        <>
+          <label className="grid gap-1">
+            <span className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">Sign</span>
+            <input
+              aria-label={`${slot.item.name} sign text`}
+              value={slot.signText}
+              onChange={(event) => onUpdate(slot.inventoryItemId, { signText: event.target.value })}
+              className="h-8 min-w-0 rounded-none border-2 border-[#c9b88a] bg-[#fffaf0] px-2 text-sm font-black text-[#6f3f1c] outline-none focus:border-[#9bb979]"
+            />
+          </label>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,80px)_minmax(0,96px)] gap-1.5">
-        <label className="grid gap-1">
-          <span className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">Amount</span>
-          <input
-            aria-label={`${slot.item.name} display amount`}
-            type="number"
-            min={0}
-            max={slot.item.quantity.amount}
-            step="0.1"
-            value={slot.displayAmount}
-            onChange={(event) => onUpdate(slot.inventoryItemId, { displayAmount: Number(event.target.value) })}
-            className="h-8 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-right font-mono text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
-          />
-        </label>
-        <label className="grid gap-1">
-          <span className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">Unit</span>
-          <input
-            aria-label={`${slot.item.name} display unit`}
-            value={slot.displayUnit}
-            onChange={(event) => onUpdate(slot.inventoryItemId, { displayUnit: event.target.value })}
-            className="h-8 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 font-mono text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
-          />
-        </label>
-        <label className="grid gap-1">
-          <span className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">Price</span>
-          <input
-            aria-label={`${slot.item.name} price`}
-            value={formatPrice(slot.priceCents)}
-            onChange={(event) => onUpdate(slot.inventoryItemId, { priceCents: parsePriceCents(event.target.value) })}
-            className="h-8 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-right font-mono text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
-          />
-        </label>
-      </div>
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,80px)_minmax(0,96px)] gap-1.5">
+            <label className="grid gap-1">
+              <span className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">Amount</span>
+              <input
+                aria-label={`${slot.item.name} display amount`}
+                type="number"
+                min={0}
+                max={slot.item.quantity.amount}
+                step="0.1"
+                value={slot.displayAmount}
+                onChange={(event) => onUpdate(slot.inventoryItemId, { displayAmount: Number(event.target.value) })}
+                className="h-8 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-right font-mono text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
+              />
+            </label>
+            <label className="grid gap-1">
+              <span className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">Unit</span>
+              <input
+                aria-label={`${slot.item.name} display unit`}
+                value={slot.displayUnit}
+                onChange={(event) => onUpdate(slot.inventoryItemId, { displayUnit: event.target.value })}
+                className="h-8 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 font-mono text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
+              />
+            </label>
+            <label className="grid gap-1">
+              <span className="font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#7a6843]">Price</span>
+              <input
+                aria-label={`${slot.item.name} price`}
+                value={formatPrice(slot.priceCents)}
+                onChange={(event) => onUpdate(slot.inventoryItemId, { priceCents: parsePriceCents(event.target.value) })}
+                className="h-8 min-w-0 rounded-none border-2 border-[#c9b88a] bg-white px-2 text-right font-mono text-sm font-bold text-[#365833] outline-none focus:border-[#9bb979]"
+              />
+            </label>
+          </div>
+        </>
+      ) : (
+        <div className="rounded-none border-2 border-[#c9b88a] bg-[#fffaf0] px-2 py-1.5">
+          <div className="text-sm font-black leading-snug text-[#6f3f1c]">{slot.signText}</div>
+          <div className="mt-1 font-mono text-xs font-black text-[#365833]">
+            {formatPrice(slot.priceCents)} / {slot.displayAmount} {slot.displayUnit}
+          </div>
+        </div>
+      )}
+
+      <dl className="grid grid-cols-2 gap-1.5 rounded-none border-2 border-[#e1d0a8] bg-[#fffaf0] p-2">
+        <div className="min-w-0">
+          <dt className="font-mono text-[9px] font-black uppercase tracking-[0.1em] text-[#8b6f3e]">Harvested</dt>
+          <dd className="truncate text-[11px] font-bold text-[#4f442d]">{harvested}</dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="font-mono text-[9px] font-black uppercase tracking-[0.1em] text-[#8b6f3e]">From</dt>
+          <dd className="truncate text-[11px] font-bold text-[#4f442d]">{farmSource}</dd>
+        </div>
+      </dl>
     </article>
   );
 }
@@ -532,6 +787,7 @@ function BackStockCard({
         isUploading={isUploading}
         onUpload={(file) => onUpload(slot.inventoryItemId, file)}
         height="h-24"
+        editable
       />
 
       <div className="min-w-0">
@@ -563,20 +819,21 @@ function ImageSlot({
   isUploading,
   onUpload,
   height,
+  editable,
 }: {
   slot: ShopDisplaySlotView;
   isUploading: boolean;
   onUpload: (file: File) => Promise<void>;
   height: string;
+  editable: boolean;
 }) {
   const inputId = `shop-image-${slot.inventoryItemId}`;
 
   return (
-    <label
-      htmlFor={inputId}
-      className={`relative grid ${height} cursor-pointer place-items-center overflow-hidden rounded-none border-2 ${
+    <div
+      className={`relative grid ${height} place-items-center overflow-hidden rounded-none border-2 ${
         slot.imageUrl ? "border-[#3b2a14] bg-[#fff8dc]" : "border-dashed border-[#c9a64a] bg-[#fff8dc]"
-      }`}
+      } ${editable ? "cursor-pointer" : ""}`}
     >
       {slot.imageUrl ? (
         <Image
@@ -603,26 +860,31 @@ function ImageSlot({
           </span>
         </div>
       ) : null}
-      {slot.imageUrl ? (
+      {slot.imageUrl && editable ? (
         <span className="absolute right-1.5 top-1.5 rounded-none border-2 border-[#3b2a14] bg-[#fffdf5] px-1.5 py-0.5 font-mono text-[10px] font-black uppercase tracking-[0.08em] text-[#5e4a26] shadow-[0_1px_0_#3b2a14]">
           Replace
         </span>
       ) : null}
-      <input
-        id={inputId}
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
-        className="sr-only"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) {
-            onUpload(file).finally(() => {
-              event.target.value = "";
-            });
-          }
-        }}
-      />
-    </label>
+      {editable ? (
+        <label htmlFor={inputId} className="absolute inset-0 cursor-pointer">
+          <span className="sr-only">Upload {slot.item.name} photo</span>
+          <input
+            id={inputId}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="sr-only"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) {
+                onUpload(file).finally(() => {
+                  event.target.value = "";
+                });
+              }
+            }}
+          />
+        </label>
+      ) : null}
+    </div>
   );
 }
 
@@ -677,6 +939,18 @@ function normalizeSlot(slot: ShopDisplaySlotView) {
   };
 }
 
+function normalizeDetails(details: ShopDetails): ShopDetails {
+  return {
+    shopName: details.shopName.slice(0, 60),
+    hours: details.hours.slice(0, 80),
+    pickupLocation: details.pickupLocation.slice(0, 80),
+    pickupInstructions: details.pickupInstructions.slice(0, 160),
+    paymentOptions: details.paymentOptions.slice(0, 120),
+    contact: details.contact.slice(0, 100),
+    availabilityNote: details.availabilityNote.slice(0, 160),
+  };
+}
+
 function toSaveSlot(slot: ShopDisplaySlotView) {
   return {
     inventoryItemId: slot.inventoryItemId,
@@ -697,4 +971,77 @@ function formatPrice(priceCents: number) {
 function parsePriceCents(value: string) {
   const parsed = Number(value.replace(/[^0-9.]/g, ""));
   return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
+}
+
+function getFreshnessLabel(slot: ShopDisplaySlotView) {
+  if (!slot.item.useBy) {
+    return "Best this week";
+  }
+
+  const daysLeft = daysUntil(slot.item.useBy);
+
+  if (daysLeft <= 0) {
+    return "Best today";
+  }
+
+  if (daysLeft === 1) {
+    return "1 day left";
+  }
+
+  return `${daysLeft} days left`;
+}
+
+function getSoonestUseByLabel(slots: ShopDisplaySlotView[]) {
+  const soonest = slots
+    .map((slot) => slot.item.useBy)
+    .filter((date): date is string => Boolean(date))
+    .sort((left, right) => Date.parse(left) - Date.parse(right))[0];
+
+  if (!soonest) {
+    return "Freshness posted";
+  }
+
+  const daysLeft = daysUntil(soonest);
+
+  if (daysLeft <= 0) {
+    return "Use freshest today";
+  }
+
+  return `Freshest item: ${daysLeft}d`;
+}
+
+function daysUntil(value: string) {
+  const date = Date.parse(value);
+
+  if (!Number.isFinite(date)) {
+    return 0;
+  }
+
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startOfTarget = new Date(date);
+  startOfTarget.setHours(0, 0, 0, 0);
+
+  return Math.max(0, Math.ceil((startOfTarget.getTime() - startOfToday) / 86_400_000));
+}
+
+function formatShortDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Recently";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function toTitleCase(value: string) {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join(" ");
 }

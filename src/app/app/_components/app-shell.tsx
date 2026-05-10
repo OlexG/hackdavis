@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { appNavItems } from "./data";
-import { PixelGlyph, PixelIcon } from "./icons";
+import { PixelIcon, SunpatchLogo } from "./icons";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -27,7 +27,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             {!collapsed ? (
               <Link href="/" className="flex min-w-0 items-center gap-2">
                 <span className="grid size-9 shrink-0 place-items-center rounded-md border-2 border-[#8b6f3e] bg-[#ffe89a] text-[#a8761c] shadow-[inset_0_2px_0_rgba(255,255,255,0.6),inset_0_-3px_0_rgba(168,118,28,0.35),0_2px_0_#5e4a26]">
-                  <PixelGlyph name="sun" className="size-5" />
+                  <SunpatchLogo alt="" className="size-8" />
                 </span>
                 <span className="truncate font-mono text-sm font-black uppercase tracking-[0.18em] text-[#34432b] drop-shadow-[1px_1px_0_#fffdf5]">
                   Sunpatch
@@ -35,7 +35,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </Link>
             ) : (
               <Link href="/" aria-label="Sunpatch home" className="grid size-9 place-items-center rounded-md border-2 border-[#8b6f3e] bg-[#ffe89a] text-[#a8761c] shadow-[inset_0_2px_0_rgba(255,255,255,0.6),inset_0_-3px_0_rgba(168,118,28,0.35),0_2px_0_#5e4a26]">
-                <PixelGlyph name="sun" className="size-5" />
+                <SunpatchLogo alt="" className="size-8" />
               </Link>
             )}
             {!collapsed ? (

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import {
   getShopSnapshot,
-  saveShopDisplaySlots,
+  saveShopDisplay,
   ShopValidationError,
+  type ShopDisplaySaveDetails,
   type ShopDisplaySaveSlot,
 } from "@/lib/shop";
 
@@ -22,8 +23,8 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   try {
-    const slots = normalizeRequest(await request.json());
-    const snapshot = await saveShopDisplaySlots(slots);
+    const payload = normalizeRequest(await request.json());
+    const snapshot = await saveShopDisplay(payload);
 
     return NextResponse.json(snapshot);
   } catch (error) {
@@ -34,18 +35,19 @@ export async function PATCH(request: Request) {
   }
 }
 
-function normalizeRequest(raw: unknown): ShopDisplaySaveSlot[] {
+function normalizeRequest(raw: unknown): { slots: ShopDisplaySaveSlot[]; details?: ShopDisplaySaveDetails } {
   if (!raw || typeof raw !== "object") {
     throw new Error("Invalid shop display request");
   }
 
-  const candidate = raw as { slots?: unknown };
+  const candidate = raw as { slots?: unknown; details?: unknown };
 
   if (!Array.isArray(candidate.slots)) {
     throw new Error("Choose at least one shop item");
   }
 
-  return candidate.slots.map((slot) => {
+  const details = normalizeDetails(candidate.details);
+  const slots = candidate.slots.map((slot) => {
     if (!slot || typeof slot !== "object") {
       throw new Error("Invalid shop item");
     }
@@ -68,6 +70,26 @@ function normalizeRequest(raw: unknown): ShopDisplaySaveSlot[] {
             : undefined,
     };
   });
+
+  return { slots, details };
+}
+
+function normalizeDetails(raw: unknown): ShopDisplaySaveDetails | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+
+  const value = raw as Record<string, unknown>;
+
+  return {
+    shopName: typeof value.shopName === "string" ? value.shopName : undefined,
+    hours: typeof value.hours === "string" ? value.hours : undefined,
+    pickupLocation: typeof value.pickupLocation === "string" ? value.pickupLocation : undefined,
+    pickupInstructions: typeof value.pickupInstructions === "string" ? value.pickupInstructions : undefined,
+    paymentOptions: typeof value.paymentOptions === "string" ? value.paymentOptions : undefined,
+    contact: typeof value.contact === "string" ? value.contact : undefined,
+    availabilityNote: typeof value.availabilityNote === "string" ? value.availabilityNote : undefined,
+  };
 }
 
 function formatApiError(error: unknown, fallback: string) {

@@ -4,13 +4,32 @@ import { GridFSBucket, ObjectId } from "mongodb";
 import { Readable } from "node:stream";
 import { getInventorySnapshot, type InventoryViewItem } from "@/lib/inventory";
 import { getMongoDb } from "@/lib/mongodb";
-import type { InventoryItem, ShopDisplay, ShopDisplaySlot } from "@/lib/models";
+import type {
+  InventoryItem,
+  ShopDisplay,
+  ShopDisplayDetails,
+  ShopDisplaySlot,
+  ShopHoursSchedule,
+  ShopPaymentDetails,
+  ShopPaymentMethod,
+  ShopPaymentMethodKind,
+  ShopPickupCoords,
+} from "@/lib/models";
 
 const demoUserEmail = "test@gmail.com";
 const sellableCategories = ["harvest", "preserves"] as const;
 const shopImagesBucket = "shop_images";
 const maxImageBytes = 4 * 1024 * 1024;
 const allowedImageMimeTypes = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const detailLimits = {
+  shopName: 60,
+  hours: 80,
+  pickupLocation: 80,
+  pickupInstructions: 160,
+  paymentOptions: 120,
+  contact: 100,
+  availabilityNote: 160,
+} satisfies Record<keyof ShopDisplayDetails, number>;
 
 export type ShopDisplaySlotView = {
   id: string;
@@ -31,9 +50,52 @@ export type ShopSnapshot = {
   displayName: string;
   theme: ShopDisplay["theme"];
   layoutMode: ShopDisplay["layoutMode"];
+  details: ShopDisplayDetails;
   sellableItems: InventoryViewItem[];
   slots: ShopDisplaySlotView[];
   lastUpdated: string;
+};
+
+export type ShopDisplaySaveDetails = Partial<{
+  shopName: string;
+  hours: string;
+  hoursSchedule: ShopHoursSchedule | null;
+  pickupLocation: string;
+  pickupCoords: ShopPickupCoords | null;
+  pickupInstructions: string;
+  paymentOptions: string;
+  payment: ShopPaymentDetails | null;
+  contact: string;
+  availabilityNote: string;
+}>;
+
+const paymentMethodKinds: readonly ShopPaymentMethodKind[] = [
+  "venmo",
+  "cashapp",
+  "zelle",
+  "paypal",
+  "cash",
+  "card",
+  "check",
+  "trade",
+];
+
+const paymentMethodLabels: Record<ShopPaymentMethodKind, string> = {
+  venmo: "Venmo",
+  cashapp: "Cash App",
+  zelle: "Zelle",
+  paypal: "PayPal",
+  cash: "Cash",
+  card: "Card",
+  check: "Check",
+  trade: "Trade",
+};
+
+const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+export type ShopDisplaySavePayload = {
+  slots: ShopDisplaySaveSlot[];
+  details?: ShopDisplaySaveDetails;
 };
 
 export type ShopDisplaySaveSlot = {
@@ -77,6 +139,7 @@ export async function getShopSnapshot(): Promise<ShopSnapshot> {
       displayName: typeof profile?.displayName === "string" ? profile.displayName : "Test Farmer",
       theme: "farm-stand",
       layoutMode: "shelves",
+      details: normalizeDetails(display?.details, typeof profile?.displayName === "string" ? profile.displayName : "Test Farmer"),
       sellableItems,
       slots: buildShopSlots(sellableItems, display?.slots),
       lastUpdated: newestTimestamp(sellableItems, display?.updatedAt),
@@ -86,7 +149,7 @@ export async function getShopSnapshot(): Promise<ShopSnapshot> {
   }
 }
 
-export async function saveShopDisplaySlots(slots: ShopDisplaySaveSlot[]) {
+export async function saveShopDisplay({ slots, details }: ShopDisplaySavePayload) {
   const db = await getMongoDb();
   const user = await db.collection("users").findOne({ email: demoUserEmail });
 
@@ -108,6 +171,9 @@ export async function saveShopDisplaySlots(slots: ShopDisplaySaveSlot[]) {
   const normalizedSlots = slots
     .map((slot, index) => normalizeSaveSlot(slot, index, sellableById))
     .filter(isShopDisplaySlot);
+  const profile = await db.collection("profiles").findOne({ userId: user._id });
+  const displayName = typeof profile?.displayName === "string" ? profile.displayName : "Test Farmer";
+  const normalizedDetails = normalizeDetails(details, displayName);
   const now = new Date();
 
   await db.collection("shop_displays").createIndex({ userId: 1 }, { unique: true });
@@ -118,6 +184,7 @@ export async function saveShopDisplaySlots(slots: ShopDisplaySaveSlot[]) {
         userId: user._id,
         theme: "farm-stand",
         layoutMode: "shelves",
+        details: normalizedDetails,
         slots: normalizedSlots,
         updatedAt: now,
       },
@@ -140,6 +207,7 @@ async function getFallbackShopSnapshot() {
     displayName: inventory.displayName,
     theme: "farm-stand" as const,
     layoutMode: "shelves" as const,
+    details: normalizeDetails(undefined, inventory.displayName),
     sellableItems,
     slots: buildShopSlots(sellableItems),
     lastUpdated: inventory.lastUpdated,
@@ -189,6 +257,188 @@ function toShopSlotView(item: InventoryViewItem, savedSlot: ShopDisplaySlot | un
     imageUrl: imageId ? `/api/shop/image/${imageId}` : undefined,
     item,
   };
+}
+
+function normalizeDetails(details: ShopDisplaySaveDetails | undefined, displayName: string): ShopDisplayDetails {
+  const hoursSchedule = normalizeHoursSchedule(details?.hoursSchedule);
+  const payment = normalizePayment(details?.payment);
+  const pickupCoords = normalizePickupCoords(details?.pickupCoords);
+
+  const derivedHours = hoursSchedule ? formatHoursLabel(hoursSchedule) : "";
+  const derivedPayment = payment ? formatPaymentLabel(payment) : "";
+
+  return {
+    shopName: normalizeDetailField(details?.shopName, detailLimits.shopName, displayName),
+    hours: normalizeDetailField(
+      details?.hours,
+      detailLimits.hours,
+      derivedHours,
+    ) || derivedHours,
+    ...(hoursSchedule ? { hoursSchedule } : {}),
+    pickupLocation: normalizeDetailField(details?.pickupLocation, detailLimits.pickupLocation),
+    ...(pickupCoords ? { pickupCoords } : {}),
+    pickupInstructions: normalizeDetailField(details?.pickupInstructions, detailLimits.pickupInstructions),
+    paymentOptions: normalizeDetailField(
+      details?.paymentOptions,
+      detailLimits.paymentOptions,
+      derivedPayment,
+    ) || derivedPayment,
+    ...(payment ? { payment } : {}),
+    contact: normalizeDetailField(details?.contact, detailLimits.contact),
+    availabilityNote: normalizeDetailField(details?.availabilityNote, detailLimits.availabilityNote),
+  };
+}
+
+function normalizeHoursSchedule(value: ShopHoursSchedule | null | undefined): ShopHoursSchedule | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const days = Array.isArray(value.days)
+    ? Array.from(
+        new Set(
+          value.days
+            .map((day) => Math.trunc(Number(day)))
+            .filter((day) => Number.isFinite(day) && day >= 0 && day <= 6),
+        ),
+      ).sort((left, right) => left - right)
+    : [];
+
+  const openMinutes = clampMinutes(value.openMinutes);
+  const closeMinutes = clampMinutes(value.closeMinutes);
+
+  if (!days.length) {
+    return undefined;
+  }
+
+  const note = typeof value.note === "string"
+    ? value.note.replace(/\s+/g, " ").trim().slice(0, 80)
+    : undefined;
+
+  return {
+    days,
+    openMinutes,
+    closeMinutes,
+    ...(note ? { note } : {}),
+  };
+}
+
+function normalizePayment(value: ShopPaymentDetails | null | undefined): ShopPaymentDetails | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const seen = new Set<ShopPaymentMethodKind>();
+  const methods: ShopPaymentMethod[] = [];
+
+  if (Array.isArray(value.methods)) {
+    for (const method of value.methods) {
+      if (!method || typeof method !== "object") continue;
+      const kind = paymentMethodKinds.includes(method.kind) ? method.kind : null;
+      if (!kind || seen.has(kind)) continue;
+      seen.add(kind);
+      const handle = typeof method.handle === "string"
+        ? method.handle.replace(/\s+/g, " ").trim().slice(0, 40)
+        : "";
+      methods.push(handle ? { kind, handle } : { kind });
+    }
+  }
+
+  const note = typeof value.note === "string"
+    ? value.note.replace(/\s+/g, " ").trim().slice(0, 120)
+    : "";
+
+  if (!methods.length && !note) {
+    return undefined;
+  }
+
+  return {
+    methods,
+    ...(note ? { note } : {}),
+  };
+}
+
+function normalizePickupCoords(value: ShopPickupCoords | null | undefined): ShopPickupCoords | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const lat = Number(value.lat);
+  const lng = Number(value.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return undefined;
+  }
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return undefined;
+  }
+  return {
+    lat: Math.round(lat * 1_000_000) / 1_000_000,
+    lng: Math.round(lng * 1_000_000) / 1_000_000,
+  };
+}
+
+function clampMinutes(value: unknown) {
+  const minutes = Math.trunc(Number(value));
+  if (!Number.isFinite(minutes)) return 0;
+  return Math.max(0, Math.min(24 * 60 - 1, minutes));
+}
+
+export function formatHoursLabel(schedule: ShopHoursSchedule): string {
+  const dayLabel = formatDayList(schedule.days);
+  if (!dayLabel) {
+    return schedule.note ?? "";
+  }
+  if (schedule.openMinutes === schedule.closeMinutes) {
+    return schedule.note ? `${dayLabel} · ${schedule.note}` : dayLabel;
+  }
+  const range = `${formatTime(schedule.openMinutes)} – ${formatTime(schedule.closeMinutes)}`;
+  return schedule.note ? `${dayLabel} · ${range} · ${schedule.note}` : `${dayLabel} · ${range}`;
+}
+
+function formatDayList(days: number[]): string {
+  if (!days.length) return "";
+  const sorted = [...days].sort((left, right) => left - right);
+  if (sorted.length === 7) return "Every day";
+  // Detect contiguous run.
+  const isContiguous = sorted.every((day, index) => index === 0 || day - sorted[index - 1] === 1);
+  if (isContiguous && sorted.length >= 3) {
+    return `${dayLabels[sorted[0]]}–${dayLabels[sorted[sorted.length - 1]]}`;
+  }
+  if (sorted.length === 2) {
+    return `${dayLabels[sorted[0]]} & ${dayLabels[sorted[1]]}`;
+  }
+  return sorted.map((day) => dayLabels[day]).join(", ");
+}
+
+function formatTime(minutes: number) {
+  const total = ((minutes % (24 * 60)) + 24 * 60) % (24 * 60);
+  const hours = Math.floor(total / 60);
+  const mins = total % 60;
+  const period = hours >= 12 ? "PM" : "AM";
+  const display = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+  return `${display}:${mins.toString().padStart(2, "0")} ${period}`;
+}
+
+export function formatPaymentLabel(payment: ShopPaymentDetails): string {
+  const labels = payment.methods.map((method) => {
+    const base = paymentMethodLabels[method.kind];
+    return method.handle ? `${base} (${method.handle})` : base;
+  });
+  if (!labels.length) {
+    return payment.note ?? "";
+  }
+  return payment.note ? `${labels.join(", ")} · ${payment.note}` : labels.join(", ");
+}
+
+export const shopPaymentMethodKinds = paymentMethodKinds;
+export const shopPaymentMethodLabels = paymentMethodLabels;
+export const shopDayLabels = dayLabels;
+
+function normalizeDetailField(value: unknown, limit: number, fallback = "") {
+  if (typeof value !== "string") {
+    return fallback.slice(0, limit);
+  }
+
+  return value.replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
 function normalizeSaveSlot(

@@ -22,7 +22,7 @@ export type RenderConfig = {
   scale?: number;
 };
 
-export type FarmObjectType = "crop" | "livestock";
+export type FarmObjectType = "crop" | "livestock" | "structure";
 
 export type GeometryPoint = {
   x: number;
@@ -52,6 +52,9 @@ export type CatalogItem = {
   name: string;
   defaultSize: ObjectSize;
   render: RenderConfig;
+  cropProfile?: CropTypeProfile;
+  livestockProfile?: LivestockTypeProfile;
+  structureProfile?: StructureTypeProfile;
   growthStages?: LifecycleStage[];
   lifeStages?: LifecycleStage[];
   dailyBehavior?: DailyBehavior[];
@@ -123,11 +126,57 @@ export type ShopDisplaySlot = {
   imageMimeType?: string;
 };
 
+export type ShopHoursSchedule = {
+  days: number[];
+  openMinutes: number;
+  closeMinutes: number;
+  note?: string;
+};
+
+export type ShopPaymentMethodKind =
+  | "venmo"
+  | "cashapp"
+  | "zelle"
+  | "paypal"
+  | "cash"
+  | "card"
+  | "check"
+  | "trade";
+
+export type ShopPaymentMethod = {
+  kind: ShopPaymentMethodKind;
+  handle?: string;
+};
+
+export type ShopPaymentDetails = {
+  methods: ShopPaymentMethod[];
+  note?: string;
+};
+
+export type ShopPickupCoords = {
+  lat: number;
+  lng: number;
+};
+
+export type ShopDisplayDetails = {
+  shopName: string;
+  hours: string;
+  hoursSchedule?: ShopHoursSchedule;
+  pickupLocation: string;
+  pickupCoords?: ShopPickupCoords;
+  pickupInstructions: string;
+  paymentOptions: string;
+  payment?: ShopPaymentDetails;
+  contact: string;
+  availabilityNote: string;
+};
+
 export type ShopDisplay = {
   _id: ObjectId;
   userId: ObjectId;
   theme: "farm-stand";
   layoutMode: "shelves";
+  details?: ShopDisplayDetails;
   slots: ShopDisplaySlot[];
   createdAt: Date;
   updatedAt: Date;
@@ -137,17 +186,185 @@ export type Farm = {
   _id: ObjectId;
   userId: ObjectId;
   name: string;
-  units: "meters";
+  units: "meters" | "feet";
   bounds: ObjectSize;
   createdAt: Date;
   updatedAt: Date;
+};
+
+export type GeometryPolygon = {
+  points: GeometryPoint[];
+  areaSquareFeet: number;
+};
+
+export type CostBreakdown = {
+  seeds?: number;
+  starts?: number;
+  feed?: number;
+  bedding?: number;
+  amendments?: number;
+  fertilizer?: number;
+  manure?: number;
+  compost?: number;
+  pesticides?: number;
+  labor?: number;
+  infrastructure?: number;
+  utilities?: number;
+  other?: number;
+};
+
+export type RecurringCost = {
+  weekly: number;
+  monthly: number;
+  yearly: number;
+};
+
+export type RevenueMetrics = {
+  weekly: number;
+  monthly: number;
+  yearly: number;
+  perSquareFoot?: number;
+  perPlant?: number;
+  totalPlot?: number;
+};
+
+export type MaterialApplication = {
+  type: string;
+  status: "none" | "planned" | "applied";
+  appliedAt?: string;
+  notes?: string;
+};
+
+export type HarvestEvent = {
+  eventId: string;
+  date: string;
+  quantity: number;
+  unit: string;
+  revenue?: number;
+  removeOnHarvest?: boolean;
+  storageUnitId?: string;
+  externalStorage?: boolean;
+};
+
+export type DeathEvent = {
+  eventId: string;
+  date: string;
+  count?: number;
+  reason: string;
+};
+
+export type CropTypeProfile = {
+  idealSoilTypes: string[];
+  idealSun: "full" | "partial" | "shade";
+  idealWater: "low" | "medium" | "high";
+  daysToGermination: [number, number];
+  daysToMaturity: [number, number];
+  harvestWindowDays: [number, number];
+  spacingInches: number;
+  yieldPerSquareFoot: number;
+  yieldUnit: string;
+  expectedPricePerUnit: number;
+  failureRate: number;
+  waterGallonsPerSqFtWeek: number;
+};
+
+export type CropObjectData = {
+  cropType: string;
+  cropTypeSourceId?: ObjectId | null;
+  seedLot: string;
+  seedSource: string;
+  seedOrTransplantDate: string;
+  soilType: string;
+  soilWarning?: string;
+  sunExposure: "full" | "partial" | "shade";
+  sunWarning?: string;
+  fertilizer: MaterialApplication;
+  manure: MaterialApplication;
+  compost: MaterialApplication;
+  pesticides: MaterialApplication[];
+  priorCrops: string[];
+  harvestEvents: HarvestEvent[];
+  deathEvents: DeathEvent[];
+  producedMetrics: {
+    expectedGerminationDays: [number, number];
+    daysToMaturity: [number, number];
+    expectedHarvestWindow: [string, string];
+    averageSpacingInches: number;
+    yieldPerSquareFoot: number;
+    yieldPerPlant: number;
+    daysFromPlantingToFirstHarvest: number;
+    daysInProduction: number;
+    cropFailureRate: number;
+  };
+};
+
+export type LivestockTypeProfile = {
+  species: string;
+  feedCostPerHeadWeek: number;
+  eggsPerHeadWeek?: number;
+  milkGallonsPerHeadWeek?: number;
+  expectedPricePerEggDozen?: number;
+  expectedPricePerMilkGallon?: number;
+  spaceSquareFeetPerHead: number;
+  waterGallonsPerHeadWeek: number;
+};
+
+export type LivestockObjectData = {
+  animalId: string;
+  species: string;
+  breed: string;
+  birthOrHatchDate: string;
+  source: string;
+  weight: {
+    amount: number;
+    unit: string;
+  };
+  vaccinations: {
+    name: string;
+    date: string;
+    notes?: string;
+  }[];
+  feedType: string;
+  headCount: number;
+  harvestEvents: HarvestEvent[];
+  deathEvents: DeathEvent[];
+  producedMetrics: {
+    feedCost: RecurringCost;
+    eggsPerPeriod?: RecurringCost;
+    milkGallonsPerPeriod?: RecurringCost;
+    revenue: RevenueMetrics;
+  };
+};
+
+export type StructureTypeProfile = {
+  structureType: "storage" | "greenhouse" | "coop" | "compost" | "irrigation" | "other";
+  storageCapacity?: {
+    amount: number;
+    unit: string;
+  };
+};
+
+export type StoredItem = {
+  itemType: string;
+  quantity: {
+    amount: number;
+    unit: string;
+  };
+  forSale?: boolean;
+  pricePerUnit?: number;
+};
+
+export type StructureObjectData = {
+  structureType: StructureTypeProfile["structureType"];
+  storedItems?: StoredItem[];
+  invisibleExternalStorage?: boolean;
 };
 
 export type PlanObject = {
   instanceId: string;
   type: FarmObjectType;
   slug: string;
-  sourceId: ObjectId;
+  sourceId?: ObjectId | null;
   displayName: string;
   status: "planned" | "active" | "removed" | "optional";
   plantedAtDay?: number;
@@ -156,6 +373,15 @@ export type PlanObject = {
   position: Vector3;
   rotation: Vector3;
   size: ObjectSize;
+  geometry?: GeometryPolygon;
+  areaSquareFeet?: number;
+  costBreakdown?: CostBreakdown;
+  recurringCost?: RecurringCost;
+  revenue?: RevenueMetrics;
+  waterGallonsPerWeek?: number;
+  crop?: CropObjectData;
+  livestock?: LivestockObjectData;
+  structure?: StructureObjectData;
   renderOverrides: Partial<RenderConfig>;
   notes?: string;
 };
@@ -193,11 +419,19 @@ export type PlanTileType =
   | "pea"
   | "mushroom"
   | "herb"
-  | "pollinator";
+  | "pollinator"
+  | "chicken"
+  | "goat"
+  | "storage"
+  | "greenhouse"
+  | "compost"
+  | "path";
 
 export type PlanTile = {
   tileId: string;
   tileType: PlanTileType;
+  objectType?: FarmObjectType;
+  objectInstanceId?: string;
   assignmentSlug: string;
   assignmentName: string;
   grid: {
@@ -216,6 +450,45 @@ export type PlanTile = {
   waterNeed: "low" | "medium" | "high";
   soilStrategy: string;
   notes: string;
+};
+
+export type FarmPlanContext = {
+  averageWeather: string;
+  yearlyRainfallInches: number;
+  bounds: {
+    points: GeometryPoint[];
+    dimensions: ObjectSize;
+    areaSquareFeet: number;
+  };
+};
+
+export type FarmPlanAnalytics = {
+  costBreakdown: {
+    weekly: CostBreakdown & { total: number };
+    monthly: CostBreakdown & { total: number };
+    yearly: CostBreakdown & { total: number };
+  };
+  potentialMonthlyEarnings: number;
+  revenue: {
+    weekly: number;
+    monthly: number;
+    yearly: number;
+  };
+  profit: {
+    weekly: number;
+    monthly: number;
+    yearly: number;
+  };
+  waterGallonsPerWeek: number;
+  storage: {
+    unitId: string;
+    itemType: string;
+    quantity: number;
+    unit: string;
+    weeksRemaining?: number;
+    forSale?: boolean;
+    pricePerUnit?: number;
+  }[];
 };
 
 export type Plan = {
@@ -242,9 +515,11 @@ export type Plan = {
     areaSquareMeters: number;
     areaSquareFeet?: number;
   };
+  farmContext?: FarmPlanContext;
   partitions?: PlanPartition[];
   tiles?: PlanTile[];
   objects: PlanObject[];
+  analytics?: FarmPlanAnalytics;
   summary: {
     description: string;
     highlights: string[];

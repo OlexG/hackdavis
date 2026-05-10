@@ -1,3 +1,5 @@
+import { SunpatchLogo } from "./app/_components/icons";
+
 const farmSteps = [
   {
     eyebrow: "01",
@@ -74,8 +76,8 @@ export default function Home() {
             href="#top"
             className="inline-flex items-center gap-3 text-sm font-black uppercase text-[#fff8dc]"
           >
-            <span className="grid size-9 place-items-center border-2 border-[#fff8dc] bg-[#2f6f4e] shadow-[0_3px_10px_rgba(45,35,19,0.16)]">
-              SP
+            <span className="grid size-10 place-items-center border-2 border-[#fff8dc] bg-[#fff3cf] shadow-[0_3px_10px_rgba(45,35,19,0.16)]">
+              <SunpatchLogo alt="" className="size-9" priority />
             </span>
             Sunpatch
           </a>
@@ -100,6 +102,11 @@ export default function Home() {
           className="relative z-10 mx-auto flex min-h-[calc(100svh-88px)] w-full max-w-5xl items-center justify-center px-5 pb-24 pt-8 text-center sm:px-8"
         >
           <div className="mx-auto max-w-xl text-[#fff8dc]">
+            <SunpatchLogo
+              alt="Sunpatch logo"
+              className="mx-auto mb-5 h-28 w-auto drop-shadow-[0_8px_14px_rgba(39,27,16,0.2)] sm:h-32"
+              priority
+            />
             <h1 className="text-4xl font-black leading-[1.04] text-[#fff8dc] drop-shadow-[0_2px_12px_rgba(39,27,16,0.24)] sm:text-5xl lg:text-6xl">
               Plan your farm. Grow for real.
             </h1>

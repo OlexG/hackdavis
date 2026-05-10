@@ -220,10 +220,13 @@ async function getIntelligencePromptContext(): Promise<IntelligencePromptContext
         .toArray(),
     ]);
 
-    const catalogItems = latestPlan?.objects.length
+    const sourceIds = latestPlan?.objects
+      .map((object) => object.sourceId)
+      .filter((sourceId): sourceId is ObjectId => sourceId instanceof ObjectId) ?? [];
+    const catalogItems = sourceIds.length
       ? await db
           .collection<CatalogItem>("catalog_items")
-          .find({ _id: { $in: latestPlan.objects.map((object) => object.sourceId).filter(Boolean) } })
+          .find({ _id: { $in: sourceIds } })
           .toArray()
       : [];
 

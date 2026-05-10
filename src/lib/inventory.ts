@@ -1,3 +1,4 @@
+import { ObjectId } from "mongodb";
 import { getMongoDb } from "@/lib/mongodb";
 import type { CatalogItem, InventoryCategory, InventoryItem, InventoryStatus, Plan } from "@/lib/models";
 
@@ -257,10 +258,13 @@ export async function getInventorySnapshot(): Promise<InventorySnapshot> {
       updatedAt: item.updatedAt.toISOString(),
     }));
 
-    const catalogItems = latestPlan?.objects.length
+    const sourceIds = latestPlan?.objects
+      .map((object) => object.sourceId)
+      .filter((sourceId): sourceId is ObjectId => sourceId instanceof ObjectId) ?? [];
+    const catalogItems = sourceIds.length
       ? await db
           .collection<CatalogItem>("catalog_items")
-          .find({ _id: { $in: latestPlan.objects.map((object) => object.sourceId) } })
+          .find({ _id: { $in: sourceIds } })
           .toArray()
       : [];
     const catalogById = new Map(catalogItems.map((item) => [item._id.toString(), item]));
@@ -297,25 +301,26 @@ function newestTimestamp(items: InventoryViewItem[]) {
 
 function buildPlanSnapshot(plan: Plan, catalogById: Map<string, CatalogItem>): InventoryPlanSnapshot {
   const outputs = plan.objects
-    .filter((object) => object.status !== "removed")
+    .filter((object) => object.status !== "removed" && object.type !== "structure")
     .map((object) => {
-      const catalogItem = catalogById.get(object.sourceId.toString());
+      const outputType = object.type === "livestock" ? "livestock" : "crop";
+      const catalogItem = object.sourceId ? catalogById.get(object.sourceId.toString()) : undefined;
       const startDay = getOutputStartDay(object.plantedAtDay ?? object.addedAtDay ?? 0, catalogItem);
       const maxDay = getOutputEndDay(object.plantedAtDay ?? object.addedAtDay ?? 0, catalogItem);
       const category: InventoryPlanOutput["category"] =
-        object.type === "livestock" ? "livestock" : "produce";
+        outputType === "livestock" ? "livestock" : "produce";
       const startsAt =
-        object.type === "livestock" ? plan.simulation.currentDate : addDays(plan.simulation.startDate, startDay);
+        outputType === "livestock" ? plan.simulation.currentDate : addDays(plan.simulation.startDate, startDay);
 
       return {
         id: object.instanceId,
-        name: getOutputName(object.slug, object.displayName, object.type),
+        name: getOutputName(object.slug, object.displayName, outputType),
         source: object.displayName,
         category,
         startsAt: startsAt.toISOString(),
         endsAt: maxDay ? addDays(plan.simulation.startDate, maxDay).toISOString() : undefined,
-        cadence: object.type === "livestock" ? "daily" : getCropCadence(catalogItem),
-        note: getOutputNote(object.slug, object.type),
+        cadence: outputType === "livestock" ? "daily" : getCropCadence(catalogItem),
+        note: getOutputNote(object.slug, outputType),
         color: catalogItem?.render.fruitColor ?? catalogItem?.render.color ?? "#6f8f55",
       };
     });
