@@ -428,6 +428,7 @@ function plannerPrompt(input: {
     "Return only data that matches the schema. Use only cropKey, livestockKey, and structureKey values from the allowed lists.",
     "Optimize for real farm usefulness: budget, weekly labor, crop diversity, water fit, household food value, maintenance level, and usable access.",
     "Treat weeklyHours as a real capacity limit. Low-hour plans should use fewer crop fields, lower-touch crops, compact livestock only when labor fits, and maintenanceLevel/expectedWeeklyHours must not imply work above the user's capacity.",
+    "Treat notes as first-class user requirements. If notes explicitly say they love, want, prefer, or need a catalog crop, include it unless the crop is explicitly excluded or unavailable.",
     "Do not invent crop names. Prefer popular homestead staples that match the goal, season, location climate, labor, water, household size, and budget. Avoid niche medicinal, ornamental, sprout, orchard, tropical, and slow perennial crops unless the user's goals, site climate, and site size clearly justify them.",
     "Use the siteContext climate and selected season as hard agronomic constraints. Candidate crops were pre-scored for local seasonal temperature, annual heat/cold risk, rainfall, and water fit; stay within those candidate keys.",
     "For livestock, match animal size and heat/cold/water tolerance to the selected land, local climate, season, and budget: small sites should use compact animals like quail, chickens, rabbits, or ducks only when climate supports them; larger sites can use pigs, sheep, goats, and only very large well-funded sites should use cows.",
@@ -620,10 +621,12 @@ function validateGeminiIntent(
 ): GeminiFarmIntent {
   const value = raw && typeof raw === "object" ? raw as Partial<GeminiFarmIntent> : {};
   const cropKeys = new Set(crops.map((crop) => crop.key));
+  const noteExcludedCropKeys = noteMatchedCrops(crops, preferences, "exclude").map((crop) => crop.key);
+  const excludedCropKeys = new Set([...preferences.excludedCropKeys, ...noteExcludedCropKeys]);
   const livestockKeys = new Set(livestock.map((animal) => animal.key));
   const structureKeys = new Set([...structures.map((structure) => structure.key), "compost"]);
   const cropAssignments = Array.isArray(value.cropAssignments)
-    ? value.cropAssignments.filter((item) => item && cropKeys.has(item.cropKey) && !preferences.excludedCropKeys.includes(item.cropKey)).slice(0, 12)
+    ? value.cropAssignments.filter((item) => item && cropKeys.has(item.cropKey) && !excludedCropKeys.has(item.cropKey)).slice(0, 12)
     : [];
   if (cropAssignments.length < 3) throw new Error("Gemini returned too few valid crop assignments");
 
@@ -739,14 +742,19 @@ function ensureCropAssignments(
   const targetCount = targetCropCountForLabor(areaSquareFeet, preferences);
   const assignmentMap = new Map(assignments.map((assignment) => [assignment.cropKey, assignment]));
   const maxCropCount = maxCropCountForLabor(preferences);
+  const notePreferredCrops = noteMatchedCrops(candidateCrops, preferences, "prefer").slice(0, Math.max(1, Math.min(3, maxCropCount - 1)));
   const selected = selectDiverseCrops(candidateCrops, preferences, siteContext, Math.min(12, Math.max(targetCount + 4, assignments.length)), areaSquareFeet);
-  const merged = selected.slice(0, Math.min(maxCropCount, Math.max(targetCount, Math.min(8, selected.length)))).map((crop) => {
+  const selectedWithNotes = mergePreferredCrops(notePreferredCrops, selected, Math.min(maxCropCount, Math.max(targetCount, Math.min(8, selected.length))));
+  const merged = selectedWithNotes.map((crop) => {
     const existing = assignmentMap.get(crop.key);
+    const notePreferred = notePreferredCrops.some((item) => item.key === crop.key);
     return {
       cropKey: crop.key,
       areaRatio: existing?.areaRatio ?? 0.08,
       estimatedPlantCount: existing?.estimatedPlantCount ?? (crop.defaultCount || 12),
-      reason: existing?.reason || "Selected by deterministic popularity, local climate, season, labor, water, budget, household, and goal scoring.",
+      reason: existing?.reason || (notePreferred
+        ? `Included because the user notes mention ${crop.name}.`
+        : "Selected by deterministic popularity, local climate, season, labor, water, budget, household, and goal scoring."),
     };
   });
 
@@ -1602,8 +1610,10 @@ function seasonForDate(date: Date): FarmAiDraftPreferences["season"] {
 }
 
 function selectCandidateCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPreferences, siteContext: SiteGrowingContext) {
-  const excluded = new Set(preferences.excludedCropKeys);
-  const preferred = new Set(preferences.preferredCropKeys);
+  const noteExcluded = new Set(noteMatchedCrops(crops, preferences, "exclude").map((crop) => crop.key));
+  const notePreferred = new Set(noteMatchedCrops(crops, preferences, "prefer").map((crop) => crop.key));
+  const excluded = new Set([...preferences.excludedCropKeys, ...noteExcluded]);
+  const preferred = new Set([...preferences.preferredCropKeys, ...notePreferred]);
   const scored = crops
     .filter((crop) => !excluded.has(crop.key))
     .map((crop) => ({
@@ -1617,8 +1627,11 @@ function selectCandidateCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPref
 }
 
 function selectDiverseCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPreferences, siteContext: SiteGrowingContext, limit: number, areaSquareFeet: number) {
-  const preferred = new Set(preferences.preferredCropKeys);
+  const noteExcluded = new Set(noteMatchedCrops(crops, preferences, "exclude").map((crop) => crop.key));
+  const notePreferred = new Set(noteMatchedCrops(crops, preferences, "prefer").map((crop) => crop.key));
+  const preferred = new Set([...preferences.preferredCropKeys, ...notePreferred]);
   const scored = crops
+    .filter((crop) => !noteExcluded.has(crop.key))
     .map((crop) => ({
       crop,
       score: cropScore(crop, preferences, siteContext, preferred.has(crop.key), areaSquareFeet),
@@ -1654,10 +1667,23 @@ function diversifyScoredCrops(scored: ScoredCrop[], limit: number) {
   return selected;
 }
 
+function mergePreferredCrops(preferred: AiDraftCrop[], selected: AiDraftCrop[], limit: number) {
+  const merged: AiDraftCrop[] = [];
+  const seen = new Set<string>();
+  for (const crop of [...preferred, ...selected]) {
+    if (merged.length >= limit) break;
+    if (seen.has(crop.key)) continue;
+    merged.push(crop);
+    seen.add(crop.key);
+  }
+  return merged;
+}
+
 function cropScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences, siteContext: SiteGrowingContext, preferred: boolean, areaSquareFeet = 2500) {
   let score = preferred ? 100 : 0;
   const text = `${crop.name} ${crop.cropCategory} ${crop.lightRequirement} ${crop.howToGrow} ${crop.tips}`.toLowerCase();
   const weeklyMinutes = cropWeeklyMinutes(crop);
+  score += noteCropScore(crop, preferences);
   score += popularCropScore(crop);
   score += categoryBaselineScore(crop);
   score += cropSiteFitScore(crop, preferences, siteContext);
@@ -1761,6 +1787,69 @@ function cropLaborFitScore(crop: AiDraftCrop, preferences: FarmAiDraftPreference
   }
 
   return score;
+}
+
+function noteMatchedCrops(crops: AiDraftCrop[], preferences: FarmAiDraftPreferences, mode: "prefer" | "exclude") {
+  return crops
+    .filter((crop) => mode === "prefer" ? noteWantsCrop(crop, preferences.notes) : noteRejectsCrop(crop, preferences.notes))
+    .sort((first, second) => first.name.localeCompare(second.name));
+}
+
+function noteCropScore(crop: AiDraftCrop, preferences: FarmAiDraftPreferences) {
+  if (noteRejectsCrop(crop, preferences.notes)) return -500;
+  if (noteWantsCrop(crop, preferences.notes)) return 240;
+  if (noteMentionsCrop(crop, preferences.notes)) return 120;
+  return 0;
+}
+
+function noteWantsCrop(crop: AiDraftCrop, notes: string) {
+  return noteMentionsCrop(crop, notes) && !noteRejectsCrop(crop, notes);
+}
+
+function noteRejectsCrop(crop: AiDraftCrop, notes: string) {
+  const normalized = normalizeNoteText(notes);
+  if (!normalized) return false;
+  return cropAliases(crop).some((alias) => {
+    const escaped = escapeRegExp(alias);
+    return new RegExp(`\\b(no|avoid|exclude|skip|without|hate|dislike|allergic to|allergy to|do not want|don't want|dont want|not interested in)\\s+(?:\\w+\\s+){0,3}${escaped}\\b`).test(normalized)
+      || new RegExp(`\\b${escaped}\\b\\s+(?:\\w+\\s+){0,3}\\b(allergy|allergic|unwanted|excluded)\\b`).test(normalized);
+  });
+}
+
+function noteMentionsCrop(crop: AiDraftCrop, notes: string) {
+  const normalized = normalizeNoteText(notes);
+  if (!normalized) return false;
+  return cropAliases(crop).some((alias) => new RegExp(`\\b${escapeRegExp(alias)}\\b`).test(normalized));
+}
+
+function cropAliases(crop: AiDraftCrop) {
+  const candidates = [
+    crop.key,
+    crop.name,
+    crop.key.replace(/-/g, " "),
+    crop.name.replace(/-/g, " "),
+  ];
+  return Array.from(new Set(candidates.flatMap((value) => {
+    const normalized = normalizeNoteText(value);
+    return normalized ? [normalized, singularizeCropAlias(normalized)] : [];
+  }).filter(Boolean))).sort((first, second) => second.length - first.length);
+}
+
+function singularizeCropAlias(value: string) {
+  return value.split(" ").map((word) => {
+    if (word.endsWith("ies") && word.length > 4) return `${word.slice(0, -3)}y`;
+    if (word.endsWith("es") && word.length > 3) return word.slice(0, -2);
+    if (word.endsWith("s") && word.length > 3) return word.slice(0, -1);
+    return word;
+  }).join(" ");
+}
+
+function normalizeNoteText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function cropWeeklyMinutes(crop: AiDraftCrop) {
