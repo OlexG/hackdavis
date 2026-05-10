@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "farm:build": "tsc -p farmManager/tsconfig.json",
     "db:seed": "node scripts/seed.mjs",
     "db:seed:marketplace": "node scripts/seed-marketplace.mjs",
     "db:consolidate": "node scripts/consolidate-mongo.mjs",

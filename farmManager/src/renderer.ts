@@ -1,12 +1,14 @@
-window.FarmRenderer = (() => {
-  const { state } = DemoState;
-  const G = Geometry;
+import * as DemoState from "./demoState.js";
+import * as G from "./geometry.js";
+import type { FarmObject, PathObject, Point, ScreenPoint, ZoomLimits } from "./types.js";
+
+const { state } = DemoState;
   const TILE_X = 6.1;
   const TILE_Y = 3.05;
   const HEIGHT_SCALE = 5.2;
   const BOARD_WIDTH = 108;
   const BOARD_HEIGHT = 82;
-  const BOARD_CENTER = [BOARD_WIDTH / 2, BOARD_HEIGHT / 2];
+  const BOARD_CENTER: Point = [BOARD_WIDTH / 2, BOARD_HEIGHT / 2];
 
   const palette = {
     cropArea: "#496b47",
@@ -30,7 +32,7 @@ window.FarmRenderer = (() => {
   let logicalWidth = 0;
   let logicalHeight = 0;
 
-  function init(targetCanvas) {
+export function init(targetCanvas: HTMLCanvasElement): void {
     canvas = targetCanvas;
     ctx = canvas.getContext("2d");
     window.addEventListener("resize", resize);
@@ -38,7 +40,7 @@ window.FarmRenderer = (() => {
     requestAnimationFrame(render);
   }
 
-  function resize() {
+export function resize(): void {
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(rect.width * dpr);
@@ -50,7 +52,7 @@ window.FarmRenderer = (() => {
     logicalHeight = rect.height;
   }
 
-  function project(point, height = 0) {
+export function project(point: Point, height = 0): ScreenPoint {
     const rotated = G.rotatePoint(worldToBoard(point), BOARD_CENTER, state.rotation);
     const x = rotated[0];
     const y = rotated[1];
@@ -60,10 +62,10 @@ window.FarmRenderer = (() => {
     };
   }
 
-  function unproject(screenX, screenY) {
+export function unproject(screenX: number, screenY: number): Point {
     const dx = (screenX - (logicalWidth * 0.49 + state.panX)) / (TILE_X * state.zoom);
     const dy = (screenY - (92 + state.panY)) / (TILE_Y * state.zoom);
-    const rotated = [(dy + dx) / 2, (dy - dx) / 2];
+    const rotated: Point = [(dy + dx) / 2, (dy - dx) / 2];
     return boardToWorld(G.rotatePoint(rotated, BOARD_CENTER, -state.rotation));
   }
 
@@ -80,7 +82,7 @@ window.FarmRenderer = (() => {
     };
   }
 
-  function worldToBoard(point) {
+  function worldToBoard(point: Point): Point {
     const transform = getWorldTransform();
     return [
       transform.offsetX + (point[0] - transform.bbox.minX) * transform.scale,
@@ -88,7 +90,7 @@ window.FarmRenderer = (() => {
     ];
   }
 
-  function boardToWorld(point) {
+  function boardToWorld(point: Point): Point {
     const transform = getWorldTransform();
     return [
       transform.bbox.minX + (point[0] - transform.offsetX) / transform.scale,
@@ -96,7 +98,7 @@ window.FarmRenderer = (() => {
     ];
   }
 
-  function projectedBoundarySize(zoom = 1) {
+  function projectedBoundarySize(zoom = 1): { width: number; height: number } {
     const points = DemoState.activeBoundary().map((point) => {
       const rotated = G.rotatePoint(worldToBoard(point), BOARD_CENTER, state.rotation);
       return {
@@ -112,7 +114,7 @@ window.FarmRenderer = (() => {
     };
   }
 
-  function getZoomLimits() {
+export function getZoomLimits(): ZoomLimits {
     const size = projectedBoundarySize(1);
     const minZoom = Math.min(
       logicalWidth / Math.max(1, size.width * 1.25),
@@ -166,7 +168,7 @@ window.FarmRenderer = (() => {
     objects.forEach(drawObjectLabel);
   }
 
-  function drawLayer(objects, type, drawFn) {
+  function drawLayer(objects: FarmObject[], type: FarmObject["type"], drawFn: (object: any) => void) {
     objects
       .filter((object) => object.type === type)
       .sort((a, b) => objectDepth(a) - objectDepth(b))
@@ -496,7 +498,7 @@ window.FarmRenderer = (() => {
       const posts = Math.max(2, Math.floor(G.distance(point, next) / 8));
       for (let i = 0; i <= posts; i += 1) {
         const t = i / posts;
-        const world = [G.lerp(point[0], next[0], t), G.lerp(point[1], next[1], t)];
+      const world: Point = [G.lerp(point[0], next[0], t), G.lerp(point[1], next[1], t)];
         const base = project(world, height - 0.15);
         const top = project(world, height + 1.1);
         ctx.beginPath();
@@ -631,7 +633,7 @@ window.FarmRenderer = (() => {
     }
     let guard = 0;
     while (positions.length < count && guard < 500) {
-      const point = [bbox.minX + rng() * (bbox.maxX - bbox.minX), bbox.minY + rng() * (bbox.maxY - bbox.minY)];
+      const point: Point = [bbox.minX + rng() * (bbox.maxX - bbox.minX), bbox.minY + rng() * (bbox.maxY - bbox.minY)];
       if (G.pointInPolygon(point, poly)) positions.push(point);
       guard += 1;
     }
@@ -646,7 +648,7 @@ window.FarmRenderer = (() => {
     }));
   }
 
-  function hitTestAll(world) {
+export function hitTestAll(world: Point): FarmObject[] {
     return DemoState.currentObjects()
       .filter((object) => {
         if (object.type === "path") return pointNearPath(world, object.points, 2.8);
@@ -734,6 +736,3 @@ window.FarmRenderer = (() => {
     ctx.lineTo(x, y + radius);
     ctx.quadraticCurveTo(x, y, x + radius, y);
   }
-
-  return { init, resize, project, unproject, hitTestAll, getZoomLimits };
-})();
