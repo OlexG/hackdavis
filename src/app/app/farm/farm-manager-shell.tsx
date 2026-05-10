@@ -353,8 +353,6 @@ export function FarmManagerShell() {
               <button data-draw-type="path" className={chrome.drawType === "path" ? "active" : ""} type="button" onClick={() => actions?.setDrawType("path")}>Path</button>
             </div>
 
-            <button id="closeShape" type="button" onClick={() => actions?.finishDraft()}>{chrome.drawType === "path" ? "Enter" : "Close"}</button>
-            <button id="clearDraft" type="button" onClick={() => actions?.clearDraft()}>Clear</button>
           </div>
 
           <div className="toolbar-group right">
