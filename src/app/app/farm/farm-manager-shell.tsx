@@ -196,8 +196,7 @@ const emptyContent: FarmManagerContentState = {
   savingCommit: false,
 };
 
-const mapLibreCssUrl = "https://unpkg.com/maplibre-gl@5.23.0/dist/maplibre-gl.css";
-const mapLibreScriptUrl = "https://unpkg.com/maplibre-gl@5.23.0/dist/maplibre-gl.js";
+const mapLibreCssUrl = "https://unpkg.com/maplibre-gl@6.14.0/dist/maplibre-gl.css";
 
 const defaultAiDraftPreferences: FarmAiDraftPreferences = {
   budgetCents: 75000,
@@ -255,7 +254,8 @@ export function FarmManagerShell() {
     async function startFarmManager() {
       try {
         await loadStylesheet("farm-manager-maplibre-css", mapLibreCssUrl);
-        await loadScript("farm-manager-maplibre-js", mapLibreScriptUrl).catch(() => undefined);
+        const mapLibre = await import("maplibre-gl");
+        (globalThis as typeof globalThis & { maplibregl?: typeof mapLibre }).maplibregl = mapLibre;
 
         const loadRuntime = new Function("path", "return import(path)") as (path: string) => Promise<FarmManagerRuntime>;
         const runtime = await loadRuntime(`/farm-manager/dist/app.js?v=${Date.now()}`);
@@ -1368,20 +1368,5 @@ function loadStylesheet(id: string, href: string): Promise<void> {
     link.addEventListener("load", () => resolve(), { once: true });
     link.addEventListener("error", () => reject(new Error(`Unable to load ${href}`)), { once: true });
     document.head.appendChild(link);
-  });
-}
-
-function loadScript(id: string, src: string): Promise<void> {
-  const existing = document.getElementById(id) as HTMLScriptElement | null;
-  if (existing) return Promise.resolve();
-
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.id = id;
-    script.src = src;
-    script.async = true;
-    script.addEventListener("load", () => resolve(), { once: true });
-    script.addEventListener("error", () => reject(new Error(`Unable to load ${src}`)), { once: true });
-    document.head.appendChild(script);
   });
 }

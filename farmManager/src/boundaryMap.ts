@@ -1,32 +1,55 @@
 import type { BoundaryMapUi, Point } from "./types.js";
 
-declare const maplibregl: any;
+type MapClickEvent = { lngLat: { lng: number; lat: number } };
+
+interface GeoJsonSource {
+  setData(data: unknown): void;
+}
+
+interface BoundaryMap {
+  addControl(control: unknown, position?: string): void;
+  addLayer(layer: unknown): void;
+  addSource(id: string, source: unknown): void;
+  flyTo(options: unknown): void;
+  getSource(id: string): GeoJsonSource | undefined;
+  on(event: "click", listener: (event: MapClickEvent) => void): void;
+  on(event: "load" | "error", listener: () => void): void;
+  remove(): void;
+}
+
+interface MapLibreGlobal {
+  Map: new (options: unknown) => BoundaryMap;
+  NavigationControl: new (options: unknown) => unknown;
+  ScaleControl: new (options: unknown) => unknown;
+  GeolocateControl: new (options: unknown) => unknown;
+}
 
 const boundaryPoints: Point[] = [];
-let map: any = null;
+let map: BoundaryMap | null = null;
 
 export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => void, options: { bindControls?: boolean } = {}): () => void {
     const controller = new AbortController();
     const bindControls = options.bindControls !== false;
+    const mapLibre = (globalThis as typeof globalThis & { maplibregl?: MapLibreGlobal }).maplibregl;
 
-    if (typeof maplibregl === "undefined") {
+    if (!mapLibre) {
       ui.mapFallback.classList.remove("hidden");
       if (bindControls) bindUiControls(ui, onBoundarySaved, controller.signal);
       return () => controller.abort();
     }
 
     try {
-      map = new maplibregl.Map({
+      map = new mapLibre.Map({
         container: ui.boundaryMap,
         style: "https://tiles.openfreemap.org/styles/liberty",
         center: [-121.7405, 38.5449],
         zoom: 13.5,
         pitch: 0
       });
-      map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "top-right");
-      map.addControl(new maplibregl.ScaleControl({ maxWidth: 160, unit: "imperial" }), "bottom-left");
+      map.addControl(new mapLibre.NavigationControl({ visualizePitch: false }), "top-right");
+      map.addControl(new mapLibre.ScaleControl({ maxWidth: 160, unit: "imperial" }), "bottom-left");
       try {
-        const geolocate = new maplibregl.GeolocateControl({
+        const geolocate = new mapLibre.GeolocateControl({
           positionOptions: { enableHighAccuracy: true, timeout: 8000, maximumAge: 60_000 },
           trackUserLocation: false,
           showUserLocation: true,
@@ -86,7 +109,7 @@ export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => vo
           }
         });
       });
-      map.on("click", (event: { lngLat: { lng: number; lat: number } }) => {
+      map.on("click", (event: MapClickEvent) => {
         boundaryPoints.push([event.lngLat.lng, event.lngLat.lat]);
         updateMapSource();
       });

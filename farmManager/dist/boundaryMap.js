@@ -3,24 +3,25 @@ let map = null;
 export function init(ui, onBoundarySaved, options = {}) {
     const controller = new AbortController();
     const bindControls = options.bindControls !== false;
-    if (typeof maplibregl === "undefined") {
+    const mapLibre = globalThis.maplibregl;
+    if (!mapLibre) {
         ui.mapFallback.classList.remove("hidden");
         if (bindControls)
             bindUiControls(ui, onBoundarySaved, controller.signal);
         return () => controller.abort();
     }
     try {
-        map = new maplibregl.Map({
+        map = new mapLibre.Map({
             container: ui.boundaryMap,
             style: "https://tiles.openfreemap.org/styles/liberty",
             center: [-121.7405, 38.5449],
             zoom: 13.5,
             pitch: 0
         });
-        map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "top-right");
-        map.addControl(new maplibregl.ScaleControl({ maxWidth: 160, unit: "imperial" }), "bottom-left");
+        map.addControl(new mapLibre.NavigationControl({ visualizePitch: false }), "top-right");
+        map.addControl(new mapLibre.ScaleControl({ maxWidth: 160, unit: "imperial" }), "bottom-left");
         try {
-            const geolocate = new maplibregl.GeolocateControl({
+            const geolocate = new mapLibre.GeolocateControl({
                 positionOptions: { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
                 trackUserLocation: false,
                 showUserLocation: true,
