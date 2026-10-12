@@ -3,7 +3,8 @@ import dotenv from "dotenv";
 import { GridFSBucket, MongoClient } from "mongodb";
 import { Readable } from "node:stream";
 
-dotenv.config({ path: ".env.local" });
+dotenv.config({ path: ".env" });
+dotenv.config({ path: ".env.local", override: true });
 
 const uri = process.env.MONGODB_URI;
 const dbName = process.env.MONGODB_DB;

@@ -11,13 +11,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 import dotenv from "dotenv";
-dotenv.config();
+dotenv.config({ path: ".env" });
+dotenv.config({ path: ".env.local", override: true });
 
 const MONGO_URI = process.env.MONGODB_URI;
-const DB_NAME = process.env.MONGODB_DB || "davishacks";
+const DB_NAME = process.env.MONGODB_DB;
 
 if (!MONGO_URI) {
   throw new Error("Missing MONGODB_URI in .env");
+}
+
+if (!DB_NAME) {
+  throw new Error("Missing MONGODB_DB in .env");
 }
 
 const livestock = JSON.parse(
