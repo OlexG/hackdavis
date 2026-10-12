@@ -4,6 +4,8 @@ Sunpatch is an AI-assisted farm planning and local-produce marketplace built for
 
 The project combines a Next.js web application, MongoDB-backed APIs, a standalone TypeScript farm-layout engine, and an Expo mobile client. Its visual system borrows from cozy farming games, while the underlying workflows are designed around real decisions: what fits on a plot, what a household can maintain, what a season can produce, and how surplus can be exchanged locally.
 
+**Live demo:** [sunpatch-nine.vercel.app](https://sunpatch-nine.vercel.app)
+
 ## What the app does
 
 - Draw a real farm boundary on an interactive MapLibre map.
