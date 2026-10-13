@@ -1,10 +1,16 @@
+# Background
+
+Sunpatch is a hackathon project built for HackDavis 2026, inspired by the difficulties of managing small farms and gardens. Growers have to keep track of crop placement, harvest timing, inventory, local demand, and extra produce all at once. At the same time, in this world driven by technology and large corporations, people want to buy from their neighbors. Such produce is often healthier and cheaper, and it goes a long way in fostering a community. We wanted to build something that made that process easier while also encouraging people to share food locally.
+
 # Sunpatch
 
-Sunpatch is an AI-assisted farm planning and local-produce marketplace built for DavisHacks. It turns a real plot boundary and a grower's constraints into a spatial farm plan, then connects that plan to inventory, production forecasts, farm economics, and neighborhood trading.
+Sunpatch is an AI-assisted farm planning and local-produce marketplace. It turns a real plot boundary and a grower's constraints into a spatial farm plan, then connects that plan to inventory, production forecasts, farm economics, and neighborhood trading. The spatial farm plot serves as a visual planning tool that helps growers understand what is happening in their actual space. Our web-app lets users create a digital version of their real farm or garden. They can map out their growing space, organize crops, track inventory, and see useful planning information about their harvests. A primary feature of the app is an AI optimized generated farm plan, which is built with an LLM-based Gemini generation pipeline. Users map their plot of land on a real satellite view, and a beautiful 3d farm is generated, which they can further plan and edit.
 
-The project combines a Next.js web application, MongoDB-backed APIs, a standalone TypeScript farm-layout engine, and an Expo mobile client. Its visual system borrows from cozy farming games, while the underlying workflows are designed around real decisions: what fits on a plot, what a household can maintain, what a season can produce, and how surplus can be exchanged locally.
+The project combines a Next.js web application, MongoDB-backed APIs, a standalone TypeScript farm-layout engine, and an Expo mobile client, with a visual style that borrows from cozy farming games.
 
 **Live demo:** [sunpatch-demo.vercel.app](https://sunpatch-demo.vercel.app)
+
+**Devpost:** [https://devpost.com/software/sunpatch](https://devpost.com/software/sunpatch)
 
 ## What the app does
 
@@ -58,7 +64,7 @@ public/farm-manager/        Browser-ready farm-manager build published during `n
 scripts/                    Database seed and migration utilities
 ```
 
-## Major engineering decisions
+## Design decisions
 
 ### AI proposes intent; deterministic code owns the layout
 
