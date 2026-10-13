@@ -6,6 +6,7 @@ import * as ApiClient from "./apiClient.js";
 import { CATALOG } from "./catalog.js";
 import { hasSavedFarmState } from "./stateContract.js";
 const { state } = DemoState;
+const WHEEL_ZOOM_STEP = 0.09;
 const byId = (root, id) => {
     const element = root.querySelector(`#${id}`);
     if (!element)
@@ -425,7 +426,7 @@ function zoomAtCursor(event) {
     zoomAtScreenPoint({
         x: event.clientX - rect.left,
         y: event.clientY - rect.top
-    }, event.deltaY < 0 ? 0.18 : -0.18);
+    }, event.deltaY < 0 ? WHEEL_ZOOM_STEP : -WHEEL_ZOOM_STEP);
 }
 function handleCanvasWheel(event) {
     event.preventDefault();

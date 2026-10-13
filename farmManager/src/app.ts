@@ -22,6 +22,7 @@ import type {
 } from "./types.js";
 
 const { state } = DemoState;
+const WHEEL_ZOOM_STEP = 0.09;
 
 const byId = <T extends HTMLElement>(root: ParentNode, id: string): T => {
   const element = root.querySelector<T>(`#${id}`);
@@ -469,7 +470,7 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
     zoomAtScreenPoint({
       x: event.clientX - rect.left,
       y: event.clientY - rect.top
-    }, event.deltaY < 0 ? 0.18 : -0.18);
+    }, event.deltaY < 0 ? WHEEL_ZOOM_STEP : -WHEEL_ZOOM_STEP);
   }
 
   function handleCanvasWheel(event: WheelEvent): void {
