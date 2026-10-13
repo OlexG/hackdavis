@@ -39,6 +39,7 @@ export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => vo
     }
 
     try {
+      let mapLoaded = false;
       map = new mapLibre.Map({
         container: ui.boundaryMap,
         style: "https://tiles.openfreemap.org/styles/liberty",
@@ -78,6 +79,8 @@ export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => vo
         );
       }
       map.on("load", () => {
+        mapLoaded = true;
+        ui.mapFallback.classList.add("hidden");
         map.addSource("farm-boundary", emptyGeoJsonSource());
         map.addLayer({
           id: "farm-boundary-fill",
@@ -113,7 +116,9 @@ export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => vo
         boundaryPoints.push([event.lngLat.lng, event.lngLat.lat]);
         updateMapSource();
       });
-      map.on("error", () => ui.mapFallback.classList.remove("hidden"));
+      map.on("error", () => {
+        if (!mapLoaded) ui.mapFallback.classList.remove("hidden");
+      });
     } catch (error) {
       ui.mapFallback.classList.remove("hidden");
     }
@@ -132,6 +137,17 @@ export function init(ui: BoundaryMapUi, onBoundarySaved: (points: Point[]) => vo
 
 export function redraw(): void {
     clearBoundary();
+}
+
+export function focusLocation(longitude: number, latitude: number): void {
+    if (!map || !Number.isFinite(longitude) || !Number.isFinite(latitude)) return;
+    map.flyTo({
+      center: [longitude, latitude],
+      zoom: 18,
+      speed: 1.4,
+      curve: 1.2,
+      essential: true
+    });
 }
 
 export function clearBoundary(): void {

@@ -874,6 +874,40 @@
   color: #e9f4df;
 }
 
+:global(.farm-manager-root .location-search) {
+  max-height: calc(100% - 88px);
+  overflow: auto;
+}
+
+:global(.farm-manager-root .location-search button) {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+:global(.farm-manager-root .location-results button) {
+  height: auto;
+  min-height: 34px;
+  overflow: hidden;
+  padding: 7px 9px;
+  text-align: left;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+:global(.farm-manager-root .boundary-actions) {
+  max-width: calc(100% - 24px);
+}
+
+:global(.farm-manager-root .boundary-actions button) {
+  width: auto;
+  min-width: 0;
+  height: auto;
+  min-height: 38px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
 :global(.farm-manager-root .setup-choice) {
   position: absolute;
   inset: 0;
@@ -1003,6 +1037,10 @@
   color: #1b211e;
 }
 
+:global(.farm-manager-root .maplibregl-ctrl-bottom-right) {
+  max-width: calc(100% - 190px);
+}
+
 :global(.farm-manager-root .maplibregl-ctrl-scale) {
   display: flex;
   align-items: flex-start;
@@ -1113,5 +1151,15 @@
 
   :global(.farm-manager-root .ai-draft-grid) {
     grid-template-columns: 1fr;
+  }
+
+  :global(.farm-manager-root .boundary-actions) {
+    grid-template-columns: 1fr;
+    left: auto;
+    bottom: 38px;
+  }
+
+  :global(.farm-manager-root .boundary-actions button) {
+    justify-content: center;
   }
 }

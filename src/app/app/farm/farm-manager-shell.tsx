@@ -131,6 +131,7 @@ type FarmManagerActions = {
   rotateBy?: (degrees: number) => void;
   resetView: () => void;
   openBoundarySettings: () => void;
+  focusBoundaryLocation: (longitude: number, latitude: number) => void;
   useDemoBoundary: () => void;
   clearBoundary: () => void;
   saveBoundary: () => void;
@@ -158,6 +159,12 @@ type FarmManagerActions = {
   handleCanvasClick: (event: MouseEvent) => void;
   handleCanvasWheel: (event: WheelEvent) => void;
   handleKeyDown: (event: KeyboardEvent) => void;
+};
+
+type LocationSearchResult = {
+  displayName: string;
+  lat: number;
+  lng: number;
 };
 
 type FarmManagerMount = {
@@ -197,6 +204,7 @@ const emptyContent: FarmManagerContentState = {
 };
 
 const mapLibreCssUrl = "https://unpkg.com/maplibre-gl@6.14.0/dist/maplibre-gl.css";
+const mapLibreWorkerUrl = "https://unpkg.com/maplibre-gl@6.14.0/dist/maplibre-gl-worker.mjs";
 
 const defaultAiDraftPreferences: FarmAiDraftPreferences = {
   budgetCents: 75000,
@@ -229,6 +237,10 @@ export function FarmManagerShell() {
   const rotationDragRef = useRef<{ pointerId: number; x: number; moved: boolean } | null>(null);
   const suppressCubeClickRef = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [locationQuery, setLocationQuery] = useState("");
+  const [locationResults, setLocationResults] = useState<LocationSearchResult[]>([]);
+  const [locationSearching, setLocationSearching] = useState(false);
+  const [locationMessage, setLocationMessage] = useState("Use location access or search by address.");
   const [commitName, setCommitName] = useState("");
   const [aiDraftOpen, setAiDraftOpen] = useState(false);
   const [aiGenerating, setAiGenerating] = useState(false);
@@ -255,6 +267,7 @@ export function FarmManagerShell() {
       try {
         await loadStylesheet("farm-manager-maplibre-css", mapLibreCssUrl);
         const mapLibre = await import("maplibre-gl");
+        mapLibre.setWorkerUrl(mapLibreWorkerUrl);
         (globalThis as typeof globalThis & { maplibregl?: typeof mapLibre }).maplibregl = mapLibre;
 
         const loadRuntime = new Function("path", "return import(path)") as (path: string) => Promise<FarmManagerRuntime>;
@@ -283,6 +296,46 @@ export function FarmManagerShell() {
       setActions(undefined);
     };
   }, []);
+
+  async function searchLocation() {
+    const query = locationQuery.trim();
+    if (query.length < 3) {
+      setLocationResults([]);
+      setLocationMessage("Enter at least 3 characters.");
+      return;
+    }
+
+    setLocationSearching(true);
+    setLocationMessage("Searching...");
+
+    try {
+      const response = await fetch(`/api/geo/search?q=${encodeURIComponent(query)}`);
+      if (!response.ok) throw new Error("Location search failed");
+      const payload = (await response.json()) as { results?: LocationSearchResult[] };
+      const results = Array.isArray(payload.results)
+        ? payload.results.filter(
+            (result) =>
+              typeof result.displayName === "string" &&
+              Number.isFinite(result.lat) &&
+              Number.isFinite(result.lng),
+          )
+        : [];
+      setLocationResults(results);
+      setLocationMessage(results.length ? "Choose a result to center the map." : "No matching locations found.");
+    } catch {
+      setLocationResults([]);
+      setLocationMessage("Location search is temporarily unavailable.");
+    } finally {
+      setLocationSearching(false);
+    }
+  }
+
+  function selectLocation(result: LocationSearchResult) {
+    actions?.focusBoundaryLocation(result.lng, result.lat);
+    setLocationQuery(result.displayName);
+    setLocationResults([]);
+    setLocationMessage("Map centered. Click points to outline your farm.");
+  }
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -477,7 +530,7 @@ export function FarmManagerShell() {
                 </li>
                 <li className="flex items-center gap-2">
                   <PixelGlyph name="wheat" className="size-3.5 shrink-0 text-[#a8761c]" />
-                  No live tiles? Use the demo boundary to keep going.
+                  Search by address if location access is unavailable.
                 </li>
                 <li className="flex items-center gap-2">
                   <PixelGlyph name="sparkle" className="size-3.5 shrink-0 text-[#7a461f]" />
@@ -488,6 +541,47 @@ export function FarmManagerShell() {
 
             <div className="relative min-h-[420px] border-2 border-[#3b2a14] bg-[#203029] lg:min-h-[560px] lg:border-0">
               <div id="boundaryMap" className="absolute inset-0" />
+              <form
+                className="location-search absolute left-3 top-3 z-[2] w-[min(360px,calc(100%-96px))] border-2 border-[#3b2a14] bg-[#fffdf5]/95 p-2 shadow-[0_3px_0_#3b2a14,0_12px_30px_rgba(39,27,16,0.22)] backdrop-blur-sm"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void searchLocation();
+                }}
+              >
+                <label className="font-mono text-[10px] font-black uppercase tracking-[0.14em] text-[#34432b]" htmlFor="farmLocationSearch">
+                  Find your farm location
+                </label>
+                <div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+                  <input
+                    id="farmLocationSearch"
+                    type="search"
+                    value={locationQuery}
+                    onChange={(event) => setLocationQuery(event.target.value)}
+                    placeholder="Address, city, or ZIP"
+                    autoComplete="street-address"
+                  />
+                  <button type="submit" disabled={locationSearching || locationQuery.trim().length < 3}>
+                    {locationSearching ? "Finding" : "Search"}
+                  </button>
+                </div>
+                <p className="location-search-message mt-1.5 text-[10px] font-bold leading-4 text-[#5e4a26]">{locationMessage}</p>
+                {locationResults.length ? (
+                  <div className="location-results mt-1.5 grid gap-1" role="listbox" aria-label="Location search results">
+                    {locationResults.map((result) => (
+                      <button
+                        key={`${result.lat}-${result.lng}-${result.displayName}`}
+                        type="button"
+                        role="option"
+                        aria-selected="false"
+                        onClick={() => selectLocation(result)}
+                        title={result.displayName}
+                      >
+                        {result.displayName}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </form>
               <div
                 id="mapFallback"
                 className="map-fallback hidden absolute inset-0 z-[1] grid place-items-center content-center gap-1.5 px-6 text-center"
@@ -503,10 +597,10 @@ export function FarmManagerShell() {
                   Map tiles unavailable
                 </strong>
                 <span className="text-xs font-semibold text-[#e9f4df]">
-                  Use the demo boundary to continue without live map tiles.
+                  Retry the page or use the demo boundary to continue.
                 </span>
               </div>
-              <div className="absolute inset-x-3 bottom-3 z-[2] flex flex-wrap justify-end gap-2">
+              <div className="boundary-actions absolute inset-x-3 bottom-10 z-[2] grid grid-cols-3 gap-2 sm:left-auto sm:right-3">
                 <button
                   id="useDemoBoundary"
                   type="button"

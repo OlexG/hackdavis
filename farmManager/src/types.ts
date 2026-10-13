@@ -285,6 +285,7 @@ export interface FarmManagerActions {
   rotateBy: (degrees: number) => void;
   resetView: () => void;
   openBoundarySettings: () => void;
+  focusBoundaryLocation: (longitude: number, latitude: number) => void;
   useDemoBoundary: () => void;
   clearBoundary: () => void;
   saveBoundary: () => void;

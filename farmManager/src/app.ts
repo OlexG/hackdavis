@@ -225,6 +225,7 @@ export function mountFarmManager(root: ParentNode = document, options: FarmManag
       rotateBy,
       resetView,
       openBoundarySettings,
+      focusBoundaryLocation: BoundaryMap.focusLocation,
       useDemoBoundary: BoundaryMap.useDemoBoundary,
       clearBoundary: BoundaryMap.clearBoundary,
       saveBoundary: () => BoundaryMap.saveBoundary(onBoundarySaved),

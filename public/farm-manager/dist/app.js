@@ -193,6 +193,7 @@ function createActions() {
         rotateBy,
         resetView,
         openBoundarySettings,
+        focusBoundaryLocation: BoundaryMap.focusLocation,
         useDemoBoundary: BoundaryMap.useDemoBoundary,
         clearBoundary: BoundaryMap.clearBoundary,
         saveBoundary: () => BoundaryMap.saveBoundary(onBoundarySaved),
