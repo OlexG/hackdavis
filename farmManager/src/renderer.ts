@@ -1,5 +1,7 @@
 import * as DemoState from "./demoState.js";
 import * as G from "./geometry.js";
+import { cropArtFor, drawCropArt } from "./cropArt.js";
+import { drawLivestockProfile, livestockProfile, livestockScale } from "./livestockProfiles.js";
 import type { FarmObject, Point, ScreenPoint, ZoomLimits } from "./types.js";
 
 const { state } = DemoState;
@@ -300,9 +302,18 @@ export function getCenteredPan(zoom = state.zoom): { x: number; y: number } {
     ctx.restore();
 
     const positions = generatePositions(object.polygon, object.attrs.count || 12, G.hashString(`${object.id}-${state.commitIndex}`), 0);
+    const art = cropArtFor(object.attrs);
+    const growth = G.clamp(object.attrs.growth ?? 0.45, 0.12, 1);
     positions
       .sort((a, b) => a[0] + a[1] - (b[0] + b[1]))
-      .forEach((position) => drawPlant(position, object.height + 0.2, object.attrs));
+      .forEach((position) => {
+        const base = project(position, object.height + 0.2);
+        ctx.save();
+        ctx.translate(base.x, base.y);
+        ctx.scale(state.zoom, state.zoom);
+        drawCropArt(ctx, art, growth);
+        ctx.restore();
+      });
   }
 
   function drawTilledRows(object) {
@@ -335,154 +346,9 @@ export function getCenteredPan(zoom = state.zoom): { x: number; y: number } {
     ctx.restore();
   }
 
-  function drawPlant(position, baseHeight, attrs) {
-    const base = project(position, baseHeight);
-    const growth = Math.max(0.12, attrs.growth || 0.45);
-    const h = (5 + growth * 16) * state.zoom;
-    const sway = Math.sin(performance.now() / 900 + position[0]) * 0.45;
-    const model = cropModel(attrs);
-    ctx.save();
-    ctx.lineCap = "round";
-    ctx.strokeStyle = model.stem;
-    ctx.lineWidth = Math.max(1, 1.7 * state.zoom);
-    ctx.beginPath();
-    ctx.moveTo(base.x, base.y);
-    ctx.lineTo(base.x + sway, base.y - h);
-    ctx.stroke();
-
-    if (model.kind === "grain") {
-      ctx.fillStyle = "#8db64f";
-      drawTriangle(base.x + sway, base.y - h * 0.55, 4.5 * state.zoom, 8 * state.zoom, -1);
-      drawTriangle(base.x + sway, base.y - h * 0.48, 4.5 * state.zoom, 8 * state.zoom, 1);
-      if (growth > 0.72) {
-        ctx.fillStyle = model.fruit;
-        drawDiamond(base.x + sway, base.y - h * 0.82, 2.8 * state.zoom, 5.5 * state.zoom);
-      }
-    } else if (model.kind === "tomato") {
-      ctx.strokeStyle = "#2b6b3d";
-      ctx.lineWidth = Math.max(1, 1.15 * state.zoom);
-      ctx.beginPath();
-      ctx.moveTo(base.x - 3.5 * state.zoom, base.y - h * 0.16);
-      ctx.lineTo(base.x + sway, base.y - h * 0.82);
-      ctx.lineTo(base.x + 3.5 * state.zoom, base.y - h * 0.16);
-      ctx.stroke();
-      ctx.fillStyle = model.leaf;
-      drawDiamond(base.x + sway - 2.5 * state.zoom, base.y - h * 0.48, 6.5 * growth * state.zoom, 4.6 * growth * state.zoom);
-      drawDiamond(base.x + sway + 2.4 * state.zoom, base.y - h * 0.58, 6.2 * growth * state.zoom, 4.4 * growth * state.zoom);
-      drawDiamond(base.x + sway, base.y - h * 0.72, 5.4 * growth * state.zoom, 4.1 * growth * state.zoom);
-      ctx.fillStyle = model.fruit;
-      drawCircle(base.x + sway - 3.3 * state.zoom, base.y - h * 0.56, Math.max(1.8, 3 * growth * state.zoom));
-      drawCircle(base.x + sway + 2.9 * state.zoom, base.y - h * 0.66, Math.max(1.6, 2.7 * growth * state.zoom));
-      drawCircle(base.x + sway - 0.4 * state.zoom, base.y - h * 0.76, Math.max(1.5, 2.5 * growth * state.zoom));
-      ctx.fillStyle = model.secondaryFruit || model.fruit;
-      drawCircle(base.x + sway + 4.7 * state.zoom, base.y - h * 0.47, Math.max(1.2, 2.1 * growth * state.zoom));
-    } else if (model.kind === "fruiting") {
-      ctx.fillStyle = model.leaf;
-      drawDiamond(base.x + sway, base.y - h * 0.42, 6 * growth * state.zoom, 4.5 * growth * state.zoom);
-      drawDiamond(base.x + sway + 2, base.y - h * 0.66, 5 * growth * state.zoom, 4 * growth * state.zoom);
-      if (growth > 0.5) {
-        ctx.fillStyle = model.fruit;
-        if (model.shape === "elongated") {
-          fillOval(base.x - 2 * state.zoom, base.y - h * 0.54, 1.7 * state.zoom, 3.3 * state.zoom, model.fruit, 0.4);
-        } else {
-          drawCircle(base.x - 2 * state.zoom, base.y - h * 0.62, 2.2 * state.zoom);
-        }
-        if (model.secondaryFruit) {
-          ctx.fillStyle = model.secondaryFruit;
-          drawCircle(base.x + 2.2 * state.zoom, base.y - h * 0.7, 1.6 * state.zoom);
-        }
-      }
-    } else if (model.kind === "vine") {
-      ctx.strokeStyle = model.stem;
-      ctx.lineWidth = Math.max(1, 1.2 * state.zoom);
-      ctx.beginPath();
-      ctx.moveTo(base.x - 5 * state.zoom, base.y - 1.5 * state.zoom);
-      ctx.bezierCurveTo(base.x - 1 * state.zoom, base.y - h * 0.3, base.x + 4 * state.zoom, base.y - h * 0.18, base.x + 7 * state.zoom, base.y - h * 0.42);
-      ctx.stroke();
-      ctx.fillStyle = model.leaf;
-      drawDiamond(base.x - 2 * state.zoom, base.y - h * 0.2, 5.5 * growth * state.zoom, 3.8 * growth * state.zoom);
-      drawDiamond(base.x + 4 * state.zoom, base.y - h * 0.38, 5 * growth * state.zoom, 3.6 * growth * state.zoom);
-      if (growth > 0.54) {
-        ctx.fillStyle = model.fruit;
-        if (model.shape === "elongated") {
-          fillOval(base.x + 6 * state.zoom, base.y - h * 0.43, 4 * growth * state.zoom, 1.8 * growth * state.zoom, model.fruit, -0.4);
-        } else {
-          drawCircle(base.x + 7 * state.zoom, base.y - h * 0.43, 2.8 * growth * state.zoom);
-        }
-      }
-    } else if (model.kind === "root") {
-      ctx.fillStyle = model.leaf;
-      drawDiamond(base.x - 1.2 * state.zoom, base.y - h * 0.25, 4.2 * growth * state.zoom, 5.2 * growth * state.zoom);
-      drawDiamond(base.x + 1.6 * state.zoom, base.y - h * 0.32, 4.2 * growth * state.zoom, 5.2 * growth * state.zoom);
-      ctx.fillStyle = model.fruit;
-      if (model.shape === "round") {
-        drawCircle(base.x, base.y, Math.max(1.3, 3.8 * growth * state.zoom));
-      } else {
-        drawTriangle(base.x, base.y + 1.5 * state.zoom, 3.8 * growth * state.zoom, 8 * growth * state.zoom, 1);
-      }
-    } else if (model.kind === "mound") {
-      ctx.fillStyle = model.leaf;
-      drawCircle(base.x - 2 * state.zoom, base.y - h * 0.22, 4.5 * growth * state.zoom);
-      drawCircle(base.x + 2.5 * state.zoom, base.y - h * 0.28, 4.2 * growth * state.zoom);
-      ctx.fillStyle = model.fruit;
-      drawCircle(base.x, base.y + 1.5 * state.zoom, 2.4 * growth * state.zoom);
-    } else if (model.kind === "groundcover") {
-      ctx.fillStyle = model.leaf;
-      drawCircle(base.x - 2.4 * state.zoom, base.y - h * 0.16, 3.6 * growth * state.zoom);
-      drawCircle(base.x + 2.2 * state.zoom, base.y - h * 0.18, 3.4 * growth * state.zoom);
-      if (growth > 0.5) {
-        ctx.fillStyle = model.fruit;
-        drawCircle(base.x, base.y - h * 0.28, 1.8 * state.zoom);
-      }
-    } else if (model.kind === "leafy" || model.kind === "herb") {
-      ctx.fillStyle = model.leaf;
-      drawDiamond(base.x, base.y - 2 * state.zoom, 6 * growth * state.zoom, 4 * growth * state.zoom);
-      drawDiamond(base.x + 1.5 * state.zoom, base.y - 3.5 * state.zoom, 4.5 * growth * state.zoom, 3.5 * growth * state.zoom);
-      drawDiamond(base.x - 1.6 * state.zoom, base.y - 4.2 * state.zoom, 4 * growth * state.zoom, 3.4 * growth * state.zoom);
-    } else {
-      ctx.fillStyle = model.leaf;
-      drawCircle(base.x, base.y - h * 0.42, Math.max(2, 4.5 * growth * state.zoom));
-    }
-    ctx.restore();
-  }
-
-  function cropModel(attrs) {
-    const text = `${attrs.cropKey || ""} ${attrs.cropName || ""} ${attrs.visual || ""}`.toLowerCase();
-    if (/\btomato|tomatoes\b/.test(text)) return { kind: "tomato", stem: "#28673e", leaf: "#3f8f45", fruit: "#d9362f", secondaryFruit: "#f05a3f" };
-    if (/\bpeppers?\b/.test(text)) return { kind: "fruiting", shape: "elongated", stem: "#2d7140", leaf: "#3f8d42", fruit: "#d63c2e", secondaryFruit: "#f08a29" };
-    if (/\beggplants?\b/.test(text)) return { kind: "fruiting", shape: "elongated", stem: "#2e6f45", leaf: "#4a8f44", fruit: "#7951aa", secondaryFruit: "#986ac1" };
-    if (/\b(?:apricot|peach|orange|tangerine|persimmon)s?\b/.test(text)) return { kind: "fruiting", stem: "#426639", leaf: "#5c9a45", fruit: "#f0a03b" };
-    if (/\b(?:lemon|lime|quince)s?\b/.test(text) && !/grass/.test(text)) return { kind: "fruiting", stem: "#426639", leaf: "#5c9a45", fruit: "#e2c751" };
-    if (/\bstrawberr/.test(text)) return { kind: "groundcover", stem: "#2f6d3c", leaf: "#4b9b45", fruit: "#d93832" };
-    if (/\bblueberr/.test(text)) return { kind: "groundcover", stem: "#335f42", leaf: "#4e8f48", fruit: "#445da8" };
-    if (/\bblackberr|raspberr/.test(text)) return { kind: "groundcover", stem: "#315c3b", leaf: "#4f8945", fruit: "#7c2b5f" };
-    if (/\b(?:cucumber|zucchini|bean|pea)s?\b/.test(text)) return { kind: "vine", shape: "elongated", stem: "#2e7641", leaf: "#54a04c", fruit: "#9bc44e" };
-    if (/\bwatermelons?\b/.test(text)) return { kind: "vine", stem: "#376c38", leaf: "#5c9a45", fruit: "#7aab4c" };
-    if (/\b(?:squash|pumpkin|melon)s?\b/.test(text)) return { kind: "vine", stem: "#376c38", leaf: "#5c9a45", fruit: "#e49b32" };
-    if (/\bcarrot|carrots\b/.test(text)) return { kind: "root", stem: "#438044", leaf: "#5ba35b", fruit: "#e7812c" };
-    if (/\b(?:beets?|radish(?:es)?|turnips?|rutabagas?)\b/.test(text)) return { kind: "root", shape: "round", stem: "#447e43", leaf: "#629e56", fruit: "#be456a" };
-    if (/\b(?:onion|garlic|shallot)s?\b/.test(text)) return { kind: "root", shape: "round", stem: "#447e43", leaf: "#629e56", fruit: "#ead09f" };
-    if (/\bpotato|potatoes\b/.test(text)) return { kind: "mound", stem: "#3f7343", leaf: "#5b934c", fruit: "#b78652" };
-    if (/\blettuce\b/.test(text)) return { kind: "leafy", stem: "#4d8b47", leaf: "#a9cf67", fruit: "#a9cf67" };
-    if (/\bspinach|chard\b/.test(text)) return { kind: "leafy", stem: "#2f7040", leaf: "#69a85c", fruit: "#69a85c" };
-    if (/\bkale|cabbage|broccoli|bok choy|collard|mustard\b/.test(text)) return { kind: "leafy", stem: "#2e6c41", leaf: "#78ad5b", fruit: "#78ad5b" };
-    if (/\bbasil|cilantro|parsley|dill|oregano|thyme|sage|rosemary|mint|chive|tarragon\b/.test(text)) return { kind: "herb", stem: "#2e6f45", leaf: "#5fb96a", fruit: "#5fb96a" };
-    if (/\bcorn|wheat|grain|grass\b/.test(text)) return { kind: "grain", stem: "#d3c85a", leaf: "#8db64f", fruit: "#ecc95a" };
-    if (attrs.visual === "fruiting") return { kind: "fruiting", stem: "#2e6f45", leaf: "#4f9c51", fruit: "#d94d3d" };
-    if (attrs.visual === "grain") return { kind: "grain", stem: "#d3c85a", leaf: "#8db64f", fruit: "#ecc95a" };
-    if (attrs.visual === "root") return { kind: "root", stem: "#438044", leaf: "#5ba35b", fruit: "#d48938" };
-    if (attrs.visual === "vine") return { kind: "vine", stem: "#376c38", leaf: "#5c9a45", fruit: "#e49b32" };
-    if (attrs.visual === "mound") return { kind: "mound", stem: "#3f7343", leaf: "#5b934c", fruit: "#b78652" };
-    if (attrs.visual === "groundcover") return { kind: "groundcover", stem: "#2f6d3c", leaf: "#4b9b45", fruit: "#d93832" };
-    if (attrs.visual === "herb") return { kind: "herb", stem: "#2e6f45", leaf: "#64b66b", fruit: "#64b66b" };
-    if (attrs.visual === "leafy") return { kind: "leafy", stem: "#2e6f45", leaf: "#9ccd68", fruit: "#9ccd68" };
-    return { kind: "generic", stem: "#2e6f45", leaf: "#5cb56a", fruit: "#5cb56a" };
-  }
-
   function drawAnimals(object: Extract<FarmObject, { type: "livestock" }>) {
-    const species = [object.attrs.speciesKey, object.attrs.species]
-      .map((value) => value?.trim().toLowerCase().replace(/s$/, ""))
-      .find((value) => value && ["chicken", "duck", "quail", "cow", "goat", "pig", "rabbit", "sheep"].includes(value));
+    const species = livestockProfile(object.attrs.speciesKey, object.attrs.species);
+    const scale = livestockScale(species);
     const positions = generatePositions(object.polygon, object.attrs.count, G.hashString(object.id), 2);
     positions
       .sort((a, b) => a[0] + a[1] - (b[0] + b[1]))
@@ -491,104 +357,14 @@ export function getCenteredPan(zoom = state.zoom): { x: number; y: number } {
         ctx.save();
         ctx.translate(p.x, p.y);
         ctx.scale(state.zoom, state.zoom);
-        fillOval(0, 5, 8, 2.5, "rgba(0,0,0,0.18)");
-        ctx.translate(0, Math.sin(performance.now() / 620 + index * 0.9) * 0.65);
-        if (species === "chicken" || species === "duck" || species === "quail") drawBird(species);
-        else drawMammal(species);
+        ctx.fillStyle = "rgba(0,0,0,0.18)";
+        ctx.beginPath();
+        ctx.ellipse(0, 3, 9 * scale, 2 * scale, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.translate(0, 3 + Math.sin(performance.now() / 800 + index * 0.9) * 0.35 * scale);
+        drawLivestockProfile(ctx, species);
         ctx.restore();
       });
-  }
-
-  function fillOval(x: number, y: number, rx: number, ry: number, color: string, angle = 0) {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.ellipse(x, y, rx, ry, angle, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  function animalLine(points: Point[], color: string, width = 1.2) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    points.forEach(([x, y], index) => index ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
-    ctx.stroke();
-  }
-
-  function drawBird(species: "chicken" | "duck" | "quail") {
-    const duck = species === "duck";
-    const quail = species === "quail";
-    const body = duck ? "#eee7d2" : quail ? "#9c8268" : "#cb7941";
-    const headY = duck ? -8 : quail ? -4 : -7;
-    animalLine([[-1, 1], [-1, 4], [1, 4]], "#ad6c36");
-    animalLine([[2, 1], [2, 4], [4, 4]], "#d28340");
-    ctx.fillStyle = body;
-    drawLocalPolygon([[-4, 1], [-9, duck ? -2 : -6], [-2, -3]]);
-    fillOval(0, 0, duck ? 7 : 5.5, quail ? 3.4 : 4.1, body);
-    fillOval(-1, 0, 3.6, 2, duck ? "#c9bfa8" : quail ? "#695745" : "#93512e", -0.25);
-    if (duck) fillOval(4, -4, 2.4, 4.5, "#eee7d2", 0.2);
-    fillOval(5, headY, 3, 2.8, duck ? "#315d49" : quail ? "#725b48" : body);
-    if (species === "chicken") {
-      ctx.fillStyle = "#bb342d";
-      drawLocalPolygon([[2, -8], [2, -12], [4, -10], [5, -13], [7, -9]]);
-    }
-    if (quail) animalLine([[4, -6], [5, -9], [7, -9]], "#382e2c");
-    ctx.fillStyle = duck ? "#e5a83d" : "#e7bd66";
-    drawLocalPolygon([[7, headY], [duck ? 12 : 10, headY + 1], [7, headY + 2]]);
-    fillOval(5.8, headY - 0.7, 0.7, 0.7, "#292321");
-  }
-
-  function drawMammal(species?: string) {
-    const cow = species === "cow";
-    const pig = species === "pig";
-    const sheep = species === "sheep";
-    const goat = species === "goat";
-    const rabbit = species === "rabbit";
-    const body = cow ? "#f1e9db" : pig ? "#e39b94" : sheep ? "#efe1c4" : goat ? "#b99772" : "#b29a83";
-    const head = cow || sheep ? "#493b35" : goat ? "#dec4a0" : body;
-    const width = cow ? 9 : rabbit ? 5.5 : 7;
-    const headX = cow ? 9 : rabbit ? 4.5 : 7;
-    if (rabbit) {
-      fillOval(-5, 0, 2.1, 2.1, "#eee2cc");
-      fillOval(-2, 3, 3.7, 1.8, "#77614f");
-      fillOval(4, 3, 2.5, 1, "#77614f");
-    } else {
-      const leg = pig ? "#ab625e" : "#594439";
-      animalLine([[-width + 3, 0], [-width + 3, 5]], leg, 2.2);
-      animalLine([[width - 2, 0], [width - 2, 5]], leg, 2.2);
-      animalLine([[-width + 5, 0], [-width + 5, 4]], leg, 1.3);
-      animalLine([[width - 4, 0], [width - 4, 4]], leg, 1.3);
-    }
-    if (pig) animalLine([[-6, -3], [-9, -5], [-11, -4], [-10, -2]], "#ad635a");
-    if (cow) animalLine([[-8, -4], [-11, -3], [-11, 0]], "#544137");
-    fillOval(0, -1, width, cow ? 5.5 : 4.6, body);
-    if (cow) {
-      fillOval(-4, -2, 3.6, 3.9, head, -0.3);
-      fillOval(4, -3.5, 2.8, 2.5, head);
-    }
-    if (sheep) {
-      fillOval(-4, -3, 3.9, 3.7, "#fff1d6");
-      fillOval(1, -4, 4.2, 3.8, "#fff1d6");
-      fillOval(4, -1, 3.7, 3.5, body);
-    }
-    if (rabbit) {
-      fillOval(3, -8, 1.2, 4.6, body, -0.25);
-      fillOval(5.8, -8.5, 1.35, 4.9, body, -0.12);
-      fillOval(5.8, -9, 0.65, 3, "#dba8a0", -0.12);
-    } else if (goat) {
-      animalLine([[5, -4], [5, -8], [3, -11]], "#594739", 1.5);
-      animalLine([[8, -5], [8, -9], [6, -12]], "#74604b", 1.5);
-      animalLine([[8, -1], [8, 3], [6, 4]], "#795e46");
-    } else {
-      fillOval(headX - 1, -5.5, 1.6, 2.1, cow ? "#594439" : body, -0.6);
-    }
-    fillOval(headX, -2.5, cow ? 4.1 : 3.1, 3.1, head);
-    if (pig || cow) fillOval(headX + 2.4, -1, 2.6, 1.65, pig ? "#f6bbb0" : "#dba7a0");
-    if (pig) {
-      fillOval(headX + 1.9, -1, 0.45, 0.55, "#854a49");
-      fillOval(headX + 3.4, -1, 0.45, 0.55, "#854a49");
-    }
-    fillOval(headX + 0.9, -3.3, 0.7, 0.7, cow || sheep ? "#f0dfca" : "#302823");
   }
 
   function drawRoofRidge(object) {
@@ -986,28 +762,9 @@ export function hitTestAll(world: Point): FarmObject[] {
     ctx.fill();
   }
 
-  function drawTriangle(x, y, width, height, direction) {
-    ctx.beginPath();
-    ctx.moveTo(x, y - height * 0.5);
-    ctx.lineTo(x + width * direction, y + height * 0.5);
-    ctx.lineTo(x, y + height * 0.2);
-    ctx.closePath();
-    ctx.fill();
-  }
-
   function drawCircle(x, y, radius) {
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  function drawLocalPolygon(points) {
-    ctx.beginPath();
-    points.forEach((point, index) => {
-      if (index === 0) ctx.moveTo(point[0], point[1]);
-      else ctx.lineTo(point[0], point[1]);
-    });
-    ctx.closePath();
     ctx.fill();
   }
 
