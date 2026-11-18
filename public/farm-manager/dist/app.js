@@ -99,7 +99,7 @@ async function bootFarmManager(signal) {
         }
         hydrateCatalogAttrs();
         state.view = "satellite";
-        const rendererCleanup = FarmRenderer.init(ui.canvas, activeCatalog.crops);
+        const rendererCleanup = FarmRenderer.init(ui.canvas);
         const boundaryCleanup = BoundaryMap.init(ui, onBoundarySaved, { bindControls: false });
         updateDrawControls();
         syncControlState();

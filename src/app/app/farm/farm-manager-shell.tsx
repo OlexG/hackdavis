@@ -1,11 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { PixelGlyph, type PixelGlyphName } from "../_components/icons";
 import { MagicGenerateOverlay } from "../intelligence/magic-generate-overlay";
-import { cropIcon, livestockIcon } from "../../../../farmManager/src/catalogIcons";
 import styles from "./farm-manager-shell.module.css";
 
 type FarmManagerChromeState = {
@@ -67,7 +65,6 @@ type FarmCatalog = {
     scientificName?: string;
     description?: string;
     cropCategory?: string;
-    visual?: string;
     lifeSpan?: string;
     idealSpaceSqft?: number;
     harvestCycles?: number;
@@ -100,7 +97,6 @@ type CatalogSearchItem = {
   key: string;
   name: string;
   subtitle?: string;
-  icon?: string;
 };
 
 type FarmManagerContentState = {
@@ -909,16 +905,11 @@ function FarmObjectPanel({ content, actions }: { content: FarmManagerContentStat
     );
   }
 
-  const icon = farmObjectIcon(object, content.catalog);
   return (
     <>
       <div className="panel-header">
         <span className="panel-token" aria-hidden="true">
-          {icon ? (
-            <Image src={icon} alt="" width={24} height={24} unoptimized className="farm-catalog-icon" />
-          ) : (
-            <PixelGlyph name={glyphForType(object.type)} className="panel-token-icon" />
-          )}
+          <PixelGlyph name={glyphForType(object.type)} className="panel-token-icon" />
         </span>
         <div>
           <span id="panelKicker">{labelForType(object.type)}</span>
@@ -1022,7 +1013,6 @@ function ObjectDetails({ object, content, actions }: { object: FarmObject; conte
             key: item.key,
             name: item.name,
             subtitle: [item.cropCategory, item.scientificName].filter(Boolean).join(" - "),
-            icon: cropIcon(item),
           }))}
           customLabel="Custom crop"
           onClear={() => actions?.setCropType("")}
@@ -1083,7 +1073,6 @@ function ObjectDetails({ object, content, actions }: { object: FarmObject; conte
             key: item.key,
             name: item.name,
             subtitle: item.description,
-            icon: livestockIcon(item.key, item.name),
           }))}
           customLabel="Custom livestock"
           onClear={() => actions?.setLivestockSpecies("")}
@@ -1234,17 +1223,14 @@ function CatalogSearchPicker({
               <button
                 key={item.key}
                 type="button"
-                className={`catalog-search-option${item.icon ? " has-icon" : ""}`}
+                className="catalog-search-option"
                 onMouseDown={(event) => {
                   event.preventDefault();
                   selectItem(item.key);
                 }}
               >
-                {item.icon ? <Image src={item.icon} alt="" width={24} height={24} unoptimized className="farm-catalog-icon" /> : null}
-                <span className="catalog-search-option-label">
-                  <strong>{item.name}</strong>
-                  {item.subtitle ? <em>{truncateText(item.subtitle, 78)}</em> : null}
-                </span>
+                <strong>{item.name}</strong>
+                {item.subtitle ? <em>{truncateText(item.subtitle, 78)}</em> : null}
               </button>
             ))}
             {trimmedQuery && !exactMatch ? (
@@ -1354,18 +1340,6 @@ function RotateIcon() {
       />
     </svg>
   );
-}
-
-function farmObjectIcon(object: FarmObject, catalog: FarmCatalog) {
-  if (object.type === "livestock") {
-    return livestockIcon(stringAttr(object, "speciesKey"), stringAttr(object, "species"));
-  }
-  if (object.type === "cropField") {
-    const key = stringAttr(object, "cropKey");
-    if (!key) return;
-    const crop = catalog.crops.find((item) => item.key === key);
-    return cropIcon(crop ?? { name: stringAttr(object, "cropName"), visual: stringAttr(object, "visual") });
-  }
 }
 
 function glyphForType(type: FarmObjectType): PixelGlyphName {
