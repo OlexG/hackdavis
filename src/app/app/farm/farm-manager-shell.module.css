@@ -513,6 +513,11 @@
   height: 22px;
 }
 
+:global(.farm-manager-root .farm-catalog-icon) {
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
 :global(.farm-manager-root .panel-header > div > span) {
   display: block;
   margin-bottom: 5px;
@@ -679,6 +684,18 @@
 
 :global(.farm-manager-root .catalog-search-option:hover) {
   background: #fff3cf;
+}
+
+:global(.farm-manager-root .catalog-search-option.has-icon) {
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+}
+
+:global(.farm-manager-root .catalog-search-option-label) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
 }
 
 :global(.farm-manager-root .catalog-search-option:last-of-type) {

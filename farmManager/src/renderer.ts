@@ -1,6 +1,7 @@
 import * as DemoState from "./demoState.js";
 import * as G from "./geometry.js";
-import type { FarmObject, Point, ScreenPoint, ZoomLimits } from "./types.js";
+import { cropIcon, livestockIcon } from "./catalogIcons.js";
+import type { CropCatalogEntry, FarmObject, Point, ScreenPoint, ZoomLimits } from "./types.js";
 
 const { state } = DemoState;
   const TILE_X = 6.1;
@@ -36,10 +37,24 @@ const { state } = DemoState;
   let animationFrame = 0;
   let isRendering = false;
   let resizeObserver: ResizeObserver | null = null;
+  const catalogSprites = new Map<string, HTMLImageElement>();
+  let cropIconsByKey = new Map<string, string | undefined>();
 
-export function init(targetCanvas: HTMLCanvasElement): () => void {
+  function getCatalogSprite(icon?: string): HTMLImageElement | undefined {
+    if (!icon) return;
+    let sprite = catalogSprites.get(icon);
+    if (!sprite) {
+      sprite = new Image();
+      sprite.src = icon;
+      catalogSprites.set(icon, sprite);
+    }
+    if (sprite.complete && sprite.naturalWidth > 0) return sprite;
+  }
+
+export function init(targetCanvas: HTMLCanvasElement, crops: CropCatalogEntry[] = []): () => void {
     canvas = targetCanvas;
     ctx = canvas.getContext("2d");
+    cropIconsByKey = new Map(crops.map((crop) => [crop.key, cropIcon(crop)]));
     isRendering = true;
     window.addEventListener("resize", resize);
     if (typeof ResizeObserver !== "undefined") {
@@ -464,8 +479,9 @@ export function getCenteredPan(zoom = state.zoom): { x: number; y: number } {
     return { kind: "generic", stem: "#2e6f45", leaf: "#5cb56a", fruit: "#5cb56a" };
   }
 
-  function drawAnimals(object) {
+  function drawAnimals(object: Extract<FarmObject, { type: "livestock" }>) {
     const positions = generatePositions(object.polygon, object.attrs.count, G.hashString(object.id), 2);
+    const sprite = getCatalogSprite(livestockIcon(object.attrs.speciesKey, object.attrs.species));
     positions
       .sort((a, b) => a[0] + a[1] - (b[0] + b[1]))
       .forEach((position, index) => {
@@ -478,21 +494,9 @@ export function getCenteredPan(zoom = state.zoom): { x: number; y: number } {
         ctx.beginPath();
         ctx.ellipse(0, 4, 7, 3, 0, 0, Math.PI * 2);
         ctx.fill();
-        if (object.attrs.species === "Chicken" || object.attrs.species === "Duck") {
-          const isDuck = object.attrs.species === "Duck";
-          ctx.fillStyle = isDuck ? "#f1ecd2" : index % 3 === 0 ? "#f4e3c3" : "#d47d4c";
-          drawLocalPolygon([[-5, 1], [1, -5], [6, 1], [1, 5]]);
-          ctx.fillStyle = isDuck ? "#f1c14b" : "#d94d3d";
-          drawLocalPolygon([[5, -1], [9, 1], [5, 3]]);
-        } else if (object.attrs.species === "Sheep") {
-          ctx.fillStyle = "#efe8d5";
-          drawCircle(-4, -1, 4.8);
-          drawCircle(1, -2, 5.2);
-          drawCircle(5, 0, 4.5);
-          ctx.fillStyle = "#3b332c";
-          ctx.beginPath();
-          ctx.ellipse(8, -1, 2.6, 2.2, 0, 0, Math.PI * 2);
-          ctx.fill();
+        if (sprite) {
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(sprite, -10, -16, 20, 20);
         } else {
           ctx.fillStyle = index % 2 === 0 ? "#d8c0a3" : "#9f8063";
           ctx.beginPath();
@@ -732,17 +736,22 @@ export function getCenteredPan(zoom = state.zoom): { x: number; y: number } {
     ctx.restore();
   }
 
-  function drawObjectLabel(object) {
+  function drawObjectLabel(object: FarmObject) {
     const point = object.type === "path" ? object.points[Math.floor(object.points.length / 2)] : G.polygonCentroid(object.polygon);
     const height = object.type === "structure" ? object.height + 1 : object.type === "path" ? 1.2 : object.height + 2.4;
     const p = project(point, height);
     const isSelected = state.selectedId === object.id;
     const text = object.label;
+    const sprite = object.type === "cropField" && object.attrs.cropKey
+      ? getCatalogSprite(cropIconsByKey.get(object.attrs.cropKey)
+        ?? cropIcon({ name: object.attrs.cropName, visual: object.attrs.visual }))
+      : undefined;
+    const iconWidth = sprite ? 20 : 0;
     ctx.save();
     ctx.font = `${isSelected ? 700 : 650} ${isSelected ? 13 : 12}px Inter, system-ui, sans-serif`;
     const metrics = ctx.measureText(text);
     const padX = 7;
-    const boxW = metrics.width + padX * 2;
+    const boxW = metrics.width + iconWidth + padX * 2;
     const boxH = 22;
     ctx.fillStyle = isSelected ? "rgba(248, 224, 138, 0.94)" : "rgba(19, 27, 24, 0.76)";
     ctx.strokeStyle = isSelected ? "rgba(64, 47, 16, 0.3)" : "rgba(230, 240, 218, 0.16)";
@@ -751,7 +760,13 @@ export function getCenteredPan(zoom = state.zoom): { x: number; y: number } {
     ctx.stroke();
     ctx.fillStyle = isSelected ? "#211b0e" : "#edf4e7";
     ctx.textBaseline = "middle";
-    ctx.fillText(text, p.x - metrics.width / 2, p.y - boxH / 2 - 8);
+    const contentX = p.x - boxW / 2 + padX;
+    const contentY = p.y - boxH / 2 - 8;
+    if (sprite) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(sprite, contentX, contentY - 8, 16, 16);
+    }
+    ctx.fillText(text, contentX + iconWidth, contentY);
     ctx.restore();
   }
 
@@ -922,16 +937,6 @@ export function hitTestAll(world: Point): FarmObject[] {
   function drawCircle(x, y, radius) {
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  function drawLocalPolygon(points) {
-    ctx.beginPath();
-    points.forEach((point, index) => {
-      if (index === 0) ctx.moveTo(point[0], point[1]);
-      else ctx.lineTo(point[0], point[1]);
-    });
-    ctx.closePath();
     ctx.fill();
   }
 
