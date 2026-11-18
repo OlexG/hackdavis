@@ -123,6 +123,25 @@ function normalizeLivestock(animal: LivestockDocument) {
 }
 
 function inferCropVisual(plant: PlantDocument): CropVisual {
+  const category = plant.crop_category?.trim().toLowerCase();
+  switch (category) {
+    case "berry": return "groundcover";
+    case "bulb":
+    case "root_vegetable": return "root";
+    case "fruit":
+    case "fruit_tree": return "fruiting";
+    case "fruit_vine":
+    case "legume": return "vine";
+    case "grain":
+    case "grass":
+    case "seed_crop": return "grain";
+    case "herb": return "herb";
+    case "leafy_green":
+    case "sprouts":
+    case "vegetable": return "leafy";
+    case "rhizome":
+    case "tuber": return "mound";
+  }
   const text = `${plant.crop_id ?? ""} ${plant.common_name ?? ""} ${plant.crop_category ?? ""}`.toLowerCase();
   if (/\b(corn|wheat|grain|grass)\b/.test(text)) return "grain";
   if (/\b(potato|beet|carrot|radish|turnip|onion|garlic|root)\b/.test(text)) return "root";
